@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Start Claude Code in a shared session. Messages from peers are pushed into the session.
+# Usage: coop-claude <session> [claude arguments...]
+set -euo pipefail
+if [ $# -lt 1 ]; then
+  echo "usage: coop-claude <session> [claude arguments...]" >&2
+  exit 2
+fi
+session=$1
+shift
+export COOP_SESSION="$session"
+export COOP_PUSH=1
+exec claude --dangerously-load-development-channels server:coop "$@"
