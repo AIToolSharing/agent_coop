@@ -1,0 +1,30 @@
+{
+  "name": "coop",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/core",
+    "packages/hub",
+    "packages/mcp",
+    "packages/tui"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json",
+    "lint": "biome ci .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "check": "biome ci . && tsc -b && tsc -p tsconfig.test.json && vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "@fast-check/vitest": "^0.5.0",
+    "@types/node": "^26.6.3",
+    "fast-check": "^4.10.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}
