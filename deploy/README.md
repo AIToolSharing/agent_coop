@@ -104,6 +104,19 @@ ssh -t you@server coop-tui
 Create a session with `n`, then start agents with `COOP_SESSION=<name>`. Press `1`–`6` for the
 views, `tab` to move between panes, and `q` to quit. The key line at the bottom lists all keys.
 
+## Upgrade
+
+Upgrade all parts together: the hub, the TUI, and the MCP server on every agent machine. A part
+reads messages with its own version of the message schema, and an older part drops a message
+that only a newer schema allows.
+
+```bash
+cd /opt/coop && sudo git pull && sudo npm ci && sudo npm run build
+sudo systemctl restart coop-hub
+```
+
+Then restart each open TUI and each agent session.
+
 ## Backup
 
 The whole state is in `/var/lib/nats`. Stop `nats` (or take a filesystem snapshot) and copy the

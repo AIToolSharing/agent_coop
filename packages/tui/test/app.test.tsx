@@ -115,6 +115,17 @@ describe('the TUI', () => {
     app.unmount()
   })
 
+  // Found in the end-to-end run: keys sent faster than a repaint acted on old state.
+  test('keys that arrive together act on the latest state', async () => {
+    const app = start()
+    for (const k of [KEY.tab, KEY.tab, KEY.down, KEY.tab, 'm', 'h', 'i', KEY.enter])
+      app.stdin.write(k)
+    await tick()
+    expect(app.frame()).toContain(`log: ${FIX_SID}`)
+    expect(calls).toEqual([`send ${FIX_SID} all hi`])
+    app.unmount()
+  })
+
   test('opens the message inspector with enter', async () => {
     const app = start()
     await openSession(app)
