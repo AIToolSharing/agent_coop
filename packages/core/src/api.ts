@@ -1,0 +1,136 @@
+// The HTTP contract between the hub and the local MCP server (the shim). Both sides validate with
+// these schemas, so a contract change is a change here.
+import { z } from 'zod'
+import { BROADCAST, formatAddress, OPERATOR } from './names.js'
+import {
+  AddressStr,
+  AgentName,
+  AgentState,
+  type BusEvent,
+  DeliveryVia,
+  Id,
+  Iso,
+  Text,
+  Token,
+} from './schema.js'
+
+/** `to` as a client writes it: `all`, a bare agent name, or `agent@machine`. */
+export const RecipientInput = z.string().min(1).max(130)
+
+export const ApiMessage = z.strictObject({
+  id: Id,
+  from: z.union([z.literal(OPERATOR), AddressStr]),
+  to: z.union([z.literal(BROADCAST), AddressStr]),
+  text: Text,
+  reply_to: Id.optional(),
+  sent_at: Iso,
+})
+export type ApiMessage = z.infer<typeof ApiMessage>
+
+export const StreamQuery = z.strictObject({
+  agent: AgentName,
+  host: z.string().max(256),
+  cwd: z.string().max(4096),
+  client_name: z.string().max(64),
+  client_version: z.string().max(64),
+})
+export type StreamQuery = z.infer<typeof StreamQuery>
+
+export const SendRequest = z.strictObject({
+  agent: AgentName,
+  to: RecipientInput,
+  text: Text,
+  reply_to: Id.optional(),
+})
+export type SendRequest = z.infer<typeof SendRequest>
+
+export const SendResponse = z.strictObject({ id: Id, to: ApiMessage.shape.to, sent_at: Iso })
+export type SendResponse = z.infer<typeof SendResponse>
+
+export const ActivityRequest = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('state'),
+    agent: AgentName,
+    state: AgentState,
+    note: z.string().max(500).optional(),
+  }),
+  z.strictObject({ kind: z.literal('delivered'), agent: AgentName, id: Id, via: DeliveryVia }),
+  z.strictObject({
+    kind: z.literal('wait_start'),
+    agent: AgentName,
+    from: RecipientInput.optional(),
+    reply_to: Id.optional(),
+    timeout_s: z.int().min(1).max(600),
+  }),
+  z.strictObject({
+    kind: z.literal('wait_end'),
+    agent: AgentName,
+    result: z.enum(['message', 'timeout', 'cancelled']),
+  }),
+])
+export type ActivityRequest = z.infer<typeof ActivityRequest>
+
+export const Peer = z.strictObject({
+  name: AddressStr,
+  state: AgentState,
+  note: z.string().max(500).optional(),
+  online: z.boolean(),
+  waiting_on: AddressStr.optional(),
+})
+export type Peer = z.infer<typeof Peer>
+
+export const SessionView = z.strictObject({
+  session: Token,
+  status: z.enum(['open', 'closed']),
+  me: AddressStr,
+  peers: z.array(Peer),
+})
+export type SessionView = z.infer<typeof SessionView>
+
+export const HistoryQuery = z.strictObject({
+  agent: AgentName,
+  with: RecipientInput.optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+})
+
+export const HistoryResponse = z.strictObject({ messages: z.array(ApiMessage) })
+export type HistoryResponse = z.infer<typeof HistoryResponse>
+
+/** SSE event `joined`: the first event of a stream. */
+export const JoinedEvent = z.strictObject({ me: AddressStr, session: Token })
+
+/** SSE event `notice`: something the agent must know that is not a message. */
+export const NoticeEvent = z.strictObject({
+  kind: z.enum(['kicked', 'closed', 'reopened', 'redacted']),
+  id: Id.optional(),
+  at: Iso,
+})
+export type NoticeEvent = z.infer<typeof NoticeEvent>
+
+export const ErrorCode = z.enum([
+  'unauthorized',
+  'forbidden',
+  'not_found',
+  'conflict',
+  'ambiguous',
+  'too_large',
+  'invalid',
+  'rate_limited',
+  'unavailable',
+])
+export type ErrorCode = z.infer<typeof ErrorCode>
+
+export const ErrorBody = z.strictObject({ error: ErrorCode, message: z.string() })
+export type ErrorBody = z.infer<typeof ErrorBody>
+
+/** The API form of a message event. */
+export function toApiMessage(e: Extract<BusEvent, { kind: 'msg' }>): ApiMessage {
+  const m: ApiMessage = {
+    id: String(e.seq),
+    from: e.from === OPERATOR ? OPERATOR : formatAddress(e.from),
+    to: e.to === BROADCAST ? BROADCAST : formatAddress(e.to),
+    text: e.text,
+    sent_at: e.sent_at,
+  }
+  return e.reply_to === undefined ? m : { ...m, reply_to: e.reply_to }
+}
