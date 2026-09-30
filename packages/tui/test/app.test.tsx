@@ -82,6 +82,22 @@ describe('the TUI', () => {
     app.unmount()
   })
 
+  // Found in the end-to-end run: a message to an offline agent is never delivered.
+  test('refuses a message to an offline agent', async () => {
+    const store = storeOf(fixture())
+    store.apply([{ kind: 'presence', key: `${FIX_SID}.vps-2.bob`, record: undefined }])
+    const r = render(
+      <App store={store} op={op} subscribe={() => () => undefined} now={() => NOW} />,
+    )
+    for (const k of [KEY.tab, KEY.tab, KEY.down, KEY.tab, 'm', '@bob hi', KEY.enter]) {
+      r.stdin.write(k)
+      await tick()
+    }
+    expect(calls).toEqual([])
+    expect(r.lastFrame()).toContain('bob@vps-2 is offline')
+    r.unmount()
+  })
+
   test('kicks the selected agent after y', async () => {
     const app = start()
     await openSession(app)

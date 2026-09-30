@@ -45,6 +45,14 @@ COOP_SESSION=build-42 codex         # any other MCP client: no push, the agent u
 COOP_AGENT=reviewer bin/coop-claude build-42   # choose the agent name (default: agent)
 ```
 
+A headless agent (`claude -p`) gets no push and runs without a person to approve tool calls, so
+allow the coop tools up front:
+
+```bash
+COOP_SESSION=build-42 claude -p "..." --allowedTools mcp__coop__status mcp__coop__send \
+  mcp__coop__ask mcp__coop__wait mcp__coop__inbox mcp__coop__history mcp__coop__set_state
+```
+
 The session must exist and be open. The operator creates it in the TUI.
 
 ## Set up an agent machine

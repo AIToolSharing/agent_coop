@@ -318,8 +318,11 @@ export function App({ store, subscribe, op, now = Date.now }: AppProps) {
       )
       if (hits.length !== 1)
         return set({ status: hits.length === 0 ? `no agent ${name}` : `${name} is ambiguous` })
-      const addr = parseAddress(hits[0]?.address ?? '')
-      if (addr === undefined) return
+      const hit = hits[0]
+      const addr = parseAddress(hit?.address ?? '')
+      if (hit === undefined || addr === undefined) return
+      // A direct message reaches an agent only while it is online (same rule as the hub).
+      if (!hit.online) return set({ status: `${hit.address} is offline; it would not get this` })
       to = addr
       text = m[2] ?? ''
     }
