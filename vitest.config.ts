@@ -1,8 +1,8 @@
 import { defineConfig } from 'vitest/config'
 
-// The "source" export condition makes tests import workspace packages from src, not dist.
+// The "@coop/source" export condition makes tests import workspace packages from src, not dist.
 export default defineConfig({
-  resolve: { conditions: ['source'] },
+  resolve: { conditions: ['@coop/source'] },
   test: {
     passWithNoTests: true,
     include: ['packages/*/test/**/*.test.ts', 'packages/*/test/**/*.test.tsx'],

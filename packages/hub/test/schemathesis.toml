@@ -1,0 +1,23 @@
+# Realistic values so that fuzzing reaches the hub's rules, not only 403 and 404.
+# contract.int.test.ts creates session "contract" with live agents alice and bob on machine mac-1.
+# Each binding mixes these values with schema-derived data.
+
+[dictionaries.sessions]
+values = ["contract"]
+
+[dictionaries.agents]
+values = ["alice", "bob"]
+
+[dictionaries.recipients]
+values = ["all", "alice", "bob", "bob@mac-1"]
+
+[dictionaries.peers]
+values = ["alice", "bob", "bob@mac-1"]
+
+[parameters]
+"path.sid" = { dictionary = "sessions", probability = 0.8 }
+"query.agent" = { dictionary = "agents", probability = 0.8 }
+"body.agent" = { dictionary = "agents", probability = 0.8 }
+"body.to" = { dictionary = "recipients", probability = 0.8 }
+"query.with" = { dictionary = "peers", probability = 0.5 }
+"body.from" = { dictionary = "peers", probability = 0.5 }

@@ -1,16 +1,20 @@
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import {
+  ADDRESS_RE,
   buildPresenceKey,
   buildSessionsKey,
   buildSubject,
   formatAddress,
   isAgentName,
   isToken,
+  PEER_RE,
   parseAddress,
   parsePresenceKey,
   parseSessionsKey,
   parseSubject,
+  RECIPIENT_RE,
+  RESERVED_AGENT_NAMES,
 } from '../src/index.js'
 import { address, subject, token } from './arb.js'
 
@@ -68,6 +72,23 @@ describe('KV keys', () => {
 })
 
 describe('name rules', () => {
+  const names = fc.oneof(
+    fc.string(),
+    token,
+    fc.tuple(token, token).map(([a, m]) => `${a}@${m}`),
+    fc.constantFrom('operator', 'all', 'all@x', 'operator@x', 'a@b@c'),
+  )
+  test.prop([names])('the patterns agree with the reserved-name set', (s) => {
+    expect(isAgentName(s)).toBe(isToken(s) && !RESERVED_AGENT_NAMES.has(s))
+    const parts = s.split('@')
+    const [agent = '', machine = ''] = parts
+    const peer =
+      isAgentName(agent) && (parts.length === 1 || (parts.length === 2 && isToken(machine)))
+    expect(PEER_RE.test(s)).toBe(peer)
+    expect(RECIPIENT_RE.test(s)).toBe(s === 'all' || peer)
+    expect(ADDRESS_RE.test(s)).toBe(parts.length === 2 && peer)
+  })
+
   test.each([
     ['operator', false],
     ['all', false],

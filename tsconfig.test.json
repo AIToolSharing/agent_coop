@@ -3,7 +3,7 @@
   "compilerOptions": {
     "composite": false,
     "noEmit": true,
-    "customConditions": ["source"],
+    "customConditions": ["@coop/source"],
     "jsx": "react-jsx"
   },
   "include": ["packages/*/test", "vitest.config.ts"]

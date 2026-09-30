@@ -1,8 +1,20 @@
 // Names, addresses, broker subjects and KV keys. This file is the only place that builds or
 // parses them, so a change of layout is a change here.
 
-/** A name token: a session id, a machine name, or an agent name. No dots (subject separator). */
+// The patterns are the single definition of the name rules. The OpenAPI document carries them,
+// so a schema-valid request never fails a name rule inside the hub.
+
+/** A name token: a session id or a machine name. No dots (subject separator). */
 export const TOKEN_RE = /^[a-z0-9_-]{1,64}$/
+/** An agent name: a token that is not a reserved name. */
+export const AGENT_RE = /^(?!(?:operator|all)$)[a-z0-9_-]{1,64}$/
+/** An address `agent@machine`. */
+export const ADDRESS_RE = /^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$/
+/** A peer as a client writes it: an agent name or an address. */
+export const PEER_RE = /^(?!(?:operator|all)(?:@|$))[a-z0-9_-]{1,64}(?:@[a-z0-9_-]{1,64})?$/
+/** A recipient as a client writes it: `all` or a peer. */
+export const RECIPIENT_RE =
+  /^(?:all|(?!(?:operator|all)(?:@|$))[a-z0-9_-]{1,64}(?:@[a-z0-9_-]{1,64})?)$/
 
 /** Agent names that have a meaning in addressing. */
 export const RESERVED_AGENT_NAMES: ReadonlySet<string> = new Set(['operator', 'all'])
@@ -20,7 +32,7 @@ export function isToken(s: string): boolean {
 }
 
 export function isAgentName(s: string): boolean {
-  return isToken(s) && !RESERVED_AGENT_NAMES.has(s)
+  return AGENT_RE.test(s)
 }
 
 /** One agent: its name inside the session and the machine that runs it. */

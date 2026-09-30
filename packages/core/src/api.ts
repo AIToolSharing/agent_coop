@@ -1,7 +1,7 @@
 // The HTTP contract between the hub and the local MCP server (the shim). Both sides validate with
 // these schemas, so a contract change is a change here.
 import { z } from 'zod'
-import { BROADCAST, formatAddress, OPERATOR } from './names.js'
+import { BROADCAST, formatAddress, OPERATOR, PEER_RE, RECIPIENT_RE } from './names.js'
 import {
   AddressStr,
   AgentName,
@@ -14,8 +14,10 @@ import {
   Token,
 } from './schema.js'
 
-/** `to` as a client writes it: `all`, a bare agent name, or `agent@machine`. */
-export const RecipientInput = z.string().min(1).max(130)
+/** A peer as a client writes it: a bare agent name, or `agent@machine`. */
+export const PeerInput = z.string().regex(PEER_RE)
+/** `to` as a client writes it: `all`, or a peer. */
+export const RecipientInput = z.string().regex(RECIPIENT_RE)
 
 export const ApiMessage = z.strictObject({
   id: Id,
@@ -29,6 +31,8 @@ export type ApiMessage = z.infer<typeof ApiMessage>
 
 export const StreamQuery = z.strictObject({
   agent: AgentName,
+  /** Random per shim process. A join with the same instance replaces the old stream (resume). */
+  instance: z.uuid(),
   host: z.string().max(256),
   cwd: z.string().max(4096),
   client_name: z.string().max(64),
@@ -58,7 +62,7 @@ export const ActivityRequest = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('wait_start'),
     agent: AgentName,
-    from: RecipientInput.optional(),
+    from: PeerInput.optional(),
     reply_to: Id.optional(),
     timeout_s: z.int().min(1).max(600),
   }),
@@ -89,7 +93,7 @@ export type SessionView = z.infer<typeof SessionView>
 
 export const HistoryQuery = z.strictObject({
   agent: AgentName,
-  with: RecipientInput.optional(),
+  with: PeerInput.optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 })
 

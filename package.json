@@ -17,7 +17,8 @@
     "lint": "biome ci .",
     "format": "biome format --write .",
     "test": "vitest run",
-    "check": "biome ci . && tsc -b && tsc -p tsconfig.test.json && vitest run"
+    "check": "biome ci . && tsc -b && tsc -p tsconfig.test.json && vitest run",
+    "contract": "COOP_CONTRACT=1 vitest run packages/hub/test/contract.int.test.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",

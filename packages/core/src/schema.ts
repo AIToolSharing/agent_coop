@@ -2,15 +2,16 @@
 // its wire form. The sender of an agent event comes from the subject, never from the payload.
 import { z } from 'zod'
 import {
+  ADDRESS_RE,
   type Address,
+  AGENT_RE,
   BROADCAST,
   buildSubject,
   formatAddress,
-  isAgentName,
-  isToken,
   OPERATOR,
   parseAddress,
   parseSubject,
+  TOKEN_RE,
 } from './names.js'
 
 export const MAX_TEXT = 8000
@@ -18,9 +19,9 @@ export const MAX_TEXT = 8000
 /** A message id: the stream sequence of the message, in decimal. */
 export const Id = z.string().regex(/^[1-9][0-9]{0,15}$/)
 export const Iso = z.iso.datetime()
-export const Token = z.string().refine(isToken, 'invalid name')
-export const AgentName = z.string().refine(isAgentName, 'invalid agent name')
-export const AddressStr = z.string().refine((s) => parseAddress(s) !== undefined, 'invalid address')
+export const Token = z.string().regex(TOKEN_RE)
+export const AgentName = z.string().regex(AGENT_RE)
+export const AddressStr = z.string().regex(ADDRESS_RE)
 export const Recipient = z.union([z.literal(BROADCAST), AddressStr])
 export const Text = z.string().min(1).max(MAX_TEXT)
 export const AgentState = z.enum(['working', 'blocked', 'done', 'idle'])

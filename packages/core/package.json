@@ -5,12 +5,12 @@
   "type": "module",
   "exports": {
     ".": {
-      "source": "./src/index.ts",
+      "@coop/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./broker": {
-      "source": "./src/broker/index.ts",
+      "@coop/source": "./src/broker/index.ts",
       "types": "./dist/broker/index.d.ts",
       "default": "./dist/broker/index.js"
     }
