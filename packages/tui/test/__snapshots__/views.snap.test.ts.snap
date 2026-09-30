@@ -1,0 +1,133 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`views of the fixture session > 1 log 1`] = `
+"
+12:00:00  · alice@mac-1 joined from mac-1 (claude-code 2.1)
+12:00:02  · bob@vps-2 joined from vps-2 (codex 0.9)
+12:00:03  · carol@mac-3 joined from mac-3 (claude-code 2.1)
+12:00:10 carol@mac-3        → all                #4 I take src/users.ts and the tests                     ✓2/2
+12:00:20 alice@mac-1        → bob@vps-2          #7 What is the shape of GET /users?          ✓ 1000ms pull ↳1
+12:00:20  · alice@mac-1 waits for bob@vps-2 (ask #7)
+12:00:21  · bob@vps-2 is working: answering alice
+12:00:30 bob@vps-2          → alice@mac-1        #11 ↩7 { id: number, name: string, email: string } ✓ 90ms ask
+12:00:30  · alice@mac-1 wait ended: message
+12:00:40 carol@mac-3        → bob@vps-2          #14 [withdrawn]                                     withdrawn
+12:00:45  · operator withdrew message #14
+12:00:50 operator           → all                #16 Please run the tests before you say done             ✓0/3
+12:01:00 carol@mac-3        → bob@vps-2          #17 Can I change the users table?                   ◌ pending
+12:01:00  · carol@mac-3 waits for bob@vps-2 (ask #17)
+12:01:10  · bob@vps-2 is blocked: waiting for CI
+"
+`;
+
+exports[`views of the fixture session > 2 sequence 1`] = `
+"
+               operator             alice@mac-1            bob@vps-2            carol@mac-3
+12:00:00           │                     ● joined from mac-1 … │                     │
+12:00:02           │                     │                     ● joined from vps-2 … │
+12:00:03           │                     │                     │                     ● joined …
+12:00:10           │                     ═◄═ #4 I take src/users.ts and the tests════●          ✓2/2
+12:00:20           │                     ├── #7 What is the …─►│                     │          ✓ 1000ms pull
+12:00:20           │                     ┆ waits for bob@vps-… │                     │
+12:00:21           │                     │                     · is working: answer… │
+12:00:30           │                     │◄─ #11 { id: numbe…──┤                     │          ✓ 90ms ask
+12:00:30           │                     ┆ wait ended: message │                     │
+12:00:40           │                     │                     │◄─ #14 [withdrawn]───┤          withdrawn
+12:00:45           · withdrew message #… │                     │                     │
+12:00:50           ●══ #16 Please run the tests before you say done═════════════════►═          ✓0/3
+12:01:00           │                     │                     │◄─ #17 Can I chang…──┤          ◌ pending
+12:01:00           │                     │                     │                     ┆ waits f…
+12:01:10           │                     │                     · is blocked: waitin… │
+"
+`;
+
+exports[`views of the fixture session > 3 threads 1`] = `
+"
+OPEN ASKS (1)
+  ⏳   4m  carol@mac-3 → bob@vps-2  #17 Can I change the users table?
+
+THREADS
+#4 carol@mac-3 → all: I take src/users.ts and the tests  ✓2/2
+#7 alice@mac-1 → bob@vps-2: What is the shape of GET /users?  ✓ 1000ms pull
+ └─ #11 bob@vps-2 → alice@mac-1: { id: number, name: string, email: string }  ✓ 90ms ask
+#14 carol@mac-3 → bob@vps-2: [withdrawn]  withdrawn
+#16 operator → all: Please run the tests before you say done  ✓0/3
+#17 carol@mac-3 → bob@vps-2: Can I change the users table?  ◌ pending
+"
+`;
+
+exports[`views of the fixture session > 4 matrix 1`] = `
+"
+MESSAGES
+from \\ to   alice                   bob                     carol                   all
+operator    ·                       ·                       ·                       1
+alice@mac-1 ·                       1                       ·                       ·
+bob@vps-2   1                       ·                       ·                       ·
+carol@mac-3 ·                       1                       ·                       1
+
+MEDIAN DELIVERY (ms)
+from \\ to   alice                   bob                     carol                   all
+operator    ·                       ·                       ·                       ·
+alice@mac-1 ·                       1000                    ·                       ·
+bob@vps-2   90                      ·                       ·                       ·
+carol@mac-3 120                     4000                    ·                       ·
+"
+`;
+
+exports[`views of the fixture session > 5 agent 1`] = `
+"
+bob@vps-2  ● online
+state        blocked for 3m
+note         waiting for CI
+host         vps-2
+directory    /srv/api
+client       codex 0.9
+joined       12:00:02 (4m ago)
+messages     sent 1, received 2, queued 0
+latency      median 4000 ms over 2
+
+TIMELINE
+12:00:02  joined from vps-2 (codex 0.9)
+12:00:10  got (pull, 4000ms) #4 ← carol@mac-3: I take src/users.ts and the tests
+12:00:20  got (pull, 1000ms) #7 ← alice@mac-1: What is the shape of GET /users?
+12:00:21  is working: answering alice
+12:00:30  sent #11 → alice@mac-1: { id: number, name: string, email: string }
+12:00:40  pending #14 ← carol@mac-3: [withdrawn]
+12:00:50  pending #16 ← operator: Please run the tests before you say done
+12:01:00  pending #17 ← carol@mac-3: Can I change the users table?
+12:01:10  is blocked: waiting for CI
+"
+`;
+
+exports[`views of the fixture session > 6 message 1`] = `
+"
+#7  ✓ 1000ms pull
+from         alice@mac-1
+to           bob@vps-2
+sent         2026-09-30T12:00:20.000Z (4m ago)
+
+  What is the shape of GET /users?
+
+DELIVERY
+  ✓ bob@vps-2  12:00:21  1000 ms  via pull
+
+REPLIES (1)
+  #11 bob@vps-2: { id: number, name: string, email: string }
+"
+`;
+
+exports[`views of the fixture session > agents pane 1`] = `
+"
+● alice@mac-1 claude-code 2.1  working   5m  sent 1 recv 2 q0  "parser"
+● bob@vps-2   codex 0.9        blocked   3m  sent 1 recv 2 q0  "waiting for CI"
+● carol@mac-3 claude-code 2.1  working   4m  sent 3 recv 0 q0  waiting on bob@vps-2 4m  "users.ts"
+"
+`;
+
+exports[`views of the fixture session > sessions pane 1`] = `
+"
+* all traffic  0/min
+● build-42 3/3 1 ask
+✕ docs 0/0 closed
+"
+`;
