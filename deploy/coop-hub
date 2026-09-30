@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Run coop-hub commands (tokens) with the hub credential. Install as /usr/local/bin/coop-hub.
+# Example: sudo coop-hub token add laptop
+set -euo pipefail
+set -a
+# shellcheck source=/dev/null
+. /etc/coop/hub.env
+set +a
+exec node /opt/coop/packages/hub/dist/main.js "$@"

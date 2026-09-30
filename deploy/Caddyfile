@@ -1,0 +1,8 @@
+# TLS in front of coop-hub. Caddy gets and renews the certificate from Let's Encrypt.
+# Set COOP_DOMAIN in Caddy's environment, for example coop.example.com or 203-0-113-7.sslip.io.
+{$COOP_DOMAIN} {
+	reverse_proxy 127.0.0.1:8080 {
+		# Send each server-sent event at once; do not buffer the event stream.
+		flush_interval -1
+	}
+}

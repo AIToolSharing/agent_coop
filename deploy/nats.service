@@ -1,0 +1,20 @@
+[Unit]
+Description=NATS server for coop (localhost only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=coop
+Group=coop
+EnvironmentFile=/etc/coop/nats.env
+ExecStart=/usr/local/bin/nats-server -c /etc/coop/nats.conf
+Restart=on-failure
+StateDirectory=nats
+LimitNOFILE=65536
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
