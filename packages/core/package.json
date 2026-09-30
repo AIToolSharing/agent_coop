@@ -8,9 +8,18 @@
       "source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./broker": {
+      "source": "./src/broker/index.ts",
+      "types": "./dist/broker/index.d.ts",
+      "default": "./dist/broker/index.js"
     }
   },
   "dependencies": {
+    "@nats-io/jetstream": "^3.4.0",
+    "@nats-io/kv": "^3.4.0",
+    "@nats-io/nats-core": "^3.4.0",
+    "@nats-io/transport-node": "^3.4.0",
     "zod": "^4.6.5"
   }
 }
