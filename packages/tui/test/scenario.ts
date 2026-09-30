@@ -34,7 +34,7 @@ const step: fc.Arbitrary<Step> = fc.oneof(
   fc.record({
     k: fc.constant('send' as const),
     from: idx,
-    to: fc.integer({ min: -1, max: 3 }),
+    to: fc.integer({ min: -2, max: 3 }),
     reply: fc.option(fc.nat({ max: 40 }), { nil: undefined }),
     text,
   }),
@@ -97,7 +97,8 @@ export function build(n: number, steps: readonly Step[], online: readonly boolea
     switch (s.k) {
       case 'send': {
         const from = agentAt(s.from)
-        const to: To = s.to < 0 || s.to % n === s.from % n ? BROADCAST : agentAt(s.to)
+        const to: To =
+          s.to === -2 ? OPERATOR : s.to < 0 || s.to % n === s.from % n ? BROADCAST : agentAt(s.to)
         const reply =
           s.reply === undefined ? undefined : msgIds[s.reply % Math.max(1, msgIds.length)]
         const e = { kind: 'msg' as const, sid: SID, from, to, text: s.text, sent_at: at() }

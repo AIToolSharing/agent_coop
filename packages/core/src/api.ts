@@ -22,7 +22,7 @@ export const RecipientInput = z.string().regex(RECIPIENT_RE)
 export const ApiMessage = z.strictObject({
   id: Id,
   from: z.union([z.literal(OPERATOR), AddressStr]),
-  to: z.union([z.literal(BROADCAST), AddressStr]),
+  to: z.union([z.literal(BROADCAST), z.literal(OPERATOR), AddressStr]),
   text: Text,
   reply_to: Id.optional(),
   sent_at: Iso,
@@ -132,7 +132,7 @@ export function toApiMessage(e: Extract<BusEvent, { kind: 'msg' }>): ApiMessage 
   const m: ApiMessage = {
     id: String(e.seq),
     from: e.from === OPERATOR ? OPERATOR : formatAddress(e.from),
-    to: e.to === BROADCAST ? BROADCAST : formatAddress(e.to),
+    to: typeof e.to === 'string' ? e.to : formatAddress(e.to),
     text: e.text,
     sent_at: e.sent_at,
   }

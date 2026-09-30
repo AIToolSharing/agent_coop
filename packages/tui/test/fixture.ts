@@ -106,13 +106,22 @@ export function fixture(): Update[] {
     sent_at: t(40),
   })
   add({ kind: 'redact', sid, id: wrong, at: t(45) })
-  add({
+  const op = add({
     kind: 'msg',
     sid,
     from: 'operator',
     to: 'all',
     text: 'Please run the tests before you say done',
     sent_at: t(50),
+  })
+  add({
+    kind: 'msg',
+    sid,
+    from: bob,
+    to: 'operator',
+    text: 'Will do; CI is running',
+    reply_to: op,
+    sent_at: t(55),
   })
   const q2 = add({
     kind: 'msg',

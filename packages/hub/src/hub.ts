@@ -19,6 +19,7 @@ import {
   isAgentName,
   isVisible,
   type NoticeEvent,
+  OPERATOR,
   PresenceRecord,
   parseAddress,
   parseSessionsKey,
@@ -166,15 +167,16 @@ export class Hub {
     const kick = await this.b.sessions.get(buildSessionsKey({ kind: 'kick', sid, target: me }))
     if (kick?.operation === 'PUT') throw new HubError('forbidden', 'removed from session')
 
+    const resume = lastEventId !== undefined && Id.safeParse(lastEventId).success
+    const startSeq = resume ? Number(lastEventId) + 1 : (await lastSeq(this.b.jsm)) + 1
+
+    // No await from here to the reservation: two joins of one name must not both pass the check.
     const key = buildPresenceKey({ sid, agent: me })
     const old = this.conns.get(key)
     if (old !== undefined && old.instance !== q.instance) {
       throw new HubError('conflict', `name ${formatAddress(me)} is taken`)
     }
     old?.close('replaced')
-
-    const resume = lastEventId !== undefined && Id.safeParse(lastEventId).success
-    const startSeq = resume ? Number(lastEventId) + 1 : (await lastSeq(this.b.jsm)) + 1
     const meta = {
       host: q.host,
       cwd: q.cwd,
@@ -232,14 +234,14 @@ export class Hub {
     if (!this.limits.msg.take(machine)) throw new HubError('rate_limited', 'too many messages')
     const conn = this.requireConn(machine, sid, req.agent)
     await this.requireOpen(sid)
-    const to = this.resolve(sid, req.to, conn.me, { broadcast: true, offline: false })
+    const to = this.recipient(sid, req.to, conn.me)
     const sent_at = now()
     const base = { kind: 'msg', sid, from: conn.me, to, text: req.text, sent_at } as const
     const seq = await publishEvent(
       this.b.js,
       req.reply_to === undefined ? base : { ...base, reply_to: req.reply_to },
     )
-    return { id: String(seq), to: to === BROADCAST ? BROADCAST : formatAddress(to), sent_at }
+    return { id: String(seq), to: typeof to === 'string' ? to : formatAddress(to), sent_at }
   }
 
   async activity(machine: string, sid: string, req: ActivityRequest): Promise<void> {
@@ -257,17 +259,14 @@ export class Hub {
         await this.publishEvt(conn, { kind: 'delivered', id: req.id, via: req.via, at })
         break
       case 'wait_start': {
-        const on =
-          req.from === undefined
-            ? undefined
-            : this.resolve(sid, req.from, conn.me, { broadcast: false, offline: true })
+        const on = req.from === undefined ? undefined : this.peer(sid, req.from, conn.me, true)
         const w: { on?: Address; reply_to?: string; since: string } = { since: at }
         const evt: Parameters<Hub['publishEvt']>[1] & { kind: 'wait_start' } = {
           kind: 'wait_start',
           timeout_s: req.timeout_s,
           at,
         }
-        if (on !== undefined && on !== BROADCAST) {
+        if (on !== undefined) {
           w.on = on
           evt.from = formatAddress(on)
         }
@@ -312,16 +311,13 @@ export class Hub {
     q: { agent: string; with?: string | undefined; limit: number },
   ): Promise<HistoryResponse> {
     const conn = this.requireConn(machine, sid, q.agent)
-    const peer =
-      q.with === undefined
-        ? undefined
-        : this.resolve(sid, q.with, conn.me, { broadcast: false, offline: true })
+    const peer = q.with === undefined ? undefined : this.peer(sid, q.with, conn.me, true)
     const events = await readRange(this.b.js, this.b.jsm, deliverySubjects(sid))
     const me = conn.me
     const msgs: ApiMessage[] = []
     for (const e of events) {
       if (e.kind !== 'msg' || !isVisible(e, me)) continue
-      if (peer !== undefined && peer !== BROADCAST && !between(e, me, peer)) continue
+      if (peer !== undefined && !between(e, me, peer)) continue
       msgs.push(toApiMessage(e))
     }
     return { messages: msgs.slice(-q.limit) }
@@ -350,31 +346,25 @@ export class Hub {
     return [...this.conns.values()].filter((c) => c.sid === sid)
   }
 
+  /** A `send` target: `all`, `operator` (the user), or a peer that is in the session now. */
+  private recipient(sid: string, input: string, me: Address): To {
+    if (input === BROADCAST || input === OPERATOR) return input
+    return this.peer(sid, input, me, false)
+  }
+
   /**
-   * Turn a client recipient (`all`, `name`, or `name@machine`) into an address. A bare name must
-   * match exactly one agent that is in the session now.
+   * Turn a peer as a client writes it (`name` or `name@machine`) into an address. A bare name
+   * must match exactly one agent that is in the session now.
    */
-  private resolve(
-    sid: string,
-    input: string,
-    me: Address,
-    opts: { broadcast: boolean; offline: boolean },
-  ): To {
-    if (input === BROADCAST) {
-      if (opts.broadcast) return BROADCAST
-      throw new HubError('invalid', '"all" is not a peer')
-    }
+  private peer(sid: string, input: string, me: Address, offline: boolean): Address {
     const peers = this.inSession(sid).map((c) => c.me)
     const list = () =>
       peers
         .filter((p) => !sameAddress(p, me))
         .map(formatAddress)
         .join(', ')
+    // The request schema already checked the format (PEER_RE, RECIPIENT_RE).
     const full = input.includes('@') ? parseAddress(input) : undefined
-    if (input.includes('@') && full === undefined)
-      throw new HubError('invalid', `bad name ${input}`)
-    if (!input.includes('@') && !isAgentName(input))
-      throw new HubError('invalid', `bad name ${input}`)
     const matches =
       full !== undefined ? [full] : peers.filter((p) => p.agent === input && !sameAddress(p, me))
     const target = matches[0]
@@ -386,7 +376,7 @@ export class Hub {
       throw new HubError('ambiguous', `"${input}" matches ${matches.map(formatAddress).join(', ')}`)
     }
     const online = target !== undefined && peers.some((p) => sameAddress(p, target))
-    if (target === undefined || (!online && !opts.offline)) {
+    if (target === undefined || (!online && !offline)) {
       throw new HubError(
         'not_found',
         `no peer ${input} in this session; peers: ${list() || 'none'}`,

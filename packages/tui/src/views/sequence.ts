@@ -26,7 +26,9 @@ export function lanes(names: readonly string[], width: number): Lanes {
 
 export function laneNames(d: Derived): string[] {
   const names = d.agents.map((a) => a.address)
-  return d.messages.some((m) => m.from === OPERATOR) ? [OPERATOR, ...names] : names
+  return d.messages.some((m) => m.from === OPERATOR || m.to === OPERATOR)
+    ? [OPERATOR, ...names]
+    : names
 }
 
 export function renderSequence(d: Derived, o: ViewOptions): Rendered {

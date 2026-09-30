@@ -80,6 +80,18 @@ describe('joining', () => {
     again.close()
   })
 
+  // Found by the shim tests: two joins at the same moment both got the name.
+  test('two joins of one name at the same moment: exactly one wins', async () => {
+    const sid = await session()
+    for (let round = 0; round < 5; round++) {
+      const name = `race${round}`
+      const [a, b] = await Promise.all([mac1.stream(sid, name), mac1.stream(sid, name)])
+      expect([a.status, b.status].sort()).toEqual([200, 409])
+      a.close()
+      b.close()
+    }
+  })
+
   test('the same name on two machines is allowed', async () => {
     const sid = await session()
     const a = await mac1.stream(sid, 'agent')
@@ -165,7 +177,7 @@ describe('messages', () => {
     expect([amb.status, err(amb.json).error]).toEqual([409, 'ambiguous'])
     expect((await mac1.send(sid, 'alice', 'alice', 'hi')).status).toBe(409)
     expect((await mac1.send(sid, 'alice', 'alice@mac-1', 'hi')).status).toBe(409)
-    expect((await mac1.send(sid, 'alice', 'operator', 'hi')).status).toBe(422)
+    expect((await mac1.send(sid, 'alice', 'operator', 'hi')).status).toBe(200)
     // Found by Schemathesis: a schema-valid peer that is the caller is a conflict, not bad input.
     expect((await mac1.history(sid, 'alice', '&with=alice%40mac-1')).status).toBe(409)
     expect((await mac1.send(sid, 'alice', 'x@mac-3', 'hi')).status).toBe(200)
@@ -272,6 +284,25 @@ describe('operator actions reach agents', () => {
     const hist = HistoryResponse.parse((await vps2.history(sid, 'bob')).json)
     expect(hist.messages.map((m) => m.id)).not.toContain(id)
     for (const s of [a, b, c]) s.close()
+  })
+
+  // Found in the end-to-end run: an agent could not answer the operator ("send can't address operator").
+  test('an agent can answer the operator; no other agent receives it', async () => {
+    const sid = await session()
+    const a = await mac1.stream(sid, 'alice')
+    const b = await vps2.stream(sid, 'bob')
+    await a.next()
+    await b.next()
+    const r = await mac1.send(sid, 'alice', 'operator', 'ONLINE')
+    expect(r.status).toBe(200)
+    expect(SendResponse.parse(r.json).to).toBe('operator')
+    await expect(b.next(isMsg, 500)).rejects.toThrow()
+    const mine = HistoryResponse.parse((await mac1.history(sid, 'alice')).json).messages
+    expect(mine.map((m) => [m.to, m.text])).toContainEqual(['operator', 'ONLINE'])
+    const theirs = HistoryResponse.parse((await vps2.history(sid, 'bob')).json).messages
+    expect(theirs.map((m) => m.text)).not.toContain('ONLINE')
+    a.close()
+    b.close()
   })
 
   test('operator messages arrive from operator', async () => {

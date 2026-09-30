@@ -129,9 +129,13 @@ export class Stream {
   ) {
     if (!res.ok || res.body === null) {
       this.closed = true
-      void res.text().then((t) => {
-        this.body = t === '' ? undefined : JSON.parse(t)
-      })
+      // A refused stream has a JSON body; the test may close the stream before it is read.
+      void res
+        .text()
+        .then((t) => {
+          this.body = t === '' ? undefined : JSON.parse(t)
+        })
+        .catch(() => undefined)
       return
     }
     void this.pump(res.body)

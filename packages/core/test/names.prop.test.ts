@@ -85,7 +85,7 @@ describe('name rules', () => {
     const peer =
       isAgentName(agent) && (parts.length === 1 || (parts.length === 2 && isToken(machine)))
     expect(PEER_RE.test(s)).toBe(peer)
-    expect(RECIPIENT_RE.test(s)).toBe(s === 'all' || peer)
+    expect(RECIPIENT_RE.test(s)).toBe(s === 'all' || s === 'operator' || peer)
     expect(ADDRESS_RE.test(s)).toBe(parts.length === 2 && peer)
   })
 

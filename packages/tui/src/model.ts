@@ -196,7 +196,13 @@ export function derive(store: Store, sid: string): Derived {
         const from = who(e.from)
         const to = e.to === BROADCAST ? BROADCAST : who(e.to)
         if (from !== OPERATOR) agent(from, e.sid).sent++
-        const recipients = to === BROADCAST ? [...presentIn(e.sid)].filter((a) => a !== from) : [to]
+        // The operator is not an agent: a message to it has no agent recipient.
+        const recipients =
+          to === BROADCAST
+            ? [...presentIn(e.sid)].filter((a) => a !== from)
+            : to === OPERATOR
+              ? []
+              : [to]
         const m: MsgAcc = {
           id: String(e.seq),
           seq: e.seq,
@@ -343,10 +349,11 @@ function matrixOf(messages: readonly MsgRow[], agents: readonly string[]): Matri
       lat.set(k, l)
     }
   }
-  const hasOperator = messages.some((m) => m.from === OPERATOR)
+  const fromOperator = messages.some((m) => m.from === OPERATOR)
+  const toOperator = messages.some((m) => m.to === OPERATOR)
   return {
-    senders: hasOperator ? [OPERATOR, ...agents] : [...agents],
-    receivers: [...agents, BROADCAST],
+    senders: fromOperator ? [OPERATOR, ...agents] : [...agents],
+    receivers: toOperator ? [OPERATOR, ...agents, BROADCAST] : [...agents, BROADCAST],
     count: (f, t) => counts.get(key(f, t)) ?? 0,
     latency: (f, t) => median(lat.get(key(f, t))),
   }

@@ -259,8 +259,9 @@ describe('in a session', () => {
     const sid = await session()
     const a = await agent('mac-1', { session: sid, agent: 'dev' })
     const b = await agent('mac-1', { session: sid, agent: 'dev' })
-    expect((await joined(a)).me).toBe('dev@mac-1')
-    expect((await joined(b)).me).toBe('dev-2@mac-1')
+    // Both start at once; either may win the plain name.
+    const names = [(await joined(a)).me, (await joined(b)).me].sort()
+    expect(names).toEqual(['dev-2@mac-1', 'dev@mac-1'])
   })
 
   test('status lists peers with their state', async () => {

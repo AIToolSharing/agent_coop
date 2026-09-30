@@ -13,9 +13,10 @@ exports[`views of the fixture session > 1 log 1`] = `
 12:00:30  · alice@mac-1 wait ended: message
 12:00:40 carol@mac-3        → bob@vps-2          #14 [withdrawn]                                     withdrawn
 12:00:45  · operator withdrew message #14
-12:00:50 operator           → all                #16 Please run the tests before you say done             ✓0/3
-12:01:00 carol@mac-3        → bob@vps-2          #17 Can I change the users table?                   ◌ pending
-12:01:00  · carol@mac-3 waits for bob@vps-2 (ask #17)
+12:00:50 operator           → all                #16 Please run the tests before you say done          ✓0/3 ↳1
+12:00:55 bob@vps-2          → operator           #17 ↩16 Will do; CI is running                        for you
+12:01:00 carol@mac-3        → bob@vps-2          #18 Can I change the users table?                   ◌ pending
+12:01:00  · carol@mac-3 waits for bob@vps-2 (ask #18)
 12:01:10  · bob@vps-2 is blocked: waiting for CI
 "
 `;
@@ -35,7 +36,8 @@ exports[`views of the fixture session > 2 sequence 1`] = `
 12:00:40           │                     │                     │◄─ #14 [withdrawn]───┤          withdrawn
 12:00:45           · withdrew message #… │                     │                     │
 12:00:50           ●══ #16 Please run the tests before you say done═════════════════►═          ✓0/3
-12:01:00           │                     │                     │◄─ #17 Can I chang…──┤          ◌ pending
+12:00:55           │◄─ #17 Will do; CI is running──────────────┤                     │          for you
+12:01:00           │                     │                     │◄─ #18 Can I chang…──┤          ◌ pending
 12:01:00           │                     │                     │                     ┆ waits f…
 12:01:10           │                     │                     · is blocked: waitin… │
 "
@@ -44,7 +46,7 @@ exports[`views of the fixture session > 2 sequence 1`] = `
 exports[`views of the fixture session > 3 threads 1`] = `
 "
 OPEN ASKS (1)
-  ⏳   4m  carol@mac-3 → bob@vps-2  #17 Can I change the users table?
+  ⏳   4m  carol@mac-3 → bob@vps-2  #18 Can I change the users table?
 
 THREADS
 #4 carol@mac-3 → all: I take src/users.ts and the tests  ✓2/2
@@ -52,25 +54,26 @@ THREADS
  └─ #11 bob@vps-2 → alice@mac-1: { id: number, name: string, email: string }  ✓ 90ms ask
 #14 carol@mac-3 → bob@vps-2: [withdrawn]  withdrawn
 #16 operator → all: Please run the tests before you say done  ✓0/3
-#17 carol@mac-3 → bob@vps-2: Can I change the users table?  ◌ pending
+ └─ #17 bob@vps-2 → operator: Will do; CI is running  for you
+#18 carol@mac-3 → bob@vps-2: Can I change the users table?  ◌ pending
 "
 `;
 
 exports[`views of the fixture session > 4 matrix 1`] = `
 "
 MESSAGES
-from \\ to   alice                   bob                     carol                   all
-operator    ·                       ·                       ·                       1
-alice@mac-1 ·                       1                       ·                       ·
-bob@vps-2   1                       ·                       ·                       ·
-carol@mac-3 ·                       1                       ·                       1
+from \\ to   operator           alice              bob                carol              all
+operator    ·                  ·                  ·                  ·                  1
+alice@mac-1 ·                  ·                  1                  ·                  ·
+bob@vps-2   1                  1                  ·                  ·                  ·
+carol@mac-3 ·                  ·                  1                  ·                  1
 
 MEDIAN DELIVERY (ms)
-from \\ to   alice                   bob                     carol                   all
-operator    ·                       ·                       ·                       ·
-alice@mac-1 ·                       1000                    ·                       ·
-bob@vps-2   90                      ·                       ·                       ·
-carol@mac-3 120                     4000                    ·                       ·
+from \\ to   operator           alice              bob                carol              all
+operator    ·                  ·                  ·                  ·                  ·
+alice@mac-1 ·                  ·                  1000               ·                  ·
+bob@vps-2   ·                  90                 ·                  ·                  ·
+carol@mac-3 ·                  120                4000               ·                  ·
 "
 `;
 
@@ -83,7 +86,7 @@ host         vps-2
 directory    /srv/api
 client       codex 0.9
 joined       12:00:02 (4m ago)
-messages     sent 1, received 2, queued 0
+messages     sent 2, received 2, queued 0
 latency      median 4000 ms over 2
 
 TIMELINE
@@ -94,7 +97,8 @@ TIMELINE
 12:00:30  sent #11 → alice@mac-1: { id: number, name: string, email: string }
 12:00:40  pending #14 ← carol@mac-3: [withdrawn]
 12:00:50  pending #16 ← operator: Please run the tests before you say done
-12:01:00  pending #17 ← carol@mac-3: Can I change the users table?
+12:00:55  sent #17 → operator: Will do; CI is running
+12:01:00  pending #18 ← carol@mac-3: Can I change the users table?
 12:01:10  is blocked: waiting for CI
 "
 `;
@@ -119,7 +123,7 @@ REPLIES (1)
 exports[`views of the fixture session > agents pane 1`] = `
 "
 ● alice@mac-1 claude-code 2.1  working   5m  sent 1 recv 2 q0  "parser"
-● bob@vps-2   codex 0.9        blocked   3m  sent 1 recv 2 q0  "waiting for CI"
+● bob@vps-2   codex 0.9        blocked   3m  sent 2 recv 2 q0  "waiting for CI"
 ● carol@mac-3 claude-code 2.1  working   4m  sent 3 recv 0 q0  waiting on bob@vps-2 4m  "users.ts"
 "
 `;

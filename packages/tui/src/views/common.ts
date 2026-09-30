@@ -45,6 +45,7 @@ export function items(d: Derived, o: ViewOptions): TimelineItem[] {
 /** The short tick text for a message: ✓ with latency for one recipient, k/n for many. */
 export function ticks(m: MsgRow): Seg {
   if (m.redacted) return seg('withdrawn', { dim: true })
+  if (m.to === OPERATOR) return seg('for you', { color: 'yellow', bold: true })
   const n = m.recipients.length
   const k = [...m.deliveries.keys()].filter((r) => m.recipients.includes(r)).length
   if (m.to !== BROADCAST) {

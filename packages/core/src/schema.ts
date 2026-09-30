@@ -22,7 +22,7 @@ export const Iso = z.iso.datetime()
 export const Token = z.string().regex(TOKEN_RE)
 export const AgentName = z.string().regex(AGENT_RE)
 export const AddressStr = z.string().regex(ADDRESS_RE)
-export const Recipient = z.union([z.literal(BROADCAST), AddressStr])
+export const Recipient = z.union([z.literal(BROADCAST), z.literal(OPERATOR), AddressStr])
 export const Text = z.string().min(1).max(MAX_TEXT)
 export const AgentState = z.enum(['working', 'blocked', 'done', 'idle'])
 export const DeliveryVia = z.enum(['push', 'pull', 'ask'])
@@ -147,7 +147,7 @@ export function decode<S extends z.ZodType>(schema: S, data: Uint8Array): z.outp
 }
 
 export type Sender = Address | typeof OPERATOR
-export type To = Address | typeof BROADCAST
+export type To = Address | typeof BROADCAST | typeof OPERATOR
 
 /** One decoded event of stream COOP. `seq` is the stream sequence. */
 export type BusEvent =
@@ -190,11 +190,11 @@ export type BusEventInput = BusEvent extends infer E
   : never
 
 function toStr(to: To): string {
-  return to === BROADCAST ? BROADCAST : formatAddress(to)
+  return typeof to === 'string' ? to : formatAddress(to)
 }
 
 function fromStr(to: string): To {
-  if (to === BROADCAST) return BROADCAST
+  if (to === BROADCAST || to === OPERATOR) return to
   const a = parseAddress(to)
   if (a === undefined) throw new Error(`schema accepted a bad recipient: ${to}`)
   return a

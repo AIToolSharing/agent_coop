@@ -38,7 +38,7 @@ export const subject: fc.Arbitrary<Subject> = fc.oneof(
 )
 
 const sender = fc.oneof(address, fc.constant(OPERATOR))
-const recipient = fc.oneof(address, fc.constant(BROADCAST))
+const recipient = fc.oneof(address, fc.constant(BROADCAST), fc.constant(OPERATOR))
 
 export const evtPayload: fc.Arbitrary<EvtPayload> = fc.oneof(
   fc.record({

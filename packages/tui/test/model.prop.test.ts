@@ -1,4 +1,4 @@
-import { BROADCAST, formatAddress } from '@coop/core'
+import { BROADCAST, formatAddress, OPERATOR } from '@coop/core'
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import { type Derived, derive } from '../src/model.js'
@@ -53,6 +53,7 @@ describe('derive', () => {
     const d = derive(storeOf(sc.updates), SID)
     for (const m of d.messages) {
       if (m.to === BROADCAST) expect(m.recipients).not.toContain(m.from)
+      else if (m.to === OPERATOR) expect(m.recipients).toEqual([])
       else expect(m.recipients).toEqual([m.to])
     }
   })

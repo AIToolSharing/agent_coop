@@ -12,9 +12,9 @@ export const AGENT_RE = /^(?!(?:operator|all)$)[a-z0-9_-]{1,64}$/
 export const ADDRESS_RE = /^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$/
 /** A peer as a client writes it: an agent name or an address. */
 export const PEER_RE = /^(?!(?:operator|all)(?:@|$))[a-z0-9_-]{1,64}(?:@[a-z0-9_-]{1,64})?$/
-/** A recipient as a client writes it: `all` or a peer. */
+/** A recipient as a client writes it: `all`, `operator` (the user), or a peer. */
 export const RECIPIENT_RE =
-  /^(?:all|(?!(?:operator|all)(?:@|$))[a-z0-9_-]{1,64}(?:@[a-z0-9_-]{1,64})?)$/
+  /^(?:all|operator|(?!(?:operator|all)(?:@|$))[a-z0-9_-]{1,64}(?:@[a-z0-9_-]{1,64})?)$/
 
 /** Agent names that have a meaning in addressing. */
 export const RESERVED_AGENT_NAMES: ReadonlySet<string> = new Set(['operator', 'all'])

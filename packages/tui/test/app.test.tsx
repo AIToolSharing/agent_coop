@@ -96,11 +96,11 @@ describe('the TUI', () => {
     const app = start()
     await openSession(app)
     await app.type('r')
-    expect(app.frame()).toContain('withdraw message #17')
+    expect(app.frame()).toContain('withdraw message #18')
     await app.type('n')
     expect(calls).toEqual([])
     await app.type(KEY.up, 'r', 'y')
-    expect(calls).toEqual([`redact ${FIX_SID} 16`])
+    expect(calls).toEqual([`redact ${FIX_SID} 17`])
     app.unmount()
   })
 
