@@ -92,6 +92,36 @@ describe('inbox routing', () => {
   )
 })
 
+const leftNotice = (peer: string): Item => ({
+  kind: 'notice',
+  notice: { kind: 'peer_left', peer, at: '2026-09-30T00:00:00.000Z' },
+})
+
+describe('a peer leaves', () => {
+  test.prop([fc.boolean(), peer, peer])(
+    'peer_left ends every ask and every wait on that peer, and goes nowhere else',
+    async (push, waitedOn, left) => {
+      const { inbox, pushed, delivered } = harness(push)
+      const answer = inbox.expectReply('7', waitedOn, 30)
+      const onPeer = inbox.wait(waitedOn, 30)
+      const onAny = inbox.wait(undefined, 30)
+      await inbox.accept(leftNotice(left))
+      if (matchesPeer(waitedOn, left)) {
+        expect(await answer).toBe('peer_left')
+        expect(await onPeer).toEqual([leftNotice(left)])
+      } else {
+        expect(await answer).toBeUndefined()
+        expect(await onPeer).toEqual([])
+      }
+      // A wait for any message is about messages; it runs on.
+      expect(await onAny).toEqual([])
+      expect(pushed).toEqual([])
+      expect(inbox.unread).toBe(0)
+      expect(delivered).toEqual([])
+    },
+  )
+})
+
 describe('peer filters', () => {
   test.prop([
     fc.stringMatching(/^[a-z]{1,5}$/),

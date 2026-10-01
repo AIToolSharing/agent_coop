@@ -86,9 +86,14 @@ export function sessionSubjects(sid: string): string {
   return `coop.${sid}.>`
 }
 
-/** The subjects that an agent can receive from: agent messages and operator events. */
-export function deliverySubjects(sid: string): string[] {
+/** The subjects that carry messages: agent messages and operator events. */
+export function messageSubjects(sid: string): string[] {
   return [`coop.${sid}.msg.>`, `coop.${sid}.ops`]
+}
+
+/** The subjects that an agent receives from: messages, operator events, and peers' activity. */
+export function deliverySubjects(sid: string): string[] {
+  return [...messageSubjects(sid), `coop.${sid}.evt.>`]
 }
 
 /** A key in bucket coop_sessions. */

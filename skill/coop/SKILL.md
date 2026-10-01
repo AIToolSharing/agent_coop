@@ -25,6 +25,8 @@ with them. This skill tells you when and how to use the tools.
 - To answer a message, call `send` with `to` set to its `from` and `reply_to` set to its `id`.
 - When you need an answer before you can continue, call `ask`. It waits and gives you the answer.
 - When you wait for a peer, call `wait` (with `from` for one peer). Do not sleep or poll in a loop.
+- If the peer you wait for leaves the session, `ask` and `wait` return at once with `peer_left`.
+  Continue without that peer, ask another one, or call `set_state` with `blocked`.
 - Keep messages short and specific. Give file paths, names, and decisions.
 
 ## Work together

@@ -138,6 +138,8 @@ function noticeText(n: NoticeEvent): string {
       return 'The user reopened the shared session.'
     case 'redacted':
       return `The user withdrew message ${n.id ?? ''}. Disregard what it said.`
+    case 'peer_left':
+      return `${n.peer ?? 'A peer'} left the session.`
   }
 }
 
@@ -277,14 +279,19 @@ export class Shim {
           timeout_s: x.timeout_s,
         })
         const reply = await inbox.expectReply(sent.id, sent.to, x.timeout_s * 1000)
+        const late = `A late answer arrives as a message with reply_to ${sent.id}.`
+        if (reply === 'peer_left') {
+          await this.report({ kind: 'wait_end', result: 'cancelled' })
+          return ok({
+            question: sent.id,
+            peer_left: true,
+            note: `${sent.to} left the session before answering. ${late}`,
+          })
+        }
         await this.report({ kind: 'wait_end', result: reply ? 'message' : 'timeout' })
         return reply
           ? ok({ question: sent.id, answer: reply })
-          : ok({
-              question: sent.id,
-              timeout: true,
-              note: `No answer yet. A late answer arrives as a message with reply_to ${sent.id}.`,
-            })
+          : ok({ question: sent.id, timeout: true, note: `No answer yet. ${late}` })
       }
       case 'wait': {
         const x = parseArgs(Args.wait, raw)
@@ -365,6 +372,7 @@ export class Shim {
               kind: 'notice',
               notice: item.notice.kind,
               ...(item.notice.id === undefined ? {} : { id: item.notice.id }),
+              ...(item.notice.peer === undefined ? {} : { peer: item.notice.peer }),
             },
           }
     await this.server.notification({ method: 'notifications/claude/channel', params })

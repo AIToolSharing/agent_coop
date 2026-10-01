@@ -105,8 +105,11 @@ export const JoinedEvent = z.strictObject({ me: AddressStr, session: Token })
 
 /** SSE event `notice`: something the agent must know that is not a message. */
 export const NoticeEvent = z.strictObject({
-  kind: z.enum(['kicked', 'closed', 'reopened', 'redacted']),
+  kind: z.enum(['kicked', 'closed', 'reopened', 'redacted', 'peer_left']),
+  /** The withdrawn message, for `redacted`. */
   id: Id.optional(),
+  /** The peer that left, for `peer_left`. */
+  peer: AddressStr.optional(),
   at: Iso,
 })
 export type NoticeEvent = z.infer<typeof NoticeEvent>

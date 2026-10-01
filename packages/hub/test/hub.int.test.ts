@@ -326,6 +326,21 @@ describe('operator actions reach agents', () => {
   })
 })
 
+describe('peer presence', () => {
+  test("a peer's leave is a notice to the others; a join is not", async () => {
+    const sid = await session()
+    const a = await mac1.stream(sid, 'alice')
+    await a.next()
+    const b = await vps2.stream(sid, 'bob')
+    await b.next()
+    await expect(a.next((e) => e.event === 'notice', 300)).rejects.toThrow()
+    b.close()
+    const n = NoticeEvent.parse(data(await a.next((e) => e.event === 'notice')))
+    expect(n).toMatchObject({ kind: 'peer_left', peer: 'bob@vps-2' })
+    a.close()
+  })
+})
+
 describe('activity and presence', () => {
   test('state, waits and deliveries show in the view, presence, and the stream', async () => {
     const sid = await session()

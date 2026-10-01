@@ -244,6 +244,27 @@ describe('in a session', () => {
     )
   })
 
+  test('ask and wait(from) end when that peer leaves; a plain wait runs on', async () => {
+    const sid = await session()
+    const a = await agent('mac-1', { session: sid, agent: 'alice' })
+    const b = await agent('vps-2', { session: sid, agent: 'bob' })
+    const c = await agent('mac-3', { session: sid, agent: 'carol' })
+    for (const x of [a, b, c]) await joined(x)
+    const asking = a.json('ask', { to: 'bob', text: 'still there?', timeout_s: 10 })
+    const onBob = c.json('wait', { from: 'bob', timeout_s: 10 })
+    const onAny = c.json('wait', { timeout_s: 1 })
+    await new Promise((r) => setTimeout(r, 200))
+    await b.shim.stop()
+    expect(await asking).toMatchObject({ peer_left: true })
+    expect(await onBob).toMatchObject({
+      messages: [],
+      notices: [{ kind: 'peer_left', peer: 'bob@vps-2', text: 'bob@vps-2 left the session.' }],
+    })
+    expect(await onAny).toEqual({ timeout: true })
+    expect(await a.json('inbox')).toEqual({ messages: [], notices: [] })
+    expect(await c.json('inbox')).toEqual({ messages: [], notices: [] })
+  })
+
   test('wait(from) ignores other peers; their message stays in the inbox', async () => {
     const sid = await session()
     const a = await agent('mac-1', { session: sid, agent: 'alice' })

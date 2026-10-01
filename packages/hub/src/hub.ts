@@ -16,8 +16,8 @@ import {
   formatAddress,
   type HistoryResponse,
   Id,
-  isAgentName,
   isVisible,
+  messageSubjects,
   type NoticeEvent,
   OPERATOR,
   PresenceRecord,
@@ -228,6 +228,9 @@ export class Hub {
           conn.close('kicked')
         } else if (d === 'notice' && e.kind === 'redact') {
           await this.notice(conn, { kind: 'redacted', id: e.id, at: e.at }, String(e.seq))
+        } else if (d === 'notice' && e.kind === 'evt' && e.evt.kind === 'left') {
+          const n: NoticeEvent = { kind: 'peer_left', peer: formatAddress(e.from), at: e.evt.at }
+          await this.notice(conn, n, String(e.seq))
         }
       }
     } catch {
@@ -321,7 +324,7 @@ export class Hub {
   ): Promise<HistoryResponse> {
     const conn = this.requireConn(machine, sid, q.agent)
     const peer = q.with === undefined ? undefined : this.peer(sid, q.with, conn.me, true)
-    const events = await readRange(this.b.js, this.b.jsm, deliverySubjects(sid))
+    const events = await readRange(this.b.js, this.b.jsm, messageSubjects(sid))
     const me = conn.me
     const msgs: ApiMessage[] = []
     for (const e of events) {

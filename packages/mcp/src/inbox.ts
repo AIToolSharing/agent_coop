@@ -4,6 +4,8 @@
 //   3. a push into the session (channel), when push is on,
 //   4. the queue, for `inbox` and later `wait` calls.
 // Notices (removed, closed, reopened, withdrawn) follow the same order, without step 1.
+// A `peer_left` notice only ends the asks and the filtered waits on that peer; it goes nowhere
+// else, so that presence changes never wake an agent that did not wait for that peer.
 import type { ApiMessage, DeliveryVia, NoticeEvent } from '@coop/core'
 
 export type Item =
@@ -25,9 +27,12 @@ interface Waiter {
   resolve(items: Item[]): void
 }
 
+/** The end of an `ask`: the answer, or the asked peer left. Timeout gives undefined. */
+export type AskResult = ApiMessage | 'peer_left' | undefined
+
 interface Asker {
   readonly from: string
-  resolve(m: ApiMessage): void
+  resolve(r: AskResult): void
 }
 
 export class Inbox {
@@ -44,6 +49,10 @@ export class Inbox {
   }
 
   async accept(item: Item): Promise<void> {
+    if (item.kind === 'notice' && item.notice.kind === 'peer_left') {
+      this.peerLeft(item, item.notice.peer)
+      return
+    }
     if (item.kind === 'message') {
       const m = item.msg
       const a = m.reply_to === undefined ? undefined : this.asks.get(m.reply_to)
@@ -113,8 +122,23 @@ export class Inbox {
     })
   }
 
+  /** End every ask and every filtered wait on `peer`. */
+  private peerLeft(item: Item, peer: string | undefined) {
+    if (peer === undefined) return
+    for (const [id, a] of this.asks) {
+      if (!matchesPeer(a.from, peer)) continue
+      this.asks.delete(id)
+      a.resolve('peer_left')
+    }
+    for (const w of this.waiters) {
+      if (w.from === undefined || !matchesPeer(w.from, peer)) continue
+      this.waiters.delete(w)
+      w.resolve([item])
+    }
+  }
+
   /** Wait for the reply to message `id` from `from`. Resolves undefined on timeout. */
-  expectReply(id: string, from: string, timeoutMs: number): Promise<ApiMessage | undefined> {
+  expectReply(id: string, from: string, timeoutMs: number): Promise<AskResult> {
     const i = this.queue.findIndex(
       (it) => it.kind === 'message' && it.msg.reply_to === id && it.msg.from === from,
     )
@@ -131,9 +155,9 @@ export class Inbox {
       }, timeoutMs)
       this.asks.set(id, {
         from,
-        resolve: (m) => {
+        resolve: (r) => {
           clearTimeout(t)
-          resolve(m)
+          resolve(r)
         },
       })
     })

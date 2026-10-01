@@ -41,9 +41,14 @@ describe('delivery rules', () => {
     if (e.kind !== 'msg') expect(isVisible(e, me)).toBe(false)
   })
 
-  test.prop([busEvent, address])('activity events are never delivered', (e, me) => {
-    if (e.kind === 'evt') expect(deliveryFor(e, me, always)).toBeUndefined()
-  })
+  test.prop([busEvent, address])(
+    "of the activity events, only a peer's left is delivered, as a notice",
+    (e, me) => {
+      if (e.kind !== 'evt') return
+      const expected = e.evt.kind === 'left' && !sameAddress(e.from, me) ? 'notice' : undefined
+      expect(deliveryFor(e, me, always)).toBe(expected)
+    },
+  )
 
   test.prop([address, address, fc.integer({ min: 1 })])(
     'a kick is a notice only for its target',

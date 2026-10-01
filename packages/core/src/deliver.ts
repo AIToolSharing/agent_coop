@@ -17,7 +17,8 @@ export type Delivery = 'message' | 'notice'
 /**
  * What the hub pushes to `me` for one event:
  * - 'message': a message from someone else, sent to all or to me.
- * - 'notice': my own kick, or the redact of a message that `me` already got.
+ * - 'notice': my own kick, the redact of a message that `me` already got, or a peer's leave
+ *   (so that a wait on that peer can end).
  * - undefined: nothing.
  */
 export function deliveryFor(
@@ -33,6 +34,6 @@ export function deliveryFor(
     case 'redact':
       return wasDelivered(e.id) ? 'notice' : undefined
     case 'evt':
-      return undefined
+      return e.evt.kind === 'left' && !sameAddress(e.from, me) ? 'notice' : undefined
   }
 }
