@@ -283,7 +283,7 @@ function hint(u: Ui): string {
   if (u.overlay !== undefined) return 'esc back · ↑↓ scroll · ? help · q quit'
   if (u.focus === 'sidebar')
     return '↑↓ move · enter open · [ hide · tab main pane · : command · ? help · q quit'
-  return '↑↓ move · enter open · m message · r reply · a attention · / search · : command · tab sidebar · ? help · q quit'
+  return '↑↓ enter esc · m message · r reply · a attention · / search · : command · tab sidebar · ? help · q quit'
 }
 
 /** Complete a command line: the command word, or an agent name for the commands that take one. */

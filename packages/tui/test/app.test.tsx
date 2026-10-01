@@ -93,6 +93,8 @@ describe('the TUI', () => {
     const app = start()
     await openSession(app)
     expect(app.frame()).toContain('AGENTS · build-42')
+    expect(app.frame()).toContain('● alice@mac-1 working')
+    expect(app.frame()).toContain('● bob@vps-2 blocked')
     // Down past docs (a session row: pointing at it changes nothing) to bob.
     await app.type(KEY.tab, KEY.down, KEY.down, KEY.down)
     expect(app.frame()).toContain(`coop · ${FIX_SID} · transcript`)

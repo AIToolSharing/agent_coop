@@ -54,12 +54,13 @@ export function sidebarWidth(
   agents: readonly AgentRow[],
   max: number,
 ): number {
+  // A session row: icon, name, counts. An agent row: icon, name, state, wait marker.
   const longest = Math.max(
-    12,
-    ...sessions.map((s) => s.sid.length + 12),
-    ...agents.map((a) => a.address.length + 12),
+    14,
+    ...sessions.map((s) => s.sid.length + 14),
+    ...agents.map((a) => a.address.length + 18),
   )
-  return Math.min(max, longest)
+  return Math.min(Math.max(max, 26), longest)
 }
 
 export function renderSidebar(
@@ -113,7 +114,8 @@ export function renderSidebar(
       const state = a.kicked
         ? seg('removed', { color: 'red' })
         : seg(a.state, { color: STATE_COLOR[a.state] })
-      const nameW = Math.max(4, width - 2 - 1 - Math.max(7, state.text.length) - 3)
+      // Icon, name, a space, the state, and room for the wait marker when there is one.
+      const nameW = Math.max(6, width - 3 - state.text.length - (a.waiting ? 6 : 0))
       add(
         [
           seg(a.online ? '● ' : '○ ', { color: a.online ? 'green' : 'gray' }),
