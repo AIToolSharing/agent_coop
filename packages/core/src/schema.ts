@@ -116,9 +116,15 @@ export const PresenceRecord = z.strictObject({
     .optional(),
 })
 
-/** Value of key <machine> in bucket coop_tokens. Only the SHA-256 of a token is stored. */
+/** What a token allows: an agent machine, or the operator (the admin API and the TUI). */
+export const TokenRole = z.enum(['machine', 'operator'])
+export type TokenRole = z.infer<typeof TokenRole>
+
+/** Value of key <name> in bucket coop_tokens. Only the SHA-256 of a token is stored. */
 export const TokenRecord = z.strictObject({
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  /** Records from before roles existed have none; they are machine tokens. */
+  role: TokenRole.default('machine'),
   created_at: Iso,
   revoked_at: Iso.optional(),
 })

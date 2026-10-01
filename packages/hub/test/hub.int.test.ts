@@ -48,6 +48,22 @@ describe('authentication', () => {
     const res = await fetch(`${h.base}/v1/sessions/${sid}`)
     expect(res.status).toBe(401)
   })
+
+  test('an operator token cannot act as an agent: 403 on the agent routes', async () => {
+    const sid = await session()
+    const op = new Api(h.base, await h.operatorToken('matt'))
+    const r = await op.view(sid, 'a')
+    expect(r.status).toBe(403)
+    expect(err(r.json).message).toContain('operator token')
+    expect((await op.stream(sid, 'a')).status).toBe(403)
+    const { listTokens } = await import('../src/tokens.js')
+    expect(await listTokens(h.hubBroker.tokens)).toContainEqual(
+      expect.objectContaining({ name: 'matt', role: 'operator' }),
+    )
+    expect(await listTokens(h.hubBroker.tokens)).toContainEqual(
+      expect.objectContaining({ name: 'mac-1', role: 'machine' }),
+    )
+  })
 })
 
 describe('joining', () => {

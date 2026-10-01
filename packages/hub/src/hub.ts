@@ -44,7 +44,7 @@ import {
 } from '@coop/core/broker'
 import { HubError } from './errors.js'
 import { RateLimiter } from './limiter.js'
-import { verifyToken } from './tokens.js'
+import { type TokenOwner, verifyToken } from './tokens.js'
 
 /** Where a connection's server-sent events go. */
 export interface Sink {
@@ -182,11 +182,11 @@ export class Hub {
     for (const c of this.conns.values()) c.close('disconnected')
   }
 
-  async auth(header: string | undefined): Promise<string> {
+  async auth(header: string | undefined): Promise<TokenOwner> {
     const token = header?.match(/^Bearer (\S+)$/)?.[1]
-    const machine = token === undefined ? undefined : await verifyToken(this.b.tokens, token)
-    if (machine === undefined) throw new HubError('unauthorized', 'missing or invalid token')
-    return machine
+    const owner = token === undefined ? undefined : await verifyToken(this.b.tokens, token)
+    if (owner === undefined) throw new HubError('unauthorized', 'missing or invalid token')
+    return owner
   }
 
   /** Check a join and reserve the name. The caller then runs the stream with `run`. */

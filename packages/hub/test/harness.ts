@@ -14,6 +14,7 @@ export interface Harness {
   readonly op: Operator
   readonly hub: Hub
   token(machine: string): Promise<string>
+  operatorToken(name: string): Promise<string>
   /** Stop the hub and start a new one on the same port and broker, as a restart would. */
   restartHub(): Promise<void>
   stop(): Promise<void>
@@ -45,6 +46,7 @@ export async function startHub(
       return hub
     },
     token: (machine) => issueToken(hubBroker.tokens, machine),
+    operatorToken: (name) => issueToken(hubBroker.tokens, name, 'operator'),
     async restartHub() {
       await shutdown()
       hub = new Hub(hubBroker, limits, options)

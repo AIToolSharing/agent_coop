@@ -2,9 +2,10 @@
 // coop-hub: the HTTPS-facing service (behind a TLS proxy), and its token and session commands.
 //
 //   coop-hub serve                    start the API
-//   coop-hub token add <machine>      print a new token for a machine (replaces its old token)
-//   coop-hub token list               list machines and token state
-//   coop-hub token revoke <machine>   revoke a machine's token; its agents drop out
+//   coop-hub token add <machine>      print a new token for an agent machine (replaces its old one)
+//   coop-hub token add --operator <name>  print a new operator token (the admin API and the TUI)
+//   coop-hub token list               list tokens: name, role, state
+//   coop-hub token revoke <name>      revoke a token; a machine's agents drop out
 //   coop-hub session add <sid> [title]  create an open session
 //   coop-hub session list             list sessions and their state
 //   coop-hub session close <sid>      close a session; its agents are disconnected
@@ -23,7 +24,7 @@ import { Hub } from './hub.js'
 import { issueToken, listTokens, revokeToken } from './tokens.js'
 
 const USAGE = `usage: coop-hub serve
-       coop-hub token add <machine> | list | revoke <machine>
+       coop-hub token add [--operator] <name> | list | revoke <name>
        coop-hub session add <sid> [title] | list | close <sid> | reopen <sid> | delete <sid>`
 
 async function main(argv: string[]): Promise<number> {
@@ -58,7 +59,7 @@ async function main(argv: string[]): Promise<number> {
   }
 
   try {
-    if (cmd === 'token') return await token(broker.tokens, sub, arg)
+    if (cmd === 'token') return await token(broker.tokens, sub, arg, extra)
     if (cmd === 'session') return await session(new Operator(broker), sub, arg, extra)
     console.error(USAGE)
     return 2
@@ -75,15 +76,22 @@ async function token(
   tokens: Parameters<typeof issueToken>[0],
   sub: string | undefined,
   arg: string | undefined,
+  extra: string | undefined,
 ): Promise<number> {
   if (sub === 'add' && arg !== undefined) {
-    console.log(await issueToken(tokens, arg))
+    const operator = arg === '--operator'
+    const name = operator ? extra : arg
+    if (name === undefined) {
+      console.error(USAGE)
+      return 2
+    }
+    console.log(await issueToken(tokens, name, operator ? 'operator' : 'machine'))
     return 0
   }
   if (sub === 'list') {
     for (const t of await listTokens(tokens)) {
       console.log(
-        `${t.machine}\tcreated ${t.created_at}\t${t.revoked_at ? `revoked ${t.revoked_at}` : 'valid'}`,
+        `${t.name}\t${t.role}\tcreated ${t.created_at}\t${t.revoked_at ? `revoked ${t.revoked_at}` : 'valid'}`,
       )
     }
     return 0

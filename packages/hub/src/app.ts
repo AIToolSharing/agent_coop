@@ -135,8 +135,12 @@ export function createApp(hub: Hub) {
         c.json({ error: 'too_large', message: 'body too large' } satisfies ErrorBody, 413),
     }),
   )
-  app.use('/v1/*', async (c, next) => {
-    c.set('machine', await hub.auth(c.req.header('authorization')))
+  app.use('/v1/sessions/*', async (c, next) => {
+    const who = await hub.auth(c.req.header('authorization'))
+    if (who.role !== 'machine') {
+      throw new HubError('forbidden', 'an operator token cannot act as an agent')
+    }
+    c.set('machine', who.name)
     await next()
   })
 

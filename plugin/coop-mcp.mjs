@@ -8049,8 +8049,12 @@ strictObject({
 		since: Iso
 	}).optional()
 });
+/** What a token allows: an agent machine, or the operator (the admin API and the TUI). */
+const TokenRole = _enum(["machine", "operator"]);
 strictObject({
 	sha256: string().regex(/^[0-9a-f]{64}$/),
+	/** Records from before roles existed have none; they are machine tokens. */
+	role: TokenRole.default("machine"),
 	created_at: Iso,
 	revoked_at: Iso.optional()
 });

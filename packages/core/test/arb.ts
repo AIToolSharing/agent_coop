@@ -139,6 +139,11 @@ export const presenceRecord: fc.Arbitrary<PresenceRecord> = fc.record(
 )
 
 export const tokenRecord: fc.Arbitrary<TokenRecord> = fc.record(
-  { sha256: fc.stringMatching(/^[0-9a-f]{64}$/), created_at: iso, revoked_at: iso },
-  { requiredKeys: ['sha256', 'created_at'] },
+  {
+    sha256: fc.stringMatching(/^[0-9a-f]{64}$/),
+    role: fc.constantFrom('machine', 'operator' as const),
+    created_at: iso,
+    revoked_at: iso,
+  },
+  { requiredKeys: ['sha256', 'role', 'created_at'] },
 )
