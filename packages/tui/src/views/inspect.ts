@@ -176,38 +176,3 @@ export function renderMessage(d: Derived, id: string | undefined, o: ViewOptions
   }
   return { lines, ids }
 }
-
-/** The agents pane: one row per agent of the session. */
-export function renderAgents(agents: readonly AgentRow[], o: ViewOptions): Rendered {
-  if (agents.length === 0) return note('no agents yet', o.width)
-  const w = Math.min(28, Math.max(...agents.map((a) => [...a.address].length)) + 1)
-  const lines = agents.map((a) => {
-    const sel = a.address === o.selected
-    const wait = a.waiting
-      ? `  waiting on ${a.waiting.on ?? 'any'} ${age(a.waiting.since, o.now)}`
-      : ''
-    const state = a.kicked
-      ? seg('removed '.padEnd(8), { color: 'red' })
-      : seg(`${a.state.padEnd(8)}`, { color: STATE_COLOR[a.state] })
-    return fitLine(
-      [
-        seg(a.online ? '● ' : '○ ', { color: a.online ? 'green' : 'gray' }),
-        seg(fit(a.address, w), { bold: true, inverse: sel }),
-        seg(`${(a.client ?? '').padEnd(16)} `, { dim: true }),
-        state,
-        seg(`${a.stateSince ? age(a.stateSince, o.now) : ''}`.padStart(4), { dim: true }),
-        seg(`  sent ${a.sent} recv ${a.received} q${a.queued}`),
-        a.via === undefined
-          ? seg('')
-          : seg(a.via === 'push' ? '  push' : '  poll', {
-              dim: a.via === 'push',
-              color: a.via === 'push' ? undefined : 'yellow',
-            }),
-        seg(wait, { color: 'yellow' }),
-        seg(a.note ? `  "${a.note}"` : '', { dim: true }),
-      ],
-      o.width,
-    )
-  })
-  return { lines, ids: agents.map((a) => a.address) }
-}

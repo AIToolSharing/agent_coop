@@ -4,9 +4,8 @@ import { describe, expect } from 'vitest'
 import { derive } from '../src/model.js'
 import { attention } from '../src/views/attention.js'
 import type { ViewOptions } from '../src/views/common.js'
-import { renderAgent, renderAgents, renderMessage } from '../src/views/inspect.js'
+import { renderAgent, renderMessage } from '../src/views/inspect.js'
 import { len, plain, type Rendered } from '../src/views/line.js'
-import { renderLog } from '../src/views/log.js'
 import { renderMatrix } from '../src/views/matrix.js'
 import { laneNames, lanes, renderSequence } from '../src/views/sequence.js'
 import { renderSidebar, summarize } from '../src/views/sidebar.js'
@@ -24,7 +23,6 @@ describe('every view fits its width', () => {
       const d = derive(store, SID)
       const o: ViewOptions = { width, now: NOW, system }
       const views: Rendered[] = [
-        renderLog(d, o),
         renderTranscript(d, o),
         renderSidebar(summarize(store, NOW), d.agents, { sid: SID, cursor: 1 }, width, NOW),
         renderSequence(d, o),
@@ -32,7 +30,6 @@ describe('every view fits its width', () => {
         renderMatrix(d, o),
         renderAgent(d, d.agents[0]?.address, o),
         renderMessage(d, d.messages[0]?.id, o),
-        renderAgents(d.agents, o),
       ]
       for (const v of views) {
         expect(v.ids.length).toBe(v.lines.length)

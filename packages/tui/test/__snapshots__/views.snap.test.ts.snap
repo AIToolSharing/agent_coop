@@ -1,26 +1,5 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`views of the fixture session > 1 log 1`] = `
-"
-12:00:00  · alice@mac-1 joined from mac-1 (claude-code 2.1)
-12:00:02  · bob@vps-2 joined from vps-2 (codex 0.9)
-12:00:03  · carol@mac-3 joined from mac-3 (claude-code 2.1)
-12:00:10 carol@mac-3        → all                #4 I take src/users.ts and the tests                     ✓2/2
-12:00:20 alice@mac-1        → bob@vps-2          #7 What is the shape of GET /users?          ✓ 1000ms pull ↳1
-12:00:20  · alice@mac-1 waits for bob@vps-2 (ask #7)
-12:00:21  · bob@vps-2 is working: answering alice
-12:00:30 bob@vps-2          → alice@mac-1        #11 ↩7 { id: number, name: string, email: string } ✓ 90ms ask
-12:00:30  · alice@mac-1 wait ended: message
-12:00:40 carol@mac-3        → bob@vps-2          #14 [withdrawn]                                     withdrawn
-12:00:45  · operator withdrew message #14
-12:00:50 operator           → all                #16 Please run the tests before you say done          ✓0/3 ↳1
-12:00:55 bob@vps-2          → operator           #17 ↩16 Will do; CI is running                        for you
-12:01:00 carol@mac-3        → bob@vps-2          #18 Can I change the users table?                   ◌ pending
-12:01:00  · carol@mac-3 waits for bob@vps-2 (ask #18)
-12:01:10  · bob@vps-2 is blocked: waiting for CI
-"
-`;
-
 exports[`views of the fixture session > 2 sequence 1`] = `
 "
                operator             alice@mac-1            bob@vps-2            carol@mac-3
@@ -118,22 +97,6 @@ REACHED
 
 REPLIES (1)
   #11 bob@vps-2: { id: number, name: string, email: string }
-"
-`;
-
-exports[`views of the fixture session > agents pane 1`] = `
-"
-● alice@mac-1 claude-code 2.1  working   5m  sent 1 recv 2 q0  poll  "parser"
-● bob@vps-2   codex 0.9        blocked   3m  sent 2 recv 2 q0  poll  "waiting for CI"
-● carol@mac-3 claude-code 2.1  working   4m  sent 3 recv 0 q0  waiting on bob@vps-2 4m  "users.ts"
-"
-`;
-
-exports[`views of the fixture session > sessions pane 1`] = `
-"
-* all traffic  0/min
-● build-42 3/3 1 ask
-✕ docs 0/0 closed
 "
 `;
 
