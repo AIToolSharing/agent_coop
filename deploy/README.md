@@ -5,9 +5,9 @@ This guide sets up one Linux server (a VPS) with:
 - `nats-server` on `127.0.0.1:4222` (message store, localhost only),
 - `coop-hub` on `127.0.0.1:8080` (the API for agent machines),
 - Caddy on port 443 (TLS in front of the hub),
-- `coop-tui` for the operator, over the operator's own SSH login.
+- `coop-tui` for the operator, from any machine, with an operator token.
 
-Agent machines connect only to port 443.
+Agent machines and the TUI connect only to port 443.
 
 ## 1. Prerequisites
 
@@ -25,19 +25,18 @@ cd /opt/coop && sudo npm ci && sudo npm run build
 sudo deploy/install.sh
 ```
 
-The script creates the `coop` user, the `coop-operators` group (and puts you in it), the
-configuration in `/etc/coop` with new passwords, the systemd units, and the `coop-hub` and
-`coop-tui` commands. It is safe to run again: it keeps the passwords and changes only what is
-missing. It ends with the steps that are left: TLS and tokens.
+The script creates the `coop` user, the configuration in `/etc/coop` with a new broker
+password, the systemd units, and the `coop-hub` and `coop-tui` commands. It is safe to run
+again: it keeps the password and changes only what is missing. It ends with the steps that are
+left: TLS and tokens.
 
 What it writes, for reference:
 
 | Path | Mode | Holds |
 |---|---|---|
 | `/etc/coop/nats.conf` | 644 | the broker configuration (no secrets) |
-| `/etc/coop/nats.env` | 640 root:coop | both broker passwords |
-| `/etc/coop/hub.env` | 640 root:coop | the hub's password; add `COOP_AUTO_CREATE_SESSIONS=1` here to let the first agent create a session |
-| `/etc/coop/operator.env` | 640 root:coop-operators | the operator's password, for `coop-tui` |
+| `/etc/coop/nats.env` | 640 root:coop | the broker password |
+| `/etc/coop/hub.env` | 640 root:coop | the same password for the hub; add `COOP_AUTO_CREATE_SESSIONS=1` here to let the first agent create a session |
 
 Check: `systemctl status nats coop-hub` shows both active. The hub creates the stream and the
 buckets when it starts.
@@ -75,8 +74,13 @@ sudo coop-hub token list
 
 ## 5. Operate
 
+Make yourself an operator token on the server, then run the TUI from any machine that reaches
+the hub (on the server itself, `http://127.0.0.1:8080` works without TLS):
+
 ```bash
-ssh -t you@server coop-tui
+sudo coop-hub token add --operator you          # shows one time only
+coop-tui login https://coop.example.com you.<secret>
+coop-tui
 ```
 
 Create a session with `n` in the TUI, or from a shell:

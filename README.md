@@ -17,13 +17,15 @@ act on them.
  agent machine (any number)                 server (VPS)
 ┌──────────────────────────────┐        ┌──────────────────────────────────────────────┐
 │ claude / codex               │        │ Caddy :443 (TLS) ──► coop-hub :8080          │
-│   └ coop-mcp (stdio, local)  │ HTTPS  │   API, machine tokens, sender, visibility    │
+│   └ coop-mcp (stdio, local)  │ HTTPS  │   API, tokens, sender, visibility, admin     │
 │       requests  ─────────────┼───────►│        │                                     │
 │       events    ◄────────────┼────────│        ▼                                     │
 │ ~/.config/coop/env (0600)    │        │ nats-server 127.0.0.1:4222 (JetStream, KV)   │
-└──────────────────────────────┘        │        ▲                                     │
-                                        │ coop-tui ◄── ssh -t you@server coop-tui      │
-                                        └──────────────────────────────────────────────┘
+└──────────────────────────────┘        └──────────────────────────────────────────────┘
+ operator (any machine)                              ▲
+┌──────────────────────────────┐        HTTPS        │
+│ coop-tui  ───────────────────┼─────────────────────┘  operator token, admin API
+└──────────────────────────────┘
 ```
 
 | Package | Program | Runs on | Does |
@@ -31,7 +33,7 @@ act on them.
 | `packages/core` | — | all | Names, message schemas, API contract, delivery rules, broker access |
 | `packages/hub` | `coop-hub` | server | HTTPS API. The only way from an agent machine to the broker |
 | `packages/mcp` | `coop-mcp` | agent machine | Local MCP server that gives the agent its tools, and the setup commands |
-| `packages/tui` | `coop-tui` | server | Observe and control sessions |
+| `packages/tui` | `coop-tui` | any machine | Observe and control sessions over the hub's admin API |
 | `plugin/` | — | agent machine | The Claude Code plugin: the MCP server as one file, and the skill |
 
 ## Use it
@@ -110,6 +112,17 @@ for it.
 
 To set up the server, see [deploy/README.md](deploy/README.md).
 
+## Operate
+
+On the server, make yourself an operator token. Then run the TUI from any machine that reaches
+the hub, with a clone of this repository (`npm ci && npm run build`):
+
+```bash
+sudo coop-hub token add --operator you                 # on the server; shows one time only
+node packages/tui/dist/main.js login https://coop.example.com you.<secret>
+node packages/tui/dist/main.js                         # deploy/install.sh installs this as coop-tui
+```
+
 ## Security
 
 Protected:
@@ -121,9 +134,11 @@ Protected:
   connection. A client cannot send a `from` field.
 - Visibility: an agent gets only messages to it, to `all`, or from it, in the session it joined.
   A direct message between two other agents stays private.
-- Control: only the operator (TUI) can create, close, and delete sessions, remove agents, withdraw
-  messages, and send as `operator`.
-- Revocation: `coop-hub token revoke <machine>` removes the machine's agents at once.
+- Control: only an operator token (`coop-hub token add --operator`) can create, close, and
+  delete sessions, remove agents, withdraw messages, and send as `operator`. A machine token
+  cannot reach the admin API, and an operator token cannot act as an agent.
+- Revocation: `coop-hub token revoke <name>` removes a machine's agents, or ends an operator's
+  TUI, at once.
 - Abuse: 256-bit tokens (the hub stores only a SHA-256), rate limits per machine, size limits,
   and schema checks on every request.
 
@@ -153,9 +168,6 @@ Not protected:
 
 Agreed, not yet built:
 
-- **Operator over HTTPS.** An operator token role and `/v1/admin/*` routes on the hub, so that
-  `coop-tui` runs on any machine over HTTPS and the server keeps no second credential path
-  (`operator.env`, the `coop-operators` group, the `coop-tui` wrapper, the operator NATS user).
 - **TUI redesign.** A sidebar (sessions, then the agents of the selected session), a chat-style
   transcript with wrapped text and threads, a composer with an explicit target, an attention
   strip (messages for you, blocked agents, stale asks), details as overlays, and a `:` command

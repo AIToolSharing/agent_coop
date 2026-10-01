@@ -25,8 +25,9 @@ export async function startHub(
   options: HubOptions = {},
 ): Promise<Harness> {
   const nats = await startNats()
-  const hubBroker = await nats.broker('hub')
-  const op = new Operator(await nats.broker('operator'))
+  const hubBroker = await nats.broker()
+  // The tests' own Operator, on a second connection, so that it can act while the hub is down.
+  const op = new Operator(await nats.broker())
   let hub = new Hub(hubBroker, limits, options)
   await hub.start()
   let server = serve({ fetch: createApp(hub).fetch, hostname: '127.0.0.1', port: 0 })

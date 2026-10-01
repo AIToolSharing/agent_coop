@@ -11,12 +11,11 @@ import { type Broker, openBroker } from '../../src/broker/index.js'
 const CONF = fileURLToPath(new URL('../../../../deploy/nats.conf', import.meta.url))
 
 export const HUB_PASS = 'hub-test-pw'
-export const OPERATOR_PASS = 'operator-test-pw'
 
 export interface TestNats {
   readonly url: string
-  /** Open a broker connection as user `hub` or `operator`. */
-  broker(user?: 'hub' | 'operator'): Promise<Broker>
+  /** Open a broker connection as user `hub`, the only user. */
+  broker(): Promise<Broker>
   /** Stop the server process and keep its store (for restart tests). */
   kill(): Promise<void>
   /** Start the server again on the same port and store. */
@@ -76,11 +75,7 @@ export async function startNats(): Promise<TestNats> {
 
   const start = async () => {
     proc = spawn('nats-server', ['-c', conf], {
-      env: {
-        ...process.env,
-        COOP_HUB_NATS_PASSWORD: HUB_PASS,
-        COOP_OPERATOR_NATS_PASSWORD: OPERATOR_PASS,
-      },
+      env: { ...process.env, COOP_HUB_NATS_PASSWORD: HUB_PASS },
       stdio: ['ignore', 'ignore', 'pipe'],
     })
     await waitReady(proc)
@@ -98,13 +93,8 @@ export async function startNats(): Promise<TestNats> {
   await start()
   return {
     url,
-    async broker(user = 'operator') {
-      const b = await openBroker({
-        servers: url,
-        user,
-        pass: user === 'hub' ? HUB_PASS : OPERATOR_PASS,
-        name: `test-${user}`,
-      })
+    async broker() {
+      const b = await openBroker({ servers: url, user: 'hub', pass: HUB_PASS, name: 'test-hub' })
       open.push(b)
       return b
     },

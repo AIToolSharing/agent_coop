@@ -30,7 +30,7 @@ let op: Operator
 
 beforeAll(async () => {
   nats = await startNats()
-  b = await nats.broker('operator')
+  b = await nats.broker()
   op = new Operator(b)
 })
 afterAll(async () => {
@@ -57,7 +57,7 @@ describe('infrastructure', () => {
   })
 
   test('setup is idempotent: a second privileged connection succeeds', async () => {
-    const again = await nats.broker('hub')
+    const again = await nats.broker()
     expect((await again.jsm.streams.info(STREAM_NAME)).config.name).toBe(STREAM_NAME)
   })
 

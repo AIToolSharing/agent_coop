@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# Start the operator TUI with the operator credential. Install as /usr/local/bin/coop-tui.
-# Only members of group coop-operators can read /etc/coop/operator.env.
+# Start the operator TUI from the clone. Install as /usr/local/bin/coop-tui.
+# It talks to the hub over HTTP with an operator token; see: coop-tui login.
 set -euo pipefail
-set -a
-# shellcheck source=/dev/null
-. /etc/coop/operator.env
-set +a
-exec node /opt/coop/packages/tui/dist/main.js
+exec node /opt/coop/packages/tui/dist/main.js "$@"
