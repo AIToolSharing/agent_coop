@@ -17,55 +17,32 @@ Agent machines connect only to port 443.
 - Open ports: 22 (SSH), 80 (certificate challenge), 443. Keep 4222 and 8080 closed; both
   services listen on localhost only.
 
-## 2. Install the code
+## 2. Install
 
 ```bash
-sudo useradd --system --home /opt/coop --shell /usr/sbin/nologin coop
 sudo git clone <this repository> /opt/coop
 cd /opt/coop && sudo npm ci && sudo npm run build
-sudo chown -R root:root /opt/coop
+sudo deploy/install.sh
 ```
 
-## 3. Configuration and secrets
+The script creates the `coop` user, the `coop-operators` group (and puts you in it), the
+configuration in `/etc/coop` with new passwords, the systemd units, and the `coop-hub` and
+`coop-tui` commands. It is safe to run again: it keeps the passwords and changes only what is
+missing. It ends with the steps that are left: TLS and tokens.
 
-```bash
-sudo mkdir -p /etc/coop
-sudo cp /opt/coop/deploy/nats.conf /etc/coop/nats.conf
-HUB_PW=$(openssl rand -hex 32)
-OP_PW=$(openssl rand -hex 32)
+What it writes, for reference:
 
-# nats-server gets both passwords.
-printf 'COOP_HUB_NATS_PASSWORD=%s\nCOOP_OPERATOR_NATS_PASSWORD=%s\n' "$HUB_PW" "$OP_PW" \
-  | sudo tee /etc/coop/nats.env >/dev/null
-# The hub gets its own password only. Add COOP_AUTO_CREATE_SESSIONS=1 to let the first agent
-# that joins an unknown session create it; without it, the operator creates each session.
-printf 'COOP_HUB_NATS_PASSWORD=%s\nCOOP_HUB_LISTEN=127.0.0.1:8080\n' "$HUB_PW" \
-  | sudo tee /etc/coop/hub.env >/dev/null
-# The TUI gets the operator password only.
-printf 'COOP_OPERATOR_NATS_PASSWORD=%s\n' "$OP_PW" | sudo tee /etc/coop/operator.env >/dev/null
-
-sudo groupadd --force coop-operators
-sudo usermod -aG coop-operators "$USER"
-sudo chown root:coop /etc/coop/nats.env /etc/coop/hub.env
-sudo chmod 640 /etc/coop/nats.env /etc/coop/hub.env
-sudo chown root:coop-operators /etc/coop/operator.env
-sudo chmod 640 /etc/coop/operator.env
-unset HUB_PW OP_PW
-```
-
-## 4. Services
-
-```bash
-sudo cp /opt/coop/deploy/nats.service /opt/coop/deploy/coop-hub.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now nats coop-hub
-sudo install -m 755 /opt/coop/deploy/coop-tui /opt/coop/deploy/coop-hub /usr/local/bin/
-```
+| Path | Mode | Holds |
+|---|---|---|
+| `/etc/coop/nats.conf` | 644 | the broker configuration (no secrets) |
+| `/etc/coop/nats.env` | 640 root:coop | both broker passwords |
+| `/etc/coop/hub.env` | 640 root:coop | the hub's password; add `COOP_AUTO_CREATE_SESSIONS=1` here to let the first agent create a session |
+| `/etc/coop/operator.env` | 640 root:coop-operators | the operator's password, for `coop-tui` |
 
 Check: `systemctl status nats coop-hub` shows both active. The hub creates the stream and the
 buckets when it starts.
 
-## 5. TLS
+## 3. TLS
 
 ```bash
 sudo cp /opt/coop/deploy/Caddyfile /etc/caddy/Caddyfile
@@ -80,7 +57,7 @@ curl -s https://coop.example.com/openapi.json | head -c 80          # the API do
 curl -s -o /dev/null -w '%{http_code}\n' https://coop.example.com/v1/sessions/x   # 401
 ```
 
-## 6. Add an agent machine
+## 4. Add an agent machine
 
 On the server, make a token for the machine. The token shows one time only:
 
@@ -96,7 +73,7 @@ sudo coop-hub token revoke laptop
 sudo coop-hub token list
 ```
 
-## 7. Operate
+## 5. Operate
 
 ```bash
 ssh -t you@server coop-tui
@@ -120,7 +97,7 @@ that only a newer schema allows.
 
 ```bash
 cd /opt/coop && sudo git pull && sudo npm ci && sudo npm run build
-sudo systemctl restart coop-hub
+sudo deploy/install.sh
 ```
 
 Then restart each open TUI and each agent session.

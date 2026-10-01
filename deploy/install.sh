@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Set up the coop server on one Linux host with systemd: nats-server and coop-hub on localhost,
+# their passwords, the operator group, and the command wrappers. Run it again after an upgrade;
+# it changes only what is missing. TLS (Caddy) and tokens stay manual steps; it prints them.
+#
+#   sudo deploy/install.sh            from a clone at /opt/coop (see deploy/README.md)
+#
+# Environment:
+#   COOP_HOME       the clone, default /opt/coop
+#   COOP_OPERATOR   the login that gets the operator group, default the user who ran sudo
+set -euo pipefail
+
+home=${COOP_HOME:-/opt/coop}
+operator=${COOP_OPERATOR:-${SUDO_USER:-}}
+etc=/etc/coop
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "run as root: sudo $0" >&2
+  exit 2
+fi
+for cmd in node nats-server systemctl openssl; do
+  if ! command -v "$cmd" >/dev/null; then
+    echo "missing: $cmd (see deploy/README.md, Prerequisites)" >&2
+    exit 2
+  fi
+done
+if [ ! -f "$home/packages/hub/dist/main.js" ]; then
+  echo "no build in $home: run (cd $home && npm ci && npm run build) first" >&2
+  exit 2
+fi
+
+step() { printf '\n== %s\n' "$*"; }
+
+step "user and group"
+getent group coop >/dev/null || groupadd --system coop
+id coop >/dev/null 2>&1 || useradd --system --gid coop --home "$home" --shell /usr/sbin/nologin coop
+getent group coop-operators >/dev/null || groupadd coop-operators
+if [ -n "$operator" ]; then
+  usermod -aG coop-operators "$operator"
+  echo "$operator is in coop-operators (log in again for it to apply)"
+fi
+
+step "configuration in $etc"
+install -d -m 755 "$etc"
+install -m 644 "$home/deploy/nats.conf" "$etc/nats.conf"
+if [ ! -f "$etc/nats.env" ]; then
+  hub_pw=$(openssl rand -hex 32)
+  op_pw=$(openssl rand -hex 32)
+  printf 'COOP_HUB_NATS_PASSWORD=%s\nCOOP_OPERATOR_NATS_PASSWORD=%s\n' "$hub_pw" "$op_pw" >"$etc/nats.env"
+  printf 'COOP_HUB_NATS_PASSWORD=%s\nCOOP_HUB_LISTEN=127.0.0.1:8080\n' "$hub_pw" >"$etc/hub.env"
+  printf 'COOP_OPERATOR_NATS_PASSWORD=%s\n' "$op_pw" >"$etc/operator.env"
+  unset hub_pw op_pw
+  echo "wrote new passwords to nats.env, hub.env, operator.env"
+else
+  echo "nats.env exists; passwords kept"
+fi
+chown root:coop "$etc/nats.env" "$etc/hub.env"
+chmod 640 "$etc/nats.env" "$etc/hub.env"
+chown root:coop-operators "$etc/operator.env"
+chmod 640 "$etc/operator.env"
+
+step "services"
+install -m 644 "$home/deploy/nats.service" "$home/deploy/coop-hub.service" /etc/systemd/system/
+install -m 755 "$home/deploy/coop-tui" "$home/deploy/coop-hub" /usr/local/bin/
+chown -R root:root "$home"
+systemctl daemon-reload
+systemctl enable --now nats coop-hub
+systemctl restart coop-hub
+sleep 1
+systemctl --no-pager --quiet is-active nats coop-hub && echo "nats and coop-hub are active"
+
+step "left to do"
+cat <<TEXT
+1. TLS: install Caddy, then
+     cp $home/deploy/Caddyfile /etc/caddy/Caddyfile
+     systemctl edit caddy      # [Service] Environment=COOP_DOMAIN=coop.example.com
+     systemctl restart caddy
+2. One token per agent machine (shows one time only):
+     coop-hub token add laptop
+3. Optional: let the first agent create a session; add to $etc/hub.env:
+     COOP_AUTO_CREATE_SESSIONS=1
+   then: systemctl restart coop-hub
+4. Operate: ssh -t you@server coop-tui
+TEXT
