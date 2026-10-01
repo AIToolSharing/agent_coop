@@ -142,8 +142,9 @@ Not protected:
   each start. `coop-mcp claude` sets the flag. On a Team or Enterprise plan, an admin can list
   the plugin in `allowedChannelPlugins` instead, and `claude --channels plugin:coop@coop` runs
   without the warning.
-- Claude Code documents that channels also work in `claude -p`. coop has not verified this yet;
-  a headless agent can always use `wait`, `ask`, or `inbox`.
+- Push and `claude -p`: a test on Claude Code 2.1.285 (2026-09-30) found that channel events do
+  not reach a headless session, although the Claude Code documentation now says they do. Until a
+  newer version is checked, a headless agent uses `wait`, `ask`, or `inbox`.
 - A message to a peer that left the session is kept. The peer gets it when it joins again, with
   the other messages it missed (the newest 100). `send` reports `online: false` in that case,
   and `ask` returns at once instead of waiting.
