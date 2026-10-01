@@ -10,6 +10,8 @@ import {
   DeliveryVia,
   Id,
   Iso,
+  KickRecord,
+  PresenceRecord,
   SessionRecord,
   Text,
   Token,
@@ -166,6 +168,44 @@ export const OperatorSendResponse = z.strictObject({
   sent_at: Iso,
 })
 export type OperatorSendResponse = z.infer<typeof OperatorSendResponse>
+
+/**
+ * One SSE event of the operator's feed (`GET /v1/admin/stream`). The SSE event name is `kind`.
+ * - `event`: one stream event, as subject and JSON payload; `decodeBusEvent` turns it back.
+ *   The SSE id is `seq`, so `Last-Event-ID` resumes the stream.
+ * - `session`, `kick`, `presence`: a bucket entry; `record` is null when the key is gone.
+ *   `revision` lets a reader ignore an older value for the same key.
+ * - `snapshot`: every current entry of that bucket has been sent; keys not seen since the
+ *   connection began are gone.
+ */
+export const AdminEvent = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('event'),
+    seq: z.int().min(1),
+    subject: z.string(),
+    payload: z.string(),
+  }),
+  z.strictObject({
+    kind: z.literal('session'),
+    session: Token,
+    revision: z.int().min(0),
+    record: SessionRecord.nullable(),
+  }),
+  z.strictObject({
+    kind: z.literal('kick'),
+    key: z.string(),
+    revision: z.int().min(0),
+    record: KickRecord.nullable(),
+  }),
+  z.strictObject({
+    kind: z.literal('presence'),
+    key: z.string(),
+    revision: z.int().min(0),
+    record: PresenceRecord.nullable(),
+  }),
+  z.strictObject({ kind: z.literal('snapshot'), bucket: z.enum(['sessions', 'presence']) }),
+])
+export type AdminEvent = z.infer<typeof AdminEvent>
 
 /** The API form of a message event. */
 export function toApiMessage(e: Extract<BusEvent, { kind: 'msg' }>): ApiMessage {

@@ -8035,8 +8035,10 @@ const SessionRecord = strictObject({
 	created_at: Iso,
 	closed_at: Iso.optional()
 });
-strictObject({ at: Iso });
-strictObject({
+/** Value of key <sid>.kick.<machine>.<agent> in bucket coop_sessions. */
+const KickRecord = strictObject({ at: Iso });
+/** Value of key <sid>.<machine>.<agent> in bucket coop_presence. */
+const PresenceRecord = strictObject({
 	host: string().max(256),
 	cwd: string().max(4096),
 	client: Client,
@@ -8207,6 +8209,36 @@ strictObject({
 	to: union([literal("all"), AddressStr]),
 	sent_at: Iso
 });
+discriminatedUnion("kind", [
+	strictObject({
+		kind: literal("event"),
+		seq: int().min(1),
+		subject: string(),
+		payload: string()
+	}),
+	strictObject({
+		kind: literal("session"),
+		session: Token,
+		revision: int().min(0),
+		record: SessionRecord.nullable()
+	}),
+	strictObject({
+		kind: literal("kick"),
+		key: string(),
+		revision: int().min(0),
+		record: KickRecord.nullable()
+	}),
+	strictObject({
+		kind: literal("presence"),
+		key: string(),
+		revision: int().min(0),
+		record: PresenceRecord.nullable()
+	}),
+	strictObject({
+		kind: literal("snapshot"),
+		bucket: _enum(["sessions", "presence"])
+	})
+]);
 //#endregion
 //#region packages/mcp/dist/config.js
 const DEFAULT_ENV_FILE = join(homedir(), ".config", "coop", "env");

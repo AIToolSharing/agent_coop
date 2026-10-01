@@ -272,6 +272,19 @@ export class Admin {
       ...(reply_to === undefined ? {} : { reply_to }),
     })
   }
+
+  /** Open the operator's feed: every event from the start (or after `lastEventId`) and the buckets. */
+  async stream(lastEventId?: string): Promise<Stream> {
+    const ctl = new AbortController()
+    const res = await fetch(`${this.base}/v1/admin/stream`, {
+      headers: {
+        authorization: `Bearer ${this.token}`,
+        ...(lastEventId === undefined ? {} : { 'last-event-id': lastEventId }),
+      },
+      signal: ctl.signal,
+    })
+    return new Stream(res, ctl, '')
+  }
 }
 
 export const isMsg = (e: EventSourceMessage) => e.event === 'message'

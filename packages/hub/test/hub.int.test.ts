@@ -1,5 +1,7 @@
 import {
+  AdminEvent,
   ApiMessage,
+  decodeBusEvent,
   ErrorBody,
   HistoryResponse,
   JoinedEvent,
@@ -636,6 +638,100 @@ describe('admin API', () => {
   })
 })
 
+describe('admin feed', () => {
+  let admin: Admin
+  beforeAll(async () => {
+    admin = new Admin(h.base, await h.operatorToken('viewer'))
+  })
+  const ev = (e: { data: string }) => AdminEvent.parse(JSON.parse(e.data))
+  const encoder = new TextEncoder()
+
+  test('a machine token is refused', async () => {
+    expect((await new Admin(h.base, mac1.token).stream()).status).toBe(403)
+  })
+
+  test('the current buckets come first, each closed by a snapshot marker', async () => {
+    const sid = await session()
+    const s = await admin.stream()
+    expect(s.status).toBe(200)
+    const rec = ev(await s.next((e) => e.event === 'session' && e.data.includes(`"${sid}"`)))
+    expect(rec).toMatchObject({ kind: 'session', session: sid, record: { status: 'open' } })
+    const markers = [
+      ev(await s.next((e) => e.event === 'snapshot')),
+      ev(await s.next((e) => e.event === 'snapshot')),
+    ].map((m) => (m.kind === 'snapshot' ? m.bucket : ''))
+    expect(markers.sort()).toEqual(['presence', 'sessions'])
+    s.close()
+  })
+
+  test('a join and a message arrive as presence and as decodable events with ids', async () => {
+    const sid = await session()
+    const s = await admin.stream()
+    await s.next((e) => e.event === 'snapshot')
+    const a = await mac1.stream(sid, 'alice')
+    await a.next()
+    const p = ev(
+      await s.next((e) => e.event === 'presence' && e.data.includes(`${sid}.mac-1.alice`)),
+    )
+    expect(p).toMatchObject({ kind: 'presence', record: { state: 'idle', host: 'test-host' } })
+    const joined = ev(
+      await s.next((e) => e.event === 'event' && e.data.includes(`coop.${sid}.evt.mac-1.alice`)),
+    )
+    if (joined.kind !== 'event') throw new Error('not an event')
+    const decoded = decodeBusEvent(joined.subject, encoder.encode(joined.payload), joined.seq)
+    expect(decoded).toMatchObject({ kind: 'evt', sid, evt: { kind: 'joined' } })
+    const { id } = SendResponse.parse((await mac1.send(sid, 'alice', 'all', 'to the log')).json)
+    const m = await s.next((e) => e.event === 'event' && e.data.includes('to the log'))
+    expect(m.id).toBe(id)
+    a.close()
+    s.close()
+  })
+
+  test('a kick record appears, and goes away with unkick', async () => {
+    const sid = await session()
+    const s = await admin.stream()
+    // Both snapshots must be done: a listing that runs during the kick would send it once more.
+    await s.next((e) => e.event === 'snapshot')
+    await s.next((e) => e.event === 'snapshot')
+    const myKick = (e: { event?: string | undefined; data: string }) =>
+      e.event === 'kick' && e.data.includes(`${sid}.kick.mac-1.alice`)
+    await admin.kick(sid, 'alice@mac-1')
+    expect(ev(await s.next(myKick))).toMatchObject({
+      kind: 'kick',
+      key: `${sid}.kick.mac-1.alice`,
+      record: { at: expect.any(String) },
+    })
+    await admin.unkick(sid, 'alice@mac-1')
+    expect(ev(await s.next(myKick))).toMatchObject({ kind: 'kick', record: null })
+    s.close()
+  })
+
+  test('Last-Event-ID resumes after that event; the buckets come again', async () => {
+    const sid = await session()
+    const { id } = await h.op.sendMessage(sid, 'all', 'before')
+    const { id: later } = await h.op.sendMessage(sid, 'all', 'after')
+    const s = await admin.stream(id)
+    // The first event is the one right after `id`: nothing older is sent again.
+    const first = await s.next((e) => e.event === 'event')
+    expect(first.id).toBe(later)
+    const parsed = ev(first)
+    if (parsed.kind !== 'event') throw new Error('not an event')
+    expect(parsed.payload).toContain('"after"')
+    await s.next((e) => e.event === 'snapshot')
+    s.close()
+  })
+
+  test('revoking the operator token ends the feed', async () => {
+    const temp = new Admin(h.base, await h.operatorToken('temp-op'))
+    const s = await temp.stream()
+    await s.next((e) => e.event === 'snapshot')
+    const { revokeToken } = await import('../src/tokens.js')
+    await revokeToken(h.hubBroker.tokens, 'temp-op')
+    await s.ended()
+    expect((await temp.stream()).status).toBe(401)
+  })
+})
+
 describe('contract document', () => {
   test('/openapi.json lists every route', async () => {
     const doc = (await (await fetch(`${h.base}/openapi.json`)).json()) as { paths: object }
@@ -648,6 +744,7 @@ describe('contract document', () => {
       '/v1/admin/sessions/{sid}/redact',
       '/v1/admin/sessions/{sid}/reopen',
       '/v1/admin/sessions/{sid}/unkick',
+      '/v1/admin/stream',
       '/v1/sessions/{sid}',
       '/v1/sessions/{sid}/activity',
       '/v1/sessions/{sid}/messages',

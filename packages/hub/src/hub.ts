@@ -3,6 +3,7 @@
 import {
   type ActivityRequest,
   type Address,
+  type AdminEvent,
   type AgentState,
   type ApiMessage,
   BROADCAST,
@@ -17,6 +18,7 @@ import {
   type HistoryResponse,
   Id,
   isVisible,
+  KickRecord,
   messageSubjects,
   type NoticeEvent,
   OPERATOR,
@@ -24,6 +26,7 @@ import {
   type OperatorSendResponse,
   PresenceRecord,
   parseAddress,
+  parsePresenceKey,
   parseSessionsKey,
   type SendRequest,
   type SendResponse,
@@ -35,6 +38,7 @@ import {
   type To,
   TokenRecord,
   toApiMessage,
+  toWire,
 } from '@coop/core'
 import {
   type Broker,
@@ -46,16 +50,19 @@ import {
   publishEvent,
   readRange,
 } from '@coop/core/broker'
+import { type KV, KvWatchInclude } from '@nats-io/kv'
 import { HubError } from './errors.js'
 import { RateLimiter } from './limiter.js'
 import { type TokenOwner, verifyToken } from './tokens.js'
 
 /** Where a connection's server-sent events go. */
 export interface Sink {
-  write(event: 'joined' | 'message' | 'notice', data: unknown, id?: string): Promise<void>
+  write(event: string, data: unknown, id?: string): Promise<void>
   ping(): Promise<void>
   close(): void
 }
+
+const decoder = new TextDecoder()
 
 type CloseReason = 'disconnected' | 'kicked' | 'revoked' | 'closed' | 'replaced'
 
@@ -147,6 +154,8 @@ export class Hub {
   private readonly conns = new Map<string, Connection>()
   /** Every agent that was in a session, by presence key. Rebuilt from the stream at start. */
   private readonly known = new Map<string, Known>()
+  /** Open operator feeds, by their abort control, with the operator's name. */
+  private readonly feeds = new Map<AbortController, string>()
   private readonly status = new Map<string, 'open' | 'closed'>()
   private readonly stops: (() => void)[] = []
   private readonly limits: { join: RateLimiter; msg: RateLimiter; activity: RateLimiter }
@@ -457,6 +466,96 @@ export class Hub {
     return { id, to: typeof to === 'string' ? to : formatAddress(to), sent_at }
   }
 
+  /**
+   * The operator's feed: the current entries of both buckets (each followed by a `snapshot`
+   * marker), their updates, and every stream event from `fromSeq`, until `ctl` aborts or the
+   * operator's token is revoked.
+   */
+  async adminFeed(name: string, sink: Sink, fromSeq: number, ctl: AbortController): Promise<void> {
+    this.feeds.set(ctl, name)
+    // Writes are serialized: three loops feed one connection.
+    let chain: Promise<void> = Promise.resolve()
+    const write = (e: AdminEvent, id?: string) => {
+      chain = chain.then(() => sink.write(e.kind, e, id)).catch(() => ctl.abort())
+      return chain
+    }
+    const ping = setInterval(() => void sink.ping().catch(() => ctl.abort()), PING_MS)
+    const bucket = async (
+      kv: KV,
+      which: 'sessions' | 'presence',
+      toEvent: (
+        key: string,
+        op: string,
+        value: Uint8Array,
+        revision: number,
+      ) => AdminEvent | undefined,
+    ) => {
+      // The watch starts first, so that a change during the key listing is not lost; the
+      // revision lets the reader keep the newer of the two values.
+      const w = await kv.watch({ include: KvWatchInclude.UpdatesOnly })
+      ctl.signal.addEventListener('abort', () => w.stop(), { once: true })
+      for await (const key of await kv.keys()) {
+        const e = await kv.get(key)
+        if (e === null) continue
+        const ev = toEvent(key, e.operation, e.value, e.revision)
+        if (ev !== undefined) await write(ev)
+      }
+      await write({ kind: 'snapshot', bucket: which })
+      for await (const e of w) {
+        const ev = toEvent(e.key, e.operation, e.value, e.revision)
+        if (ev !== undefined) await write(ev)
+      }
+    }
+    const sessionEvent = (
+      key: string,
+      op: string,
+      value: Uint8Array,
+      revision: number,
+    ): AdminEvent | undefined => {
+      const k = parseSessionsKey(key)
+      if (k === undefined) return undefined
+      if (k.kind === 'kick') {
+        const record = op === 'PUT' ? (decode(KickRecord, value) ?? null) : null
+        return { kind: 'kick', key, revision, record }
+      }
+      const record = op === 'PUT' ? (decode(SessionRecord, value) ?? null) : null
+      return { kind: 'session', session: k.sid, revision, record }
+    }
+    const presenceEvent = (
+      key: string,
+      op: string,
+      value: Uint8Array,
+      revision: number,
+    ): AdminEvent | undefined => {
+      if (parsePresenceKey(key) === undefined) return undefined
+      const record = op === 'PUT' ? (decode(PresenceRecord, value) ?? null) : null
+      return { kind: 'presence', key, revision, record }
+    }
+    const events = async () => {
+      for await (const e of follow(this.b.js, ['coop.>'], fromSeq, ctl.signal)) {
+        const w = toWire(e)
+        const ev: AdminEvent = {
+          kind: 'event',
+          seq: e.seq,
+          subject: w.subject,
+          payload: decoder.decode(w.data),
+        }
+        await write(ev, String(e.seq))
+      }
+    }
+    try {
+      await Promise.allSettled([
+        bucket(this.b.sessions, 'sessions', sessionEvent),
+        bucket(this.b.presence, 'presence', presenceEvent),
+        events(),
+      ])
+    } finally {
+      clearInterval(ping)
+      this.feeds.delete(ctl)
+      sink.close()
+    }
+  }
+
   /** Run an operator action; a refused action becomes the matching API error. */
   private async admin<T>(f: () => Promise<T>): Promise<T> {
     try {
@@ -670,6 +769,7 @@ export class Hub {
       const r = e.operation === 'PUT' ? decode(TokenRecord, e.value) : undefined
       if (r !== undefined && r.revoked_at === undefined) continue
       for (const c of this.conns.values()) if (c.me.machine === e.key) c.close('revoked')
+      for (const [ctl, name] of this.feeds) if (name === e.key) ctl.abort()
     }
   }
 }

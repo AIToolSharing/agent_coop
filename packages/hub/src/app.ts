@@ -6,6 +6,7 @@ import {
   ErrorBody,
   HistoryQuery,
   HistoryResponse,
+  Id,
   OperatorSendRequest,
   OperatorSendResponse,
   parseAddress,
@@ -200,6 +201,20 @@ const adminSendRoute = createRoute({
   responses: { 200: json(OperatorSendResponse, 'Sent'), 413: errors[422], ...errors },
 })
 
+const adminStreamRoute = createRoute({
+  method: 'get',
+  path: '/v1/admin/stream',
+  summary: 'Every session, agent and message, live, as server-sent events',
+  security,
+  responses: {
+    200: {
+      content: { 'text/event-stream': { schema: z.string() } },
+      description: 'Events: event, session, kick, presence, snapshot (see AdminEvent)',
+    },
+    ...errors,
+  },
+})
+
 const ROUTES = [
   streamRoute,
   sendRoute,
@@ -215,6 +230,7 @@ const ROUTES = [
   adminUnkickRoute,
   adminRedactRoute,
   adminSendRoute,
+  adminStreamRoute,
 ]
 
 export function createApp(hub: Hub) {
@@ -312,6 +328,27 @@ export function createApp(hub: Hub) {
   app.openapi(historyRoute, async (c) => {
     const h = await hub.history(c.get('machine'), c.req.valid('param').sid, c.req.valid('query'))
     return c.json(h, 200)
+  })
+
+  app.openapi(adminStreamRoute, async (c) => {
+    const last = c.req.header('last-event-id')
+    const from = last !== undefined && Id.safeParse(last).success ? Number(last) + 1 : 1
+    const name = c.get('operator')
+    return streamSSE(c, async (stream) => {
+      const ctl = new AbortController()
+      stream.onAbort(() => ctl.abort())
+      const sink: Sink = {
+        write: (event, data, id) =>
+          stream.writeSSE({
+            event,
+            data: JSON.stringify(data),
+            ...(id === undefined ? {} : { id }),
+          }),
+        ping: () => stream.write(': ping\n\n').then(() => undefined),
+        close: () => void stream.close(),
+      }
+      await hub.adminFeed(name, sink, from, ctl)
+    })
   })
 
   const target = (s: string) => {
