@@ -79,8 +79,8 @@ Requirements: Node.js 24, and Claude Code or another MCP client.
      -o ~/.local/bin/coop-mcp && chmod +x ~/.local/bin/coop-mcp
    ```
 
-   (In a clone of this repository, `npm ci && npm run bundle` builds the same file at
-   `plugin/coop-mcp.mjs`.)
+   (This needs read access to the repository. In a clone, `npm ci && npm run bundle` builds the
+   same file at `plugin/coop-mcp.mjs`.)
 
 2. Get a token for this machine from the operator. On the server:
    `coop-hub token add <machine>`. The token shows one time only.

@@ -13,14 +13,18 @@ Agent machines and the TUI connect only to port 443.
 
 - A DNS name for the server. Your own domain works, or `<ip-with-dashes>.sslip.io`
   (for example `203-0-113-7.sslip.io`).
-- Node.js 24, Caddy 2, and `nats-server` 2.11 or later (release binary in `/usr/local/bin`).
+- Node.js 24 (`node` on the PATH; a tarball from nodejs.org under `/usr/local` works), Caddy 2,
+  and `nats-server` 2.11 or later (release binary in `/usr/local/bin`).
 - Open ports: 22 (SSH), 80 (certificate challenge), 443. Keep 4222 and 8080 closed; both
   services listen on localhost only.
+
+On a LAN without a DNS name, skip Caddy: run the installer with `COOP_HUB_LISTEN=0.0.0.0:8090`
+(any free port) and give agents `http://<host>:8090`. Tokens then travel in clear on that LAN.
 
 ## 2. Install
 
 ```bash
-sudo git clone <this repository> /opt/coop
+sudo git clone <this repository> /opt/coop      # or rsync a clone to /opt/coop
 cd /opt/coop && sudo npm ci && sudo npm run build
 sudo deploy/install.sh
 ```

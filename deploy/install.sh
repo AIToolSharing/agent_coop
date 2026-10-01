@@ -6,10 +6,13 @@
 #   sudo deploy/install.sh            from a clone at /opt/coop (see deploy/README.md)
 #
 # Environment:
-#   COOP_HOME       the clone, default /opt/coop
+#   COOP_HOME         the clone, default /opt/coop
+#   COOP_HUB_LISTEN   where the hub listens on the first run, default 127.0.0.1:8080 (behind
+#                     Caddy). On a LAN without TLS, use 0.0.0.0:<port> and give agents http://.
 set -euo pipefail
 
 home=${COOP_HOME:-/opt/coop}
+listen=${COOP_HUB_LISTEN:-127.0.0.1:8080}
 etc=/etc/coop
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -22,6 +25,11 @@ for cmd in node nats-server systemctl openssl; do
     exit 2
   fi
 done
+node_major=$(node --version | sed 's/^v\([0-9]*\).*/\1/')
+if [ "$node_major" -lt 24 ]; then
+  echo "node $(node --version) is too old; coop needs Node 24 (see deploy/README.md)" >&2
+  exit 2
+fi
 if [ ! -f "$home/packages/hub/dist/main.js" ]; then
   echo "no build in $home: run (cd $home && npm ci && npm run build) first" >&2
   exit 2
@@ -39,7 +47,7 @@ install -m 644 "$home/deploy/nats.conf" "$etc/nats.conf"
 if [ ! -f "$etc/nats.env" ]; then
   hub_pw=$(openssl rand -hex 32)
   printf 'COOP_HUB_NATS_PASSWORD=%s\n' "$hub_pw" >"$etc/nats.env"
-  printf 'COOP_HUB_NATS_PASSWORD=%s\nCOOP_HUB_LISTEN=127.0.0.1:8080\n' "$hub_pw" >"$etc/hub.env"
+  printf 'COOP_HUB_NATS_PASSWORD=%s\nCOOP_HUB_LISTEN=%s\n' "$hub_pw" "$listen" >"$etc/hub.env"
   unset hub_pw
   echo "wrote a new password to nats.env and hub.env"
 else
@@ -66,6 +74,7 @@ cat <<TEXT
      cp $home/deploy/Caddyfile /etc/caddy/Caddyfile
      systemctl edit caddy      # [Service] Environment=COOP_DOMAIN=coop.example.com
      systemctl restart caddy
+   (On a LAN without TLS, the hub listens on $listen; agents use http://<this host>:<port>.)
 2. One token per agent machine (shows one time only):
      coop-hub token add laptop
 3. Your operator token, then the TUI from any machine (or here, without TLS):
