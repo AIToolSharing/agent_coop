@@ -12,12 +12,15 @@ import {
   Iso,
   Text,
   Token,
+  WaitTarget,
 } from './schema.js'
 
 /** A peer as a client writes it: a bare agent name, or `agent@machine`. */
 export const PeerInput = z.string().regex(PEER_RE)
 /** `to` as a client writes it: `all`, or a peer. */
 export const RecipientInput = z.string().regex(RECIPIENT_RE)
+/** Whom an `ask` or a `wait` is about, as a client writes it: a peer, or `operator` (the user). */
+export const WaitTargetInput = z.union([z.literal(OPERATOR), PeerInput])
 
 export const ApiMessage = z.strictObject({
   id: Id,
@@ -68,7 +71,7 @@ export const ActivityRequest = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('wait_start'),
     agent: AgentName,
-    from: PeerInput.optional(),
+    from: WaitTargetInput.optional(),
     reply_to: Id.optional(),
     timeout_s: z.int().min(1).max(600),
   }),
@@ -86,7 +89,7 @@ export const Peer = z.strictObject({
   note: z.string().max(500).optional(),
   /** False for a peer that left; it is listed with its last state and can still be written to. */
   online: z.boolean(),
-  waiting_on: AddressStr.optional(),
+  waiting_on: WaitTarget.optional(),
 })
 export type Peer = z.infer<typeof Peer>
 

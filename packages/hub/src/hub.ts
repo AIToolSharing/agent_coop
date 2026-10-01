@@ -71,6 +71,8 @@ export const DEFAULT_LIMITS: Record<'join' | 'msg' | 'activity', Limit> = {
   activity: { burst: 120, perSecond: 20 },
 }
 const now = () => new Date().toISOString()
+/** A wait target as the schemas write it. */
+const waitTarget = (x: Address | typeof OPERATOR) => (typeof x === 'string' ? x : formatAddress(x))
 
 export interface HubOptions {
   /** Let the first join of an unknown session create it, open. A closed session stays closed. */
@@ -80,7 +82,7 @@ export interface HubOptions {
 class Connection {
   state: AgentState = 'idle'
   note: string | undefined
-  waiting: { on?: Address; reply_to?: string; since: string } | undefined
+  waiting: { on?: Address | typeof OPERATOR; reply_to?: string; since: string } | undefined
   /** Ids of messages written to the stream, and of those the shim reported delivered. */
   readonly sent = new Set<string>()
   readonly acked = new Set<string>()
@@ -121,14 +123,20 @@ export interface Joined {
   readonly catchUpUntil: number
 }
 
-/** An agent the hub saw in a session: who it is, its last state, and when it left. */
+/**
+ * An agent the hub saw in a session: who it is, its last state, and how far it has seen the
+ * stream. It is away when it has no live connection.
+ */
 interface Known {
   readonly sid: string
   readonly me: Address
   state: AgentState
   note: string | undefined
-  /** Stream sequence of its latest `left`; undefined while it is in the session. */
-  leftSeq: number | undefined
+  /**
+   * The sequence of the latest event that shows what the agent has seen: its join, its last
+   * delivery report, or its leave. A new process of the agent gets the messages after it.
+   */
+  seenSeq: number
 }
 
 export class Hub {
@@ -197,9 +205,9 @@ export class Hub {
     const resume = lastEventId !== undefined && Id.safeParse(lastEventId).success
     const end = await lastSeq(this.b.jsm)
     const key = buildPresenceKey({ sid, agent: me })
-    // A new process of an agent that left gets what it missed since then.
-    const left = this.known.get(key)?.leftSeq
-    const startSeq = resume ? Number(lastEventId) + 1 : left === undefined ? end + 1 : left + 1
+    // A new process of an agent the hub knows gets what the agent missed.
+    const seen = this.known.get(key)?.seenSeq
+    const startSeq = resume ? Number(lastEventId) + 1 : seen === undefined ? end + 1 : seen + 1
 
     // No await from here to the reservation: two joins of one name must not both pass the check.
     const old = this.conns.get(key)
@@ -214,7 +222,7 @@ export class Hub {
     }
     const conn = new Connection(sid, me, q.instance, meta, now(), old !== undefined)
     this.conns.set(key, conn)
-    this.knownOf(sid, me).leftSeq = undefined
+    this.knownOf(sid, me)
     return { conn, startSeq, catchUpUntil: end }
   }
 
@@ -228,13 +236,14 @@ export class Hub {
     )
     try {
       if (!conn.resumed) {
-        await this.publishEvt(conn, {
+        const seq = await this.publishEvt(conn, {
           kind: 'joined',
           host: conn.meta.host,
           cwd: conn.meta.cwd,
           client: conn.meta.client,
           at: conn.joinedAt,
         })
+        this.seen(conn, seq)
       }
       await this.putPresence(conn)
       await sink.write('joined', { me: formatAddress(me), session: sid })
@@ -307,11 +316,21 @@ export class Hub {
         break
       case 'delivered':
         if (conn.sent.has(req.id)) conn.acked.add(req.id)
-        await this.publishEvt(conn, { kind: 'delivered', id: req.id, via: req.via, at })
+        this.seen(
+          conn,
+          await this.publishEvt(conn, { kind: 'delivered', id: req.id, via: req.via, at }),
+        )
         break
       case 'wait_start': {
-        const on = req.from === undefined ? undefined : this.peer(sid, req.from, conn.me, true)
-        const w: { on?: Address; reply_to?: string; since: string } = { since: at }
+        const on =
+          req.from === undefined
+            ? undefined
+            : req.from === OPERATOR
+              ? OPERATOR
+              : this.peer(sid, req.from, conn.me, true)
+        const w: { on?: Address | typeof OPERATOR; reply_to?: string; since: string } = {
+          since: at,
+        }
         const evt: Parameters<Hub['publishEvt']>[1] & { kind: 'wait_start' } = {
           kind: 'wait_start',
           timeout_s: req.timeout_s,
@@ -319,7 +338,7 @@ export class Hub {
         }
         if (on !== undefined) {
           w.on = on
-          evt.from = formatAddress(on)
+          evt.from = waitTarget(on)
         }
         if (req.reply_to !== undefined) {
           w.reply_to = req.reply_to
@@ -350,7 +369,7 @@ export class Hub {
           online: true,
         }
         if (c.note !== undefined) p.note = c.note
-        if (c.waiting?.on !== undefined) p.waiting_on = formatAddress(c.waiting.on)
+        if (c.waiting?.on !== undefined) p.waiting_on = waitTarget(c.waiting.on)
         return p
       })
     for (const k of this.away(sid)) {
@@ -418,25 +437,30 @@ export class Hub {
     return this.peer(sid, input, me, false)
   }
 
-  /** The agents that were in `sid` and left. */
+  /** The agents that were in `sid` and have no live connection now. */
   private away(sid: string): Known[] {
-    return [...this.known.values()].filter((k) => k.sid === sid && k.leftSeq !== undefined)
+    const out: Known[] = []
+    for (const [key, k] of this.known) if (k.sid === sid && !this.conns.has(key)) out.push(k)
+    return out
   }
 
   private knownOf(sid: string, me: Address): Known {
     const key = buildPresenceKey({ sid, agent: me })
     let k = this.known.get(key)
     if (k === undefined) {
-      k = { sid, me, state: 'idle', note: undefined, leftSeq: undefined }
+      k = { sid, me, state: 'idle', note: undefined, seenSeq: 0 }
       this.known.set(key, k)
     }
     return k
   }
 
-  /**
-   * Rebuild `known` from the activity events. No agent is connected to a hub that starts, so
-   * each one counts as away from its last join, leave, or delivery report.
-   */
+  /** Record that the agent of `conn` has seen the stream up to `seq`. */
+  private seen(conn: Connection, seq: number): void {
+    const k = this.knownOf(conn.sid, conn.me)
+    k.seenSeq = Math.max(k.seenSeq, seq)
+  }
+
+  /** Rebuild `known` from the activity events, so that a restart keeps the knowledge. */
   private async loadKnown(): Promise<void> {
     for (const e of await readRange(this.b.js, this.b.jsm, ['coop.*.evt.>'])) {
       if (e.kind !== 'evt') continue
@@ -445,7 +469,7 @@ export class Hub {
         case 'joined':
         case 'left':
         case 'delivered':
-          k.leftSeq = e.seq
+          k.seenSeq = Math.max(k.seenSeq, e.seq)
           break
         case 'state':
           k.state = e.evt.state
@@ -516,7 +540,7 @@ export class Hub {
     if (conn.note !== undefined) r.note = conn.note
     if (conn.waiting !== undefined) {
       const w: NonNullable<PresenceRecord['waiting']> = { since: conn.waiting.since }
-      if (conn.waiting.on !== undefined) w.on = formatAddress(conn.waiting.on)
+      if (conn.waiting.on !== undefined) w.on = waitTarget(conn.waiting.on)
       if (conn.waiting.reply_to !== undefined) w.reply_to = conn.waiting.reply_to
       r.waiting = w
     }
@@ -535,8 +559,7 @@ export class Hub {
     const k = this.knownOf(conn.sid, conn.me)
     k.state = conn.state
     k.note = conn.note
-    // If the `left` event could not be written, replay from the start (REPLAY_MAX caps it).
-    k.leftSeq = left.status === 'fulfilled' ? left.value : 0
+    if (left.status === 'fulfilled') k.seenSeq = Math.max(k.seenSeq, left.value)
   }
 
   private async heartbeat(): Promise<void> {

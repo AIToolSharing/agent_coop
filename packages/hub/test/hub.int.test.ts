@@ -469,6 +469,32 @@ describe('activity and presence', () => {
     b.close()
   })
 
+  test('a wait on the operator is recorded and shown to the peers', async () => {
+    const sid = await session()
+    const a = await mac1.stream(sid, 'alice')
+    await a.next()
+    const b = await vps2.stream(sid, 'bob')
+    await b.next()
+    const r = await mac1.activity(sid, {
+      kind: 'wait_start',
+      agent: 'alice',
+      from: 'operator',
+      reply_to: '1',
+      timeout_s: 60,
+    })
+    expect(r.status).toBe(204)
+    const v = SessionView.parse((await vps2.view(sid, 'bob')).json)
+    expect(v.peers).toEqual([
+      { name: 'alice@mac-1', state: 'idle', online: true, waiting_on: 'operator' },
+    ])
+    const p = await h.hubBroker.presence.get(`${sid}.mac-1.alice`)
+    const rec =
+      p === null ? undefined : PresenceRecord.parse(JSON.parse(new TextDecoder().decode(p.value)))
+    expect(rec?.waiting).toMatchObject({ on: 'operator', reply_to: '1' })
+    a.close()
+    b.close()
+  })
+
   test('closing a stream removes presence and records left', async () => {
     const sid = await session()
     const a = await mac1.stream(sid, 'alice')

@@ -66,7 +66,10 @@ export const evtPayload: fc.Arbitrary<EvtPayload> = fc.oneof(
   fc.record(
     {
       kind: fc.constant('wait_start' as const),
-      from: address.map((a) => `${a.agent}@${a.machine}`),
+      from: fc.oneof(
+        address.map((a) => `${a.agent}@${a.machine}`),
+        fc.constant(OPERATOR),
+      ),
       reply_to: id,
       timeout_s: fc.integer({ min: 1, max: 600 }),
       at: iso,
@@ -121,7 +124,14 @@ export const presenceRecord: fc.Arbitrary<PresenceRecord> = fc.record(
     joined_at: iso,
     queued: fc.integer({ min: 0, max: 1_000_000 }),
     waiting: fc.record(
-      { on: address.map((a) => `${a.agent}@${a.machine}`), reply_to: id, since: iso },
+      {
+        on: fc.oneof(
+          address.map((a) => `${a.agent}@${a.machine}`),
+          fc.constant(OPERATOR),
+        ),
+        reply_to: id,
+        since: iso,
+      },
       { requiredKeys: ['since'] },
     ),
   },

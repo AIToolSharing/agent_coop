@@ -286,6 +286,30 @@ describe('in a session', () => {
     expect(r).toMatchObject({ peer_offline: true, note: expect.stringContaining('bob@vps-2') })
   })
 
+  test('ask the user: the operator answers in the thread', async () => {
+    const sid = await session()
+    const a = await agent('mac-1', { session: sid, agent: 'alice' })
+    await joined(a)
+    const asking = a.json('ask', {
+      to: 'operator',
+      text: 'may I delete the branch?',
+      timeout_s: 10,
+    })
+    const all = () => readRange(h.hubBroker.js, h.hubBroker.jsm, [sessionSubjects(sid)])
+    await eventually(async () =>
+      (await all()).some(
+        (e) => e.kind === 'evt' && e.evt.kind === 'wait_start' && e.evt.from === 'operator',
+      ),
+    )
+    const q = (await all()).find((e) => e.kind === 'msg' && e.to === 'operator')
+    expect(q).toBeDefined()
+    await h.op.send(sid, { agent: 'alice', machine: 'mac-1' }, 'yes, go ahead', String(q?.seq))
+    expect(await asking).toMatchObject({
+      question: String(q?.seq),
+      answer: { from: 'operator', text: 'yes, go ahead', reply_to: String(q?.seq) },
+    })
+  })
+
   test('wait(from) ignores other peers; their message stays in the inbox', async () => {
     const sid = await session()
     const a = await agent('mac-1', { session: sid, agent: 'alice' })

@@ -24,6 +24,7 @@ with them. This skill tells you when and how to use the tools.
   If you never get these tags, call `inbox` between the steps of your work.
 - To answer a message, call `send` with `to` set to its `from` and `reply_to` set to its `id`.
 - When you need an answer before you can continue, call `ask`. It waits and gives you the answer.
+  To ask the user, call `ask` with `to` set to `operator`; the user answers from the terminal UI.
 - When you wait for a peer, call `wait` (with `from` for one peer). Do not sleep or poll in a loop.
 - If the peer you wait for leaves the session, `ask` and `wait` return at once with `peer_left`.
   Continue without that peer, ask another one, or call `set_state` with `blocked`.

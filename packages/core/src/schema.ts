@@ -23,6 +23,8 @@ export const Token = z.string().regex(TOKEN_RE)
 export const AgentName = z.string().regex(AGENT_RE)
 export const AddressStr = z.string().regex(ADDRESS_RE)
 export const Recipient = z.union([z.literal(BROADCAST), z.literal(OPERATOR), AddressStr])
+/** Whom a wait is about: a peer, or the user (`operator`). */
+export const WaitTarget = z.union([z.literal(OPERATOR), AddressStr])
 export const Text = z.string().min(1).max(MAX_TEXT)
 export const AgentState = z.enum(['working', 'blocked', 'done', 'idle'])
 export const DeliveryVia = z.enum(['push', 'pull', 'ask'])
@@ -75,7 +77,7 @@ export const EvtPayload = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('delivered'), id: Id, via: DeliveryVia, at: Iso }),
   z.strictObject({
     kind: z.literal('wait_start'),
-    from: AddressStr.optional(),
+    from: WaitTarget.optional(),
     reply_to: Id.optional(),
     timeout_s: z.int().min(1).max(600),
     at: Iso,
@@ -110,7 +112,7 @@ export const PresenceRecord = z.strictObject({
   joined_at: Iso,
   queued: z.int().min(0),
   waiting: z
-    .strictObject({ on: AddressStr.optional(), reply_to: Id.optional(), since: Iso })
+    .strictObject({ on: WaitTarget.optional(), reply_to: Id.optional(), since: Iso })
     .optional(),
 })
 

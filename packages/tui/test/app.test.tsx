@@ -33,8 +33,9 @@ const op: OperatorApi = {
     calls.push(`redact ${s} ${id}`)
     return true
   },
-  send: async (s, to, text) => {
-    calls.push(`send ${s} ${typeof to === 'string' ? to : formatAddress(to)} ${text}`)
+  send: async (s, to, text, reply_to) => {
+    const target = typeof to === 'string' ? to : formatAddress(to)
+    calls.push(`send ${s} ${target} ${text}${reply_to === undefined ? '' : ` ↩${reply_to}`}`)
     return '99'
   },
 }
@@ -96,8 +97,20 @@ describe('the TUI', () => {
     app.unmount()
   })
 
-  // Found in the end-to-end run: a message to an offline agent is never delivered.
-  test('refuses a message to an offline agent', async () => {
+  test('a answers the selected message: to its sender, in its thread', async () => {
+    const app = start()
+    await openSession(app)
+    // While following, the newest message (#18, carol to bob) is under the cursor.
+    await app.type('a')
+    expect(app.frame()).toContain('reply to #18')
+    await app.type(...'ask bob first', KEY.enter)
+    expect(calls).toEqual([`send ${FIX_SID} carol@mac-3 ask bob first ↩18`])
+    expect(app.frame()).toContain('sent #99')
+    app.unmount()
+  })
+
+  // The hub keeps a message for an agent that left and replays it when the agent returns.
+  test('a message to an agent that left is sent, and the operator is told it is away', async () => {
     const store = storeOf(fixture())
     store.apply([{ kind: 'presence', key: `${FIX_SID}.vps-2.bob`, record: undefined }])
     const r = render(
@@ -107,8 +120,8 @@ describe('the TUI', () => {
       r.stdin.write(k)
       await tick()
     }
-    expect(calls).toEqual([])
-    expect(r.lastFrame()).toContain('bob@vps-2 is offline')
+    expect(calls).toEqual([`send ${FIX_SID} bob@vps-2 hi`])
+    expect(r.lastFrame()).toContain('bob@vps-2 is away')
     r.unmount()
   })
 

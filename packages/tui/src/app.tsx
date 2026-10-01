@@ -4,7 +4,15 @@
 // Keys can arrive faster than a repaint (paste, key repeat, scripts). So all UI state is one
 // object in a ref: each key reads the latest state and writes the next state at once, and
 // anything derived from the state is computed again from that latest state.
-import { type Address, BROADCAST, isToken, MAX_TEXT, parseAddress, type To } from '@coop/core'
+import {
+  type Address,
+  BROADCAST,
+  isToken,
+  MAX_TEXT,
+  OPERATOR,
+  parseAddress,
+  type To,
+} from '@coop/core'
 import { Box, Text, useApp, useInput, useWindowSize } from 'ink'
 import { useEffect, useRef, useState } from 'react'
 import { ALL_SESSIONS, type Derived, derive, type Store } from './model.js'
@@ -26,7 +34,7 @@ export interface OperatorApi {
   kick(sid: string, target: Address): Promise<unknown>
   unkick(sid: string, target: Address): Promise<unknown>
   redact(sid: string, id: string): Promise<boolean>
-  send(sid: string, to: To, text: string): Promise<string>
+  send(sid: string, to: To, text: string, reply_to?: string): Promise<string>
 }
 
 export interface AppProps {
@@ -41,7 +49,13 @@ type View = (typeof VIEWS)[number]
 type Focus = 'sessions' | 'view' | 'agents'
 type Mode =
   | { readonly kind: 'normal' }
-  | { readonly kind: 'input'; readonly purpose: 'send' | 'new' | 'search'; readonly value: string }
+  | {
+      readonly kind: 'input'
+      readonly purpose: 'send' | 'new' | 'search'
+      readonly value: string
+      /** For a send: the message this one answers, and its sender. */
+      readonly reply?: { readonly id: string; readonly to: string }
+    }
   | { readonly kind: 'confirm'; readonly text: string; readonly run: () => Promise<string> }
 
 interface Ui {
@@ -173,6 +187,7 @@ const HELP: readonly (readonly [string, string])[] = [
   ['D', 'delete a closed session with all its messages'],
   ['ACTIONS', ''],
   ['m', 'message all agents of the session; "@agent text" for one agent'],
+  ['a', 'answer the selected message: to its sender, in its thread'],
   ['k', 'remove the selected agent from its session; on a removed agent: allow it back'],
   ['r', 'withdraw the selected message'],
   ['q', 'quit'],
@@ -198,7 +213,7 @@ function hint(u: Ui): string {
     case 'agents':
       return '↑↓ select agent · enter details · k remove/allow back · m message · tab next pane · ? help · q quit'
     case 'view':
-      return '↑↓ select message · enter details · pgup/pgdn scroll · space follow · / search · f agent filter · s system lines · m message · r withdraw · 1-6 views · tab next pane · ? help · q quit'
+      return '↑↓ select message · enter details · pgup/pgdn scroll · space follow · / search · f agent filter · s system lines · m message · a answer · r withdraw · 1-6 views · tab next pane · ? help · q quit'
   }
 }
 
@@ -376,7 +391,7 @@ export function App({ store, subscribe, op, now = Date.now }: AppProps) {
       if (key.escape) return set({ mode: { kind: 'normal' } })
       if (key.return) {
         set({ mode: { kind: 'normal' } })
-        return submit(m.purpose, m.value.trim(), cur)
+        return submit(m.purpose, m.value.trim(), cur, m.reply)
       }
       if (key.backspace || key.delete)
         return set({ mode: { ...m, value: [...m.value].slice(0, -1).join('') } })
@@ -469,6 +484,13 @@ export function App({ store, subscribe, op, now = Date.now }: AppProps) {
         if (session === undefined)
           return set({ status: 'select a session first (tab to sessions)' })
         return set({ mode: { kind: 'input', purpose: 'send', value: '' } })
+      case 'a': {
+        const m = cur.d.messages.find((x) => x.id === cur.current)
+        if (m === undefined) return set({ status: 'select a message first' })
+        if (m.from === OPERATOR) return set({ status: 'that is your own message' })
+        const reply = { id: m.id, to: m.from }
+        return set({ mode: { kind: 'input', purpose: 'send', value: '', reply } })
+      }
       case 'c': {
         const rec = session === undefined ? undefined : store.sessions.get(session)
         if (session === undefined || rec === undefined)
@@ -534,7 +556,12 @@ export function App({ store, subscribe, op, now = Date.now }: AppProps) {
     }
   })
 
-  function submit(purpose: 'send' | 'new' | 'search', value: string, cur: Screen) {
+  function submit(
+    purpose: 'send' | 'new' | 'search',
+    value: string,
+    cur: Screen,
+    reply?: { id: string; to: string },
+  ) {
     if (purpose === 'search')
       return set({ search: value, status: value === '' ? 'search cleared' : `search: ${value}` })
     if (purpose === 'new') {
@@ -551,23 +578,32 @@ export function App({ store, subscribe, op, now = Date.now }: AppProps) {
     const m = value.match(/^@(\S+)\s+([\s\S]+)$/)
     let to: To = BROADCAST
     let text = value
-    if (m !== null) {
+    let away: string | undefined
+    /** Address one agent of the session. False if there is no such agent. */
+    const direct = (address: string) => {
+      const hit = cur.d.agents.find((a) => a.address === address)
+      const addr = parseAddress(address)
+      if (hit === undefined || addr === undefined) return false
+      to = addr
+      if (!hit.online) away = hit.address
+      return true
+    }
+    if (reply !== undefined) {
+      if (!direct(reply.to)) return set({ status: `no agent ${reply.to}` })
+    } else if (m !== null) {
       const name = m[1] ?? ''
       const hits = cur.d.agents.filter(
         (a) => a.address === name || a.address.split('@')[0] === name,
       )
       if (hits.length !== 1)
         return set({ status: hits.length === 0 ? `no agent ${name}` : `${name} is ambiguous` })
-      const hit = hits[0]
-      const addr = parseAddress(hit?.address ?? '')
-      if (hit === undefined || addr === undefined) return
-      // A direct message reaches an agent only while it is online (same rule as the hub).
-      if (!hit.online) return set({ status: `${hit.address} is offline; it would not get this` })
-      to = addr
+      if (!direct(hits[0]?.address ?? '')) return
       text = m[2] ?? ''
     }
     if ([...text].length > MAX_TEXT) return set({ status: `too long (max ${MAX_TEXT})` })
-    return act(op.send(session, to, text).then((id) => `sent #${id}`))
+    // The hub keeps a message for an agent that left; the agent gets it when it joins again.
+    const note = away === undefined ? '' : ` (${away} is away; it gets it when it returns)`
+    return act(op.send(session, to, text, reply?.id).then((id) => `sent #${id}${note}`))
   }
 
   const title = ui.help
@@ -577,7 +613,15 @@ export function App({ store, subscribe, op, now = Date.now }: AppProps) {
       }${ui.search ? `  [/${ui.search}]` : ''}${s.following ? '  follow ●' : ''}`
   const prompt =
     ui.mode.kind === 'input'
-      ? `${ui.mode.purpose === 'send' ? 'to all (or @name text)' : ui.mode.purpose === 'new' ? 'new session name' : 'search'} › ${ui.mode.value}▏`
+      ? `${
+          ui.mode.purpose === 'send'
+            ? ui.mode.reply === undefined
+              ? 'to all (or @name text)'
+              : `reply to #${ui.mode.reply.id} from ${ui.mode.reply.to}`
+            : ui.mode.purpose === 'new'
+              ? 'new session name'
+              : 'search'
+        } › ${ui.mode.value}▏`
       : ui.mode.kind === 'confirm'
         ? ui.mode.text
         : ui.status
