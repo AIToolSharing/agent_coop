@@ -15,12 +15,31 @@ import {
   type SessionRecord,
 } from '@coop/core'
 
+/** How the feed stands: before the first connection, live, or between connections. */
+export type Link = 'connecting' | 'live' | 'reconnecting'
+
 export type Update =
   | { readonly kind: 'event'; readonly e: BusEvent }
-  | { readonly kind: 'session'; readonly sid: string; readonly record: SessionRecord | undefined }
-  | { readonly kind: 'presence'; readonly key: string; readonly record: PresenceRecord | undefined }
+  | {
+      readonly kind: 'session'
+      readonly sid: string
+      readonly record: SessionRecord | undefined
+      readonly revision?: number
+    }
+  | {
+      readonly kind: 'presence'
+      readonly key: string
+      readonly record: PresenceRecord | undefined
+      readonly revision?: number
+    }
   /** A kick record of the sessions bucket: present while the agent is kept out. */
-  | { readonly kind: 'kick'; readonly key: string; readonly record: KickRecord | undefined }
+  | {
+      readonly kind: 'kick'
+      readonly key: string
+      readonly record: KickRecord | undefined
+      readonly revision?: number
+    }
+  | { readonly kind: 'link'; readonly state: Link }
 
 /** Raw facts. Mutable; `version` changes on every update so views can cache. */
 export class Store {
@@ -28,11 +47,16 @@ export class Store {
   readonly sessions = new Map<string, SessionRecord>()
   readonly presence = new Map<string, PresenceRecord>()
   readonly kicks = new Map<string, KickRecord>()
+  /** The bucket revision last applied per entry, so an older value never replaces a newer. */
+  private readonly revisions = new Map<string, number>()
+  link: Link = 'connecting'
   version = 0
 
   apply(updates: readonly Update[]): void {
     for (const u of updates) {
       if (u.kind === 'event') this.events.set(u.e.seq, u.e)
+      else if (u.kind === 'link') this.link = u.state
+      else if (this.stale(u)) continue
       else if (u.kind === 'session') {
         if (u.record === undefined) {
           this.sessions.delete(u.sid)
@@ -45,6 +69,19 @@ export class Store {
       else this.presence.set(u.key, u.record)
     }
     this.version++
+  }
+
+  /** True if a newer revision of this entry was applied before. Records the revision. */
+  private stale(u: Extract<Update, { kind: 'session' | 'kick' | 'presence' }>): boolean {
+    const key = u.kind === 'session' ? `${u.kind}:${u.sid}` : `${u.kind}:${u.key}`
+    const seen = this.revisions.get(key)
+    if (u.revision === undefined) {
+      this.revisions.delete(key)
+      return false
+    }
+    if (seen !== undefined && seen > u.revision) return true
+    this.revisions.set(key, u.revision)
+    return false
   }
 }
 

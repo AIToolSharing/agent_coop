@@ -3,14 +3,15 @@
 import {
   type ActivityRequest,
   ApiMessage,
+  abortableSleep,
   ErrorBody,
   HistoryResponse,
   JoinedEvent,
   NoticeEvent,
+  readSse,
   SendResponse,
   SessionView,
 } from '@coop/core'
-import { createParser } from 'eventsource-parser'
 import type { z } from 'zod'
 
 export const UNREACHABLE = 'message service unreachable (retrying)'
@@ -79,12 +80,7 @@ export class HubClient {
       })
       // A watchdog: no bytes for idleMs (a lost connection shows no error) aborts the stream.
       const idle = new AbortController()
-      let timer: ReturnType<typeof setTimeout> | undefined
-      const arm = () => {
-        clearTimeout(timer)
-        timer = setTimeout(() => idle.abort(), this.idleMs)
-      }
-      arm()
+      const connectTimer = setTimeout(() => idle.abort(), this.idleMs)
       let res: Response
       try {
         res = await fetch(`${this.path('/stream')}?${q}`, {
@@ -96,16 +92,16 @@ export class HubClient {
           signal: AbortSignal.any([signal, idle.signal]),
         })
       } catch {
-        clearTimeout(timer)
+        clearTimeout(connectTimer)
         if (signal.aborted) return
         h.state({ kind: 'unreachable' })
         await this.sleep(backoff, signal)
         backoff = Math.min(backoff * 2, MAX_BACKOFF_MS)
         continue
       }
+      clearTimeout(connectTimer)
 
       if (!res.ok || res.body === null) {
-        clearTimeout(timer)
         const e = await errorBody(res)
         if (res.status === 409 && lastId === undefined && suffix < 9) {
           suffix++
@@ -129,8 +125,8 @@ export class HubClient {
 
       backoff = 1000
       let removed = false
-      const parser = createParser({
-        onEvent: (ev) => {
+      try {
+        for await (const ev of readSse(res.body, this.idleMs, idle)) {
           const data = safeJson(ev.data)
           if (ev.event === 'joined') {
             const j = JoinedEvent.safeParse(data)
@@ -149,18 +145,9 @@ export class HubClient {
               h.notice(n.data)
             }
           }
-        },
-      })
-      const decoder = new TextDecoder()
-      try {
-        for await (const chunk of res.body) {
-          arm()
-          parser.feed(decoder.decode(chunk, { stream: true }))
         }
       } catch {
         // The connection dropped, or the watchdog ended it; reconnect below.
-      } finally {
-        clearTimeout(timer)
       }
       if (removed) return h.state({ kind: 'removed' })
       if (signal.aborted) return
@@ -242,18 +229,4 @@ function safeJson(s: string): unknown {
   } catch {
     return undefined
   }
-}
-
-function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const t = setTimeout(resolve, ms)
-    signal.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(t)
-        resolve()
-      },
-      { once: true },
-    )
-  })
 }

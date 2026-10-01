@@ -1,19 +1,12 @@
 // The coop-mcp commands that set a machine and a project up. The MCP server itself is in main.ts.
 
 import { spawnSync } from 'node:child_process'
-import {
-  appendFileSync,
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs'
-import { dirname, join } from 'node:path'
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
-import { AGENT_RE, TOKEN_RE } from '@coop/core'
-import { DEFAULT_ENV_FILE, findGitRoot, PROJECT_FILE } from './config.js'
+import { AGENT_RE, DEFAULT_ENV_FILE, TOKEN_RE, updateEnvFile } from '@coop/core'
+import { findGitRoot, PROJECT_FILE } from './config.js'
 
 /** A wrong command line. The message is for the person, and the exit code is 2. */
 export class UsageError extends Error {}
@@ -53,11 +46,9 @@ export async function probe(
   return 'ok'
 }
 
-/** Write the credential file for this user only (directory 0700, file 0600). */
+/** Store the machine credential; other keys of the file (the operator's) stay. */
 export function writeCredentialFile(path: string, url: string, token: string): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-  writeFileSync(path, `COOP_URL=${url}\nCOOP_TOKEN=${token}\n`, { mode: 0o600 })
-  chmodSync(path, 0o600)
+  updateEnvFile(path, { COOP_URL: url, COOP_TOKEN: token })
 }
 
 const TOKEN_FORM = /^[a-z0-9_-]{1,64}\.\S+$/

@@ -610,7 +610,9 @@ export function App({ store, subscribe, op, now = Date.now }: AppProps) {
     ? 'help'
     : `${VIEWS.indexOf(ui.view) + 1} ${ui.view}: ${ui.sid === ALL_SESSIONS ? 'all sessions' : ui.sid}${
         ui.agentFilter ? `  [${ui.agentFilter}]` : ''
-      }${ui.search ? `  [/${ui.search}]` : ''}${s.following ? '  follow ●' : ''}`
+      }${ui.search ? `  [/${ui.search}]` : ''}${s.following ? '  follow ●' : ''}${
+        store.link === 'live' ? '' : `  [${store.link}]`
+      }`
   const prompt =
     ui.mode.kind === 'input'
       ? `${

@@ -12,9 +12,7 @@
   },
   "dependencies": {
     "@coop/core": "^0.0.0",
-    "@nats-io/jetstream": "^3.4.0",
-    "@nats-io/kv": "^3.4.0",
-    "@nats-io/transport-node": "^3.4.0",
+    "eventsource-parser": "^4.1.1",
     "ink": "^7.1.1",
     "react": "^19.3.0",
     "zod": "^4.6.5"
