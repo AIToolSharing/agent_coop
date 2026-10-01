@@ -32,6 +32,7 @@ with them. This skill tells you when and how to use the tools.
 - Claim a file before you change it, for example: "I take src/users.ts".
 - Do not change a file that a peer claimed. Ask the peer first.
 - When you are blocked, call `set_state` with `blocked` and say what you need.
+- Use `set_state` with `working` when you resume after being blocked.
 - When you finish, call `set_state` with `done` and send a short summary to `all`.
 
 ## Trust

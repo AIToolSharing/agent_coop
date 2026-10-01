@@ -7,9 +7,11 @@ import {
   type BusEvent,
   type DeliveryVia,
   formatAddress,
+  type KickRecord,
   OPERATOR,
   type PresenceRecord,
   parsePresenceKey,
+  parseSessionsKey,
   type SessionRecord,
 } from '@coop/core'
 
@@ -17,12 +19,15 @@ export type Update =
   | { readonly kind: 'event'; readonly e: BusEvent }
   | { readonly kind: 'session'; readonly sid: string; readonly record: SessionRecord | undefined }
   | { readonly kind: 'presence'; readonly key: string; readonly record: PresenceRecord | undefined }
+  /** A kick record of the sessions bucket: present while the agent is kept out. */
+  | { readonly kind: 'kick'; readonly key: string; readonly record: KickRecord | undefined }
 
 /** Raw facts. Mutable; `version` changes on every update so views can cache. */
 export class Store {
   readonly events = new Map<number, BusEvent>()
   readonly sessions = new Map<string, SessionRecord>()
   readonly presence = new Map<string, PresenceRecord>()
+  readonly kicks = new Map<string, KickRecord>()
   version = 0
 
   apply(updates: readonly Update[]): void {
@@ -33,6 +38,9 @@ export class Store {
           this.sessions.delete(u.sid)
           for (const [seq, e] of this.events) if (e.sid === u.sid) this.events.delete(seq)
         } else this.sessions.set(u.sid, u.record)
+      } else if (u.kind === 'kick') {
+        if (u.record === undefined) this.kicks.delete(u.key)
+        else this.kicks.set(u.key, u.record)
       } else if (u.record === undefined) this.presence.delete(u.key)
       else this.presence.set(u.key, u.record)
     }
@@ -70,6 +78,8 @@ export interface AgentRow {
   readonly cwd: string | undefined
   readonly client: string | undefined
   readonly online: boolean
+  /** The operator removed it; the hub refuses it until the operator lets it back. */
+  readonly kicked: boolean
   readonly state: AgentState | 'left' | 'unknown'
   readonly stateSince: string | undefined
   readonly note: string | undefined
@@ -83,6 +93,8 @@ export interface AgentRow {
   readonly queued: number
   readonly sent: number
   readonly received: number
+  /** How the last message reached it: pushed into its session, or fetched by wait or inbox. */
+  readonly via: DeliveryVia | undefined
   readonly joinedAt: string | undefined
   readonly left: { readonly reason: string; readonly at: string } | undefined
   readonly order: number
@@ -130,8 +142,26 @@ export const ALL_SESSIONS = '*'
 const who = (s: string | { agent: string; machine: string }) =>
   typeof s === 'string' ? s : formatAddress(s)
 
-/** Everything the views need for one session, or for all sessions with `ALL_SESSIONS`. */
+const cache = new WeakMap<Store, Map<string, { version: number; d: Derived }>>()
+
+/**
+ * Everything the views need for one session, or for all sessions with `ALL_SESSIONS`. The result
+ * is cached per store version: the app asks for it on every repaint and every key.
+ */
 export function derive(store: Store, sid: string): Derived {
+  let bySid = cache.get(store)
+  if (bySid === undefined) {
+    bySid = new Map()
+    cache.set(store, bySid)
+  }
+  const hit = bySid.get(sid)
+  if (hit !== undefined && hit.version === store.version) return hit.d
+  const d = deriveNow(store, sid)
+  bySid.set(sid, { version: store.version, d })
+  return d
+}
+
+function deriveNow(store: Store, sid: string): Derived {
   const events = [...store.events.values()]
     .filter((e) => (sid === ALL_SESSIONS ? store.sessions.has(e.sid) : e.sid === sid))
     .sort((a, b) => a.seq - b.seq)
@@ -154,6 +184,7 @@ export function derive(store: Store, sid: string): Derived {
         cwd: undefined,
         client: undefined,
         online: false,
+        kicked: false,
         state: 'unknown',
         stateSince: undefined,
         note: undefined,
@@ -161,6 +192,7 @@ export function derive(store: Store, sid: string): Derived {
         queued: 0,
         sent: 0,
         received: 0,
+        via: undefined,
         joinedAt: undefined,
         left: undefined,
         order: agents.size,
@@ -266,6 +298,7 @@ export function derive(store: Store, sid: string): Derived {
               const ms = Math.max(0, Date.parse(v.at) - Date.parse(m.sent_at))
               m.deliveries.set(address, { at: v.at, via: v.via, ms })
               a.received++
+              a.via = v.via
             }
             break
           }
@@ -308,6 +341,12 @@ export function derive(store: Store, sid: string): Derived {
     a.host ??= rec.host
     a.cwd ??= rec.cwd
     a.client ??= `${rec.client.name} ${rec.client.version}`
+  }
+  for (const key of store.kicks.keys()) {
+    const k = parseSessionsKey(key)
+    if (k?.kind !== 'kick' || (sid !== ALL_SESSIONS && k.sid !== sid)) continue
+    if (sid === ALL_SESSIONS && !store.sessions.has(k.sid)) continue
+    agent(formatAddress(k.target), k.sid).kicked = true
   }
 
   const messages = [...msgs.values()]

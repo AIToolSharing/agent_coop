@@ -4,12 +4,14 @@ import { senderColor, ticks, type ViewOptions } from './common.js'
 import {
   age,
   clock,
+  fit,
   fitLine,
   type Line,
   note,
   type Rendered,
   STATE_COLOR,
   seg,
+  stamp,
   wrap,
 } from './line.js'
 
@@ -32,6 +34,13 @@ export function renderAgent(d: Derived, address: string | undefined, o: ViewOpti
     seg(a.address, { bold: true }),
     seg(a.online ? '  ● online' : '  ○ offline', { color: a.online ? 'green' : 'gray' }),
   ])
+  if (a.kicked) {
+    add(
+      kv('removed', 'by the operator; it cannot join until you allow it back (k)', {
+        color: 'red',
+      }),
+    )
+  }
   add(
     kv('state', `${a.state}${a.stateSince ? ` for ${age(a.stateSince, o.now)}` : ''}`, {
       color: STATE_COLOR[a.state],
@@ -53,6 +62,17 @@ export function renderAgent(d: Derived, address: string | undefined, o: ViewOpti
   add(kv('joined', a.joinedAt ? `${clock(a.joinedAt)} (${age(a.joinedAt, o.now)} ago)` : '?'))
   if (a.left) add(kv('left', `${clock(a.left.at)} (${a.left.reason})`))
   add(kv('messages', `sent ${a.sent}, received ${a.received}, queued ${a.queued}`))
+  if (a.via !== undefined) {
+    add(
+      kv(
+        'delivery',
+        a.via === 'push'
+          ? 'push: messages wake the agent'
+          : 'poll: the agent fetches messages with wait or inbox (no push)',
+        a.via === 'push' ? {} : { color: 'yellow' },
+      ),
+    )
+  }
   const lat = d.messages.flatMap((m) => {
     const x = m.deliveries.get(a.address)
     return x === undefined ? [] : [x.ms]
@@ -117,7 +137,7 @@ export function renderMessage(d: Derived, id: string | undefined, o: ViewOptions
   add([seg(`#${m.id}`, { bold: true }), seg('  '), ticks(m)])
   add(kv('from', m.from, { color: senderColor(m.from), bold: true }))
   add(kv('to', m.to))
-  add(kv('sent', `${m.sent_at} (${age(m.sent_at, o.now)} ago)`))
+  add(kv('sent', `${stamp(m.sent_at)} (${age(m.sent_at, o.now)} ago)`))
   if (m.reply_to !== undefined) {
     const p = byId.get(m.reply_to)
     add(kv('answers', `#${m.reply_to}${p ? ` from ${p.from}: ${p.text}` : ''}`), m.reply_to)
@@ -166,14 +186,23 @@ export function renderAgents(agents: readonly AgentRow[], o: ViewOptions): Rende
     const wait = a.waiting
       ? `  waiting on ${a.waiting.on ?? 'any'} ${age(a.waiting.since, o.now)}`
       : ''
+    const state = a.kicked
+      ? seg('removed '.padEnd(8), { color: 'red' })
+      : seg(`${a.state.padEnd(8)}`, { color: STATE_COLOR[a.state] })
     return fitLine(
       [
         seg(a.online ? '● ' : '○ ', { color: a.online ? 'green' : 'gray' }),
-        seg(a.address.padEnd(w), { bold: true, inverse: sel }),
+        seg(fit(a.address, w), { bold: true, inverse: sel }),
         seg(`${(a.client ?? '').padEnd(16)} `, { dim: true }),
-        seg(`${a.state.padEnd(8)}`, { color: STATE_COLOR[a.state] }),
+        state,
         seg(`${a.stateSince ? age(a.stateSince, o.now) : ''}`.padStart(4), { dim: true }),
         seg(`  sent ${a.sent} recv ${a.received} q${a.queued}`),
+        a.via === undefined
+          ? seg('')
+          : seg(a.via === 'push' ? '  push' : '  poll', {
+              dim: a.via === 'push',
+              color: a.via === 'push' ? undefined : 'yellow',
+            }),
         seg(wait, { color: 'yellow' }),
         seg(a.note ? `  "${a.note}"` : '', { dim: true }),
       ],

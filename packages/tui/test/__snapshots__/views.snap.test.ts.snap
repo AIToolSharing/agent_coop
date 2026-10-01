@@ -87,6 +87,7 @@ directory    /srv/api
 client       codex 0.9
 joined       12:00:02 (4m ago)
 messages     sent 2, received 2, queued 0
+delivery     poll: the agent fetches messages with wait or inbox (no push)
 latency      median 4000 ms over 2
 
 TIMELINE
@@ -108,7 +109,7 @@ exports[`views of the fixture session > 6 message 1`] = `
 #7  ✓ 1000ms pull
 from         alice@mac-1
 to           bob@vps-2
-sent         2026-09-30T12:00:20.000Z (4m ago)
+sent         2026-09-30 12:00:20 (4m ago)
 
   What is the shape of GET /users?
 
@@ -122,8 +123,8 @@ REPLIES (1)
 
 exports[`views of the fixture session > agents pane 1`] = `
 "
-● alice@mac-1 claude-code 2.1  working   5m  sent 1 recv 2 q0  "parser"
-● bob@vps-2   codex 0.9        blocked   3m  sent 2 recv 2 q0  "waiting for CI"
+● alice@mac-1 claude-code 2.1  working   5m  sent 1 recv 2 q0  poll  "parser"
+● bob@vps-2   codex 0.9        blocked   3m  sent 2 recv 2 q0  poll  "waiting for CI"
 ● carol@mac-3 claude-code 2.1  working   4m  sent 3 recv 0 q0  waiting on bob@vps-2 4m  "users.ts"
 "
 `;

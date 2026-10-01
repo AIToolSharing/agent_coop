@@ -58,9 +58,20 @@ export function oneLine(s: string): string {
   return s.replace(/\r?\n/g, ' ⏎ ').replace(/\t/g, ' ')
 }
 
-/** HH:MM:SS of an ISO time (UTC, so that output does not depend on the host). */
+const two = (n: number) => String(n).padStart(2, '0')
+
+/** HH:MM:SS of an ISO time, in the operator's time zone (tests run with TZ=UTC). */
 export function clock(iso: string): string {
-  return iso.slice(11, 19)
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso.slice(11, 19)
+  return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`
+}
+
+/** YYYY-MM-DD HH:MM:SS of an ISO time, in the operator's time zone. */
+export function stamp(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${clock(iso)}`
 }
 
 /** A short age: 42s, 3m, 2h, 5d. */

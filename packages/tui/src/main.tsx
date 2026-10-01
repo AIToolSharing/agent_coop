@@ -33,6 +33,11 @@ void startFeed(
   ctl.signal,
 )
 
+// SGR mouse reports: clicks select, the wheel scrolls. Only on a terminal.
+const mouseOn = '\x1b[?1000h\x1b[?1006h'
+const mouseOff = '\x1b[?1006l\x1b[?1000l'
+const tty = process.stdout.isTTY === true
+if (tty) process.stdout.write(mouseOn)
 const app = render(
   <App
     store={store}
@@ -45,6 +50,7 @@ const app = render(
   { alternateScreen: true },
 )
 await app.waitUntilExit()
+if (tty) process.stdout.write(mouseOff)
 ctl.abort()
 await broker.close()
 process.exit(0)

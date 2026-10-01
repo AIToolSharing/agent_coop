@@ -5,7 +5,20 @@ import { App, type OperatorApi } from '../src/app.js'
 import { FIX_SID, fixture, NOW } from './fixture.js'
 import { storeOf } from './scenario.js'
 
-const KEY = { tab: '\t', enter: '\r', down: '\u001B[B', up: '\u001B[A', esc: '\u001B' }
+const KEY = {
+  tab: '\t',
+  enter: '\r',
+  down: '\u001B[B',
+  up: '\u001B[A',
+  esc: '\u001B',
+  pageUp: '\u001B[5~',
+  pageDown: '\u001B[6~',
+  end: '\u001B[F',
+}
+/** An SGR mouse report: a left click or a wheel step at a 1-based column and row. */
+const click = (x: number, y: number) => `\u001B[<0;${x};${y}M\u001B[<0;${x};${y}m`
+const wheel = (dir: 'up' | 'down', x: number, y: number) =>
+  `\u001B[<${dir === 'up' ? 64 : 65};${x};${y}M`
 const tick = () => new Promise((r) => setTimeout(r, 30))
 
 let calls: string[]
@@ -15,6 +28,7 @@ const op: OperatorApi = {
   reopenSession: async (s) => void calls.push(`reopen ${s}`),
   deleteSession: async (s) => void calls.push(`delete ${s}`),
   kick: async (s, t) => void calls.push(`kick ${s} ${formatAddress(t)}`),
+  unkick: async (s, t) => void calls.push(`unkick ${s} ${formatAddress(t)}`),
   redact: async (s, id) => {
     calls.push(`redact ${s} ${id}`)
     return true
@@ -120,14 +134,94 @@ describe('the TUI', () => {
     app.unmount()
   })
 
-  test('creates, closes, and refuses to delete an open session', async () => {
+  test('creates, closes after y, and refuses to delete an open session', async () => {
     const app = start()
     await openSession(app)
     await app.type('D')
     expect(app.frame()).toContain('close the session first')
     await app.type('c')
+    expect(app.frame()).toContain(`close ${FIX_SID}? its agents are disconnected`)
+    await app.type('y')
     await app.type('n', ...'demo', KEY.enter)
     expect(calls).toEqual([`close ${FIX_SID}`, 'create demo'])
+    app.unmount()
+  })
+
+  // Found in use: an agent removed by mistake had no way back.
+  test('shows a removed agent and lets it back in with k', async () => {
+    const store = storeOf(fixture())
+    store.apply([
+      { kind: 'kick', key: `${FIX_SID}.kick.mac-1.alice`, record: { at: '2026-09-30T12:04:00Z' } },
+    ])
+    const r = render(
+      <App store={store} op={op} subscribe={() => () => undefined} now={() => NOW} />,
+    )
+    const type = async (...keys: string[]) => {
+      for (const k of keys) {
+        r.stdin.write(k)
+        await tick()
+      }
+    }
+    await type(KEY.tab, KEY.tab, KEY.down, KEY.tab, KEY.tab, KEY.down)
+    expect(r.lastFrame()).toContain('removed')
+    await type('k')
+    expect(r.lastFrame()).toContain('allow alice@mac-1 back into build-42? (y/n)')
+    await type('y')
+    expect(calls).toEqual([`unkick ${FIX_SID} alice@mac-1`])
+    r.unmount()
+  })
+
+  test('shows the help with ? and closes it with esc', async () => {
+    const app = start()
+    await app.type('?')
+    expect(app.frame()).toContain('move the focus')
+    expect(app.frame()).toContain('close help')
+    await app.type(KEY.esc)
+    expect(app.frame()).not.toContain('close help')
+    expect(app.frame()).toContain('1 log')
+    app.unmount()
+  })
+
+  test('scrolls with page keys and returns to following with end', async () => {
+    const app = start()
+    await openSession(app)
+    expect(app.frame()).toContain('follow ●')
+    await app.type(KEY.pageUp)
+    expect(app.frame()).not.toContain('follow ●')
+    await app.type(KEY.end)
+    expect(app.frame()).toContain('follow ●')
+    app.unmount()
+  })
+
+  test('a click selects a session, a second click on a message opens it', async () => {
+    const app = start()
+    // Row 4 of the sessions pane is the second entry: build-42 (row 3 is "all traffic").
+    await app.type(click(5, 4))
+    expect(app.frame()).toContain(`log: ${FIX_SID}`)
+    // The view pane body starts at row 3; its first line is a system line, so click lower.
+    const lines = app.frame().split('\n')
+    const row = lines.findIndex((l) => l.includes('#7 What is th')) + 1
+    expect(row).toBeGreaterThan(0)
+    await app.type(click(50, row))
+    expect(app.frame()).not.toContain('follow ●')
+    await app.type(click(50, row))
+    expect(app.frame()).toContain('6 message')
+    expect(app.frame()).toContain('#7')
+    app.unmount()
+  })
+
+  test('the wheel scrolls the view and selects agents', async () => {
+    const app = start()
+    await openSession(app)
+    await app.type(wheel('up', 50, 5))
+    expect(app.frame()).not.toContain('follow ●')
+    await app.type(wheel('down', 50, 5), wheel('down', 50, 5), wheel('down', 50, 5))
+    expect(app.frame()).toContain('follow ●')
+    const lines = app.frame().split('\n')
+    const agentRow = lines.findIndex((l) => l.includes('bob@vps-2') && l.includes('codex')) + 1
+    await app.type(wheel('down', 10, agentRow))
+    await app.type(KEY.enter)
+    expect(app.frame()).toContain('5 agent')
     app.unmount()
   })
 

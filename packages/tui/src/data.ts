@@ -2,6 +2,7 @@
 // Updates are applied in batches so that a burst of events causes one repaint.
 import {
   decode,
+  KickRecord,
   PresenceRecord,
   parsePresenceKey,
   parseSessionsKey,
@@ -40,7 +41,12 @@ export function startFeed(
     signal.addEventListener('abort', () => w.stop(), { once: true })
     for await (const e of w) {
       const k = parseSessionsKey(e.key)
-      if (k?.kind !== 'session') continue
+      if (k === undefined) continue
+      if (k.kind === 'kick') {
+        const record = e.operation === 'PUT' ? decode(KickRecord, e.value) : undefined
+        push({ kind: 'kick', key: e.key, record })
+        continue
+      }
       const record = e.operation === 'PUT' ? decode(SessionRecord, e.value) : undefined
       push({ kind: 'session', sid: k.sid, record })
     }
