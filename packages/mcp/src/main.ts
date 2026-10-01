@@ -8,7 +8,7 @@ import { Shim } from './server.js'
 
 const [cmd, ...args] = process.argv.slice(2)
 if (cmd !== undefined) {
-  process.exitCode = runCommand(cmd, args, {
+  process.exitCode = await runCommand(cmd, args, {
     cwd: process.cwd(),
     print: (l) => console.log(l),
     error: (l) => console.error(l),

@@ -78,15 +78,11 @@ Requirements: Node.js 24, Claude Code (or another MCP client).
 2. Get a token for this machine from the operator. On the server:
    `coop-hub token add <machine>`. The token shows one time only.
 
-3. Write the credential file. Keep it private:
+3. Store it. The command checks the token against the service, then writes
+   `~/.config/coop/env` with mode 0600 and prints the next steps:
 
    ```bash
-   mkdir -p ~/.config/coop
-   cat > ~/.config/coop/env <<'EOF'
-   COOP_URL=https://coop.example.com
-   COOP_TOKEN=<machine>.<secret>
-   EOF
-   chmod 600 ~/.config/coop/env
+   coop-mcp login https://coop.example.com <machine>.<secret>
    ```
 
 4. Register the MCP server and the skill for your user:

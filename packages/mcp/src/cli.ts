@@ -1,15 +1,70 @@
-// The coop-mcp commands that set a project up. The MCP server itself is in main.ts.
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+// The coop-mcp commands that set a machine and a project up. The MCP server itself is in main.ts.
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { AGENT_RE, TOKEN_RE } from '@coop/core'
-import { findGitRoot, PROJECT_FILE } from './config.js'
+import { DEFAULT_ENV_FILE, findGitRoot, PROJECT_FILE } from './config.js'
 
 /** A wrong command line. The message is for the person, and the exit code is 2. */
 export class UsageError extends Error {}
 
 export const USAGE = `usage: coop-mcp                                 serve (an MCP client starts it this way)
+       coop-mcp login <url> <token>              store this machine's credential and check it
        coop-mcp session <name> [--agent <name>]  agents started in this directory join <name>`
+
+export type ProbeResult = 'ok' | 'bad_token' | 'unreachable' | { readonly unexpected: number }
+
+/**
+ * Check a credential against the service with one request. The service answers 401 to a bad
+ * token; a good token gets a 4xx about the probe session itself, which is the expected answer.
+ */
+export async function probe(
+  url: string,
+  token: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<ProbeResult> {
+  let res: Response
+  try {
+    res = await fetchFn(`${url}/v1/sessions/_probe?agent=_probe`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+  } catch {
+    return 'unreachable'
+  }
+  if (res.status === 401) return 'bad_token'
+  if (res.status >= 500) return { unexpected: res.status }
+  return 'ok'
+}
+
+/** Write the credential file for this user only (directory 0700, file 0600). */
+export function writeCredentialFile(path: string, url: string, token: string): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  writeFileSync(path, `COOP_URL=${url}\nCOOP_TOKEN=${token}\n`, { mode: 0o600 })
+  chmodSync(path, 0o600)
+}
+
+const TOKEN_FORM = /^[a-z0-9_-]{1,64}\.\S+$/
+
+function parseUrl(s: string): string {
+  let u: URL
+  try {
+    u = new URL(s)
+  } catch {
+    throw new UsageError(`"${s}" is not a URL`)
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') {
+    throw new UsageError(`"${s}" must start with https://`)
+  }
+  return u.toString().replace(/\/+$/, '')
+}
 
 /**
  * Write `.coop` in `cwd` and add it to the repository's .gitignore (a session is the person's,
@@ -48,13 +103,57 @@ function ignoreProjectFile(root: string): boolean {
   return true
 }
 
-/** Run one command. Returns the exit code. */
-export function runCommand(
-  cmd: string,
-  args: string[],
-  io: { cwd: string; print: (line: string) => void; error: (line: string) => void },
-): number {
+export interface CommandIo {
+  readonly cwd: string
+  readonly print: (line: string) => void
+  readonly error: (line: string) => void
+  /** The credential file; tests point it at a temp file. */
+  readonly envFile?: string
+  readonly fetch?: typeof fetch
+}
+
+/** The absolute path of the served program, for the `claude mcp add` line. */
+const MAIN = fileURLToPath(new URL('./main.js', import.meta.url))
+
+/** Run one command. Returns the exit code: 0 done, 1 the service said no, 2 wrong command line. */
+export async function runCommand(cmd: string, args: string[], io: CommandIo): Promise<number> {
   try {
+    if (cmd === 'login') {
+      const [rawUrl, token, extra] = args
+      if (rawUrl === undefined || token === undefined || extra !== undefined) {
+        throw new UsageError(USAGE)
+      }
+      const url = parseUrl(rawUrl)
+      if (!TOKEN_FORM.test(token)) {
+        throw new UsageError(
+          'the token has the form <machine>.<secret>, as `coop-hub token add` printed it',
+        )
+      }
+      const r = await probe(url, token, io.fetch)
+      if (r === 'bad_token') {
+        io.error(`${url} refused the token; ask the operator for a new one (coop-hub token add)`)
+        return 1
+      }
+      if (r === 'unreachable') {
+        io.error(`cannot reach ${url}; check the address and the network`)
+        return 1
+      }
+      if (r !== 'ok') {
+        io.error(`${url} answered ${r.unexpected}; the service may be down, try again later`)
+        return 1
+      }
+      const file = io.envFile ?? DEFAULT_ENV_FILE
+      writeCredentialFile(file, url, token)
+      io.print(`wrote ${file} (mode 0600)`)
+      io.print('next, once per user:')
+      io.print(`  claude mcp add --scope user coop -- node ${MAIN}`)
+      io.print('then, in each project:')
+      io.print('  coop-mcp session <name>      # agents started there join <name>')
+      io.print(
+        `  ${join(dirname(dirname(dirname(MAIN))), '..', 'bin', 'coop-claude')}   # Claude Code with push`,
+      )
+      return 0
+    }
     if (cmd === 'session') {
       const { values, positionals } = parseArgs({
         args,
