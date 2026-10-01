@@ -2,7 +2,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { AGENT_RE, DEFAULT_ENV_FILE, TOKEN_RE, updateEnvFile } from '@coop/core'
@@ -124,8 +124,11 @@ function execForeground(cmd: string, args: string[], env: NodeJS.ProcessEnv): nu
   return r.status ?? 1
 }
 
-/** The absolute path of the served program, for the `claude mcp add` line. */
-const MAIN = fileURLToPath(new URL('./main.js', import.meta.url))
+/** How an MCP client starts this program: the installed command, or node and this file. */
+const COMMAND =
+  basename(process.argv[1] ?? '') === 'coop-mcp'
+    ? 'coop-mcp'
+    : `node ${fileURLToPath(new URL('./main.js', import.meta.url))}`
 
 /** Run one command. Returns the exit code: 0 done, 1 the service said no, 2 wrong command line. */
 export async function runCommand(cmd: string, args: string[], io: CommandIo): Promise<number> {
@@ -160,7 +163,7 @@ export async function runCommand(cmd: string, args: string[], io: CommandIo): Pr
       io.print('next, once per user, one of:')
       io.print('  in Claude Code: /plugin marketplace add AIToolSharing/agent_coop')
       io.print('                  /plugin install coop@coop')
-      io.print(`  any MCP client: claude mcp add --scope user coop -- node ${MAIN}`)
+      io.print(`  any MCP client: claude mcp add --scope user coop -- ${COMMAND}`)
       io.print('then, in each project:')
       io.print('  coop-mcp session <name>   # agents started there join <name>')
       io.print('  coop-mcp claude           # Claude Code with messages pushed in')

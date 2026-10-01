@@ -19,7 +19,8 @@
     "test": "vitest run",
     "check": "biome ci . && tsc -b && tsc -p tsconfig.test.json && vitest run && node scripts/bundle.mjs --check",
     "contract": "COOP_CONTRACT=1 vitest run packages/hub/test/contract.int.test.ts",
-    "bundle": "tsc -b && node scripts/bundle.mjs"
+    "bundle": "tsc -b && node scripts/bundle.mjs",
+    "cli": "node scripts/install-cli.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
@@ -29,5 +30,8 @@
     "rolldown": "^1.2.12",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2"
+  },
+  "allowScripts": {
+    "fsevents@2.3.3": true
   }
 }

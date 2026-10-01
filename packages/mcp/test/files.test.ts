@@ -1,7 +1,8 @@
 // The plugin files and the bundle are outside the packages; these tests keep them honest.
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdtempSync, readFileSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from 'vitest'
 import { FORBIDDEN_RE } from '../src/server.js'
@@ -34,4 +35,24 @@ test('the committed bundle runs on its own', () => {
   expect(r.status).toBe(0)
   expect(r.stdout).toContain('coop-mcp session')
   expect(r.stdout).toContain('coop-mcp claude')
+})
+
+test('npm run cli puts coop-mcp and coop-tui into COOP_BIN', () => {
+  const bin = mkdtempSync(join(tmpdir(), 'coop-bin-'))
+  // A PATH with node but without `bin`, so the script must say how to add it.
+  const PATH = `${dirname(process.execPath)}:/usr/bin:/bin`
+  const r = spawnSync(process.execPath, [join(root, 'scripts/install-cli.mjs'), '--no-build'], {
+    encoding: 'utf8',
+    env: { ...process.env, COOP_BIN: bin, PATH },
+  })
+  expect(r.status).toBe(0)
+  expect(r.stdout).toContain(`export PATH="${bin}:$PATH"`)
+  expect(statSync(join(bin, 'coop-mcp')).mode & 0o111).toBe(0o111)
+  expect(readFileSync(join(bin, 'coop-mcp'), 'utf8')).toBe(read('plugin/coop-mcp.mjs'))
+  expect(readFileSync(join(bin, 'coop-tui'), 'utf8')).toContain('packages/tui/dist/main.js')
+  const help = spawnSync(join(bin, 'coop-mcp'), ['help'], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH },
+  })
+  expect(help.status).toBe(0)
 })

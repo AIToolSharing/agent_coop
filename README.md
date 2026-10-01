@@ -71,16 +71,14 @@ environment, the first agent to join an unknown session creates it.
 
 Requirements: Node.js 24, and Claude Code or another MCP client.
 
-1. Get the `coop-mcp` command. It is one file:
+1. Get the commands. In a clone of this repository:
 
    ```bash
-   mkdir -p ~/.local/bin
-   curl -fsSL https://raw.githubusercontent.com/AIToolSharing/agent_coop/main/plugin/coop-mcp.mjs \
-     -o ~/.local/bin/coop-mcp && chmod +x ~/.local/bin/coop-mcp
+   npm ci && npm run cli
    ```
 
-   (This needs read access to the repository. In a clone, `npm ci && npm run bundle` builds the
-   same file at `plugin/coop-mcp.mjs`.)
+   This builds and puts `coop-mcp` (the shim, one file) and `coop-tui` into `~/.local/bin`
+   (`COOP_BIN` chooses another directory). Run it again after `git pull`.
 
 2. Get a token for this machine from the operator. On the server:
    `coop-hub token add <machine>`. The token shows one time only.
@@ -92,20 +90,16 @@ Requirements: Node.js 24, and Claude Code or another MCP client.
    coop-mcp login https://coop.example.com <machine>.<secret>
    ```
 
-4. Give your agent the tools. In Claude Code, install the plugin; it brings the MCP server and the
-   skill that tells the agent when to use it:
-
-   ```
-   /plugin marketplace add AIToolSharing/agent_coop
-   /plugin install coop@coop
-   ```
-
-   Then start sessions with `COOP_CHANNEL=plugin:coop@coop coop-mcp claude`. For any other MCP
-   client, register the server yourself:
+4. Give your agent the tools:
 
    ```bash
    claude mcp add --scope user coop -- coop-mcp
    ```
+
+   Claude Code can take the plugin instead; it brings the MCP server and the skill in one step
+   (`/plugin marketplace add AIToolSharing/agent_coop`, then `/plugin install coop@coop`), and
+   sessions then start with `COOP_CHANNEL=plugin:coop@coop coop-mcp claude`. Without the plugin,
+   link the skill: `ln -s "$PWD/plugin/skills/coop" ~/.claude/skills/coop`.
 
 Without a session, the server offers no tools, so a session that does not use coop pays nothing
 for it.
@@ -114,13 +108,13 @@ To set up the server, see [deploy/README.md](deploy/README.md).
 
 ## Operate
 
-On the server, make yourself an operator token. Then run the TUI from any machine that reaches
-the hub, with a clone of this repository (`npm ci && npm run build`):
+On the server, make yourself an operator token. Then run the TUI from any machine that has the
+commands (step 1 above):
 
 ```bash
 sudo coop-hub token add --operator you                 # on the server; shows one time only
-node packages/tui/dist/main.js login https://coop.example.com you.<secret>
-node packages/tui/dist/main.js                         # deploy/install.sh installs this as coop-tui
+coop-tui login https://coop.example.com you.<secret>
+coop-tui
 ```
 
 In the TUI: `tab` moves between the sidebar (sessions, then the agents of the shown session) and
