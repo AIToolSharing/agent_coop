@@ -471,9 +471,10 @@ export function App({ store, subscribe, op, now = Date.now }: AppProps) {
           const row = cur.sidebar.rows[index]
           if (row?.kind === 'agent' && u.agentAddr === row.address && u.focus === 'sidebar') {
             openSidebarRow(u, cur, index)
-          } else if (row?.kind === 'session')
-            chooseSession({ ...u, focus: 'sidebar' }, row.sid, index), set({ focus: 'sidebar' })
-          else if (row?.kind === 'agent')
+          } else if (row?.kind === 'session') {
+            chooseSession(u, row.sid, index)
+            set({ focus: 'sidebar' })
+          } else if (row?.kind === 'agent')
             set({ focus: 'sidebar', cursor: index, agentAddr: row.address })
           else set({ focus: 'sidebar' })
         }

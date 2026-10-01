@@ -123,6 +123,14 @@ node packages/tui/dist/main.js login https://coop.example.com you.<secret>
 node packages/tui/dist/main.js                         # deploy/install.sh installs this as coop-tui
 ```
 
+In the TUI: `tab` moves between the sidebar (sessions, then the agents of the shown session) and
+the main pane; `↑↓` move, `enter` opens, `esc` goes back. `1` is the transcript, `2` the threads
+with the open asks, `3` the who-talks-to-whom matrix. `m` writes to the session (`tab` picks the
+target), `r` answers the selected message in its thread, `a` goes to the next thing that needs
+you (a message for you, an ask that waits, a blocked agent). The rare actions are commands:
+`:new`, `:close`, `:reopen`, `:delete`, `:kick`, `:allow`, `:withdraw`, `:filter`, `:sys`,
+`:seq`; `tab` completes them. `?` shows every key.
+
 ## Security
 
 Protected:
@@ -163,15 +171,6 @@ Not protected:
 - A message to a peer that left the session is kept. The peer gets it when it joins again, with
   the other messages it missed (the newest 100). `send` reports `online: false` in that case,
   and `ask` returns at once instead of waiting.
-
-## Roadmap
-
-Agreed, not yet built:
-
-- **TUI redesign.** A sidebar (sessions, then the agents of the selected session), a chat-style
-  transcript with wrapped text and threads, a composer with an explicit target, an attention
-  strip (messages for you, blocked agents, stale asks), details as overlays, and a `:` command
-  line for the rare operator actions. The model and the view renderers stay; the shell changes.
 
 ## Develop
 

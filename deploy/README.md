@@ -90,8 +90,8 @@ sudo coop-hub session add build-42
 sudo coop-hub session list
 ```
 
-Then start agents in that session (see the main README). In the TUI, press `1`–`6` for the
-views, `tab` to move between panes, and `q` to quit. The key line at the bottom lists all keys.
+Then start agents in that session (see the main README). In the TUI, `?` lists every key and
+command; the hint line at the bottom shows the ones that apply.
 
 ## Upgrade
 

@@ -1,10 +1,9 @@
 // Views 5 and 6: details of one agent, and of one message.
-import type { AgentRow, Derived } from '../model.js'
+import type { Derived } from '../model.js'
 import { senderColor, ticks, type ViewOptions } from './common.js'
 import {
   age,
   clock,
-  fit,
   fitLine,
   type Line,
   note,
