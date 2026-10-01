@@ -83,7 +83,7 @@ describe('the TUI', () => {
     await app.type('3')
     expect(app.frame()).toContain('OPEN ASKS (1)')
     await app.type('4')
-    expect(app.frame()).toContain('MEDIAN DELIVERY')
+    expect(app.frame()).toContain('MEDIAN MS UNTIL THE MESSAGE REACHED')
     app.unmount()
   })
 
@@ -255,7 +255,7 @@ describe('the TUI', () => {
     await app.type(KEY.up, KEY.up, KEY.up, KEY.enter)
     const f = app.frame()
     expect(f).toContain('6 message')
-    expect(f).toContain('DELIVERY')
+    expect(f).toContain('REACHED')
     app.unmount()
   })
 })

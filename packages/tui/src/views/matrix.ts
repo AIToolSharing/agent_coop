@@ -1,4 +1,5 @@
-// View 4: who talks to whom. Message counts per sender and receiver, and median delivery latency.
+// View 4: who talks to whom. Message counts per sender and receiver, and the median time until a
+// message reached the receiving agent (its process, not the model: a push waits for the next turn).
 import { BROADCAST } from '@coop/core'
 import type { Derived } from '../model.js'
 import type { ViewOptions } from './common.js'
@@ -45,7 +46,7 @@ export function renderMatrix(d: Derived, o: ViewOptions): Rendered {
     return n === 0 ? '·' : String(n)
   })
   lines.push([seg('')])
-  table('MEDIAN DELIVERY (ms)', (f, t) => {
+  table('MEDIAN MS UNTIL THE MESSAGE REACHED THE AGENT', (f, t) => {
     if (t === BROADCAST) return '·'
     const ms = latency(f, t)
     return ms === undefined ? '·' : String(Math.round(ms))

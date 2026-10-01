@@ -42,7 +42,10 @@ export function items(d: Derived, o: ViewOptions): TimelineItem[] {
   )
 }
 
-/** The short tick text for a message: ✓ with latency for one recipient, k/n for many. */
+/**
+ * The short tick text for a message: ✓ with the time until it reached the recipient's process
+ * for one recipient, k/n for many. Reached is not read: a pushed message waits for the next turn.
+ */
 export function ticks(m: MsgRow): Seg {
   if (m.redacted) return seg('withdrawn', { dim: true })
   if (m.to === OPERATOR) return seg('for you', { color: 'yellow', bold: true })

@@ -65,9 +65,9 @@ export function renderAgent(d: Derived, address: string | undefined, o: ViewOpti
   if (a.via !== undefined) {
     add(
       kv(
-        'delivery',
+        'receives',
         a.via === 'push'
-          ? 'push: messages wake the agent'
+          ? 'push: a message goes into its session; the agent reads it on its next turn'
           : 'poll: the agent fetches messages with wait or inbox (no push)',
         a.via === 'push' ? {} : { color: 'yellow' },
       ),
@@ -80,7 +80,7 @@ export function renderAgent(d: Derived, address: string | undefined, o: ViewOpti
   if (lat.length > 0) {
     add(
       kv(
-        'latency',
+        'reach time',
         `median ${Math.round([...lat].sort((p, q) => p - q)[Math.floor(lat.length / 2)] ?? 0)} ms over ${lat.length}`,
       ),
     )
@@ -149,7 +149,7 @@ export function renderMessage(d: Derived, id: string | undefined, o: ViewOptions
     add([seg(`  ${t}`, m.redacted ? { dim: true } : {})])
   }
   add([seg('')])
-  add([seg('DELIVERY', { bold: true })])
+  add([seg('REACHED', { bold: true })])
   if (m.recipients.length === 0) add([seg('  no recipient was in the session', { dim: true })])
   for (const r of m.recipients) {
     const x = m.deliveries.get(r)
