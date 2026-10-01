@@ -86,8 +86,8 @@ Requirements: Node.js 24, Claude Code (or another MCP client).
    ln -s "$PWD/skill/coop" ~/.claude/skills/coop
    ```
 
-Without `COOP_SESSION`, the server offers only the `status` tool, so it costs almost nothing in
-sessions that do not use it.
+Without `COOP_SESSION`, the server offers no tools, so a session that does not use coop pays
+nothing for it.
 
 To set up the server, see [deploy/README.md](deploy/README.md).
 

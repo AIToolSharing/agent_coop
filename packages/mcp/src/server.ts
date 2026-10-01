@@ -185,7 +185,8 @@ export class Shim {
         ...(inSession ? { instructions: INSTRUCTIONS } : {}),
       },
     )
-    const tools: ToolName[] = inSession ? ALL_TOOLS : ['status']
+    // No session: no tools. The agent then has nothing to call, so a task costs nothing.
+    const tools: ToolName[] = inSession ? ALL_TOOLS : []
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: tools.map(toolDef),
     }))

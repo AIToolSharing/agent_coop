@@ -114,12 +114,13 @@ async function session(): Promise<string> {
 }
 
 describe('outside a session', () => {
-  test('only status is offered, and it says so', async () => {
+  test('no tool is offered, so the agent never spends a call; status still answers', async () => {
     const a = await agent('mac-1', {})
     const tools = await a.client.listTools()
     seen.push(JSON.stringify(tools))
-    expect(tools.tools.map((t) => t.name)).toEqual(['status'])
+    expect(tools.tools).toEqual([])
     expect(a.client.getServerCapabilities()?.experimental).toBeUndefined()
+    expect(a.client.getInstructions()).toBeUndefined()
     expect(await a.json('status')).toEqual({
       joined: false,
       reason: 'no shared session is set for this agent',

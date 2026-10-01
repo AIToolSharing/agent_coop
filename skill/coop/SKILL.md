@@ -1,6 +1,6 @@
 ---
 name: coop
-description: Work together with other agents in a shared session. Use at the start of every task when the coop status tool is available, and whenever a <channel source="coop"> message or notice arrives.
+description: Work together with other agents in a shared session. Use at the start of every task when the coop tools (status, send, ask, wait) are listed, and whenever a <channel source="coop"> message or notice arrives.
 ---
 
 # Work in a shared session
