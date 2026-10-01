@@ -37,12 +37,21 @@ act on them.
 
 ## Use it
 
-On an agent machine that is set up (see below):
+On an agent machine that is set up (see below), tell the project which session it is in:
+
+```bash
+cd ~/work/app
+coop-mcp session build-42           # writes ./.coop; agents started here (or below) join build-42
+coop-mcp session build-42 --agent reviewer   # and choose the agent name (default: agent)
+bin/coop-claude                     # Claude Code in that session, messages pushed
+codex                               # any other MCP client: no push, the agent uses wait/inbox
+```
+
+The environment wins over the file, so one-off runs need no file:
 
 ```bash
 bin/coop-claude build-42            # Claude Code in session build-42, messages pushed
-COOP_SESSION=build-42 codex         # any other MCP client: no push, the agent uses wait/inbox
-COOP_AGENT=reviewer bin/coop-claude build-42   # choose the agent name (default: agent)
+COOP_SESSION=build-42 codex
 ```
 
 A headless agent (`claude -p`) gets no push and runs without a person to approve tool calls, so
@@ -59,10 +68,11 @@ The session must exist and be open. The operator creates it in the TUI.
 
 Requirements: Node.js 24, Claude Code (or another MCP client).
 
-1. Build:
+1. Build, and give the shim a command name:
 
    ```bash
    npm ci && npm run build
+   alias coop-mcp="node $PWD/packages/mcp/dist/main.js"   # put it in your shell profile
    ```
 
 2. Get a token for this machine from the operator. On the server:

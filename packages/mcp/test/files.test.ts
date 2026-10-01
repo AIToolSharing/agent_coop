@@ -20,13 +20,17 @@ test('coop-claude sets the session, turns push on, and loads the channel', () =>
   const fake = join(dir, 'claude')
   writeFileSync(fake, '#!/usr/bin/env bash\necho "$COOP_SESSION|$COOP_PUSH|$*"\n')
   chmodSync(fake, 0o755)
-  const r = spawnSync(join(root, 'bin/coop-claude'), ['demo', '--model', 'x'], {
-    encoding: 'utf8',
-    env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
-  })
-  expect(r.stdout.trim()).toBe(
+  const run = (...args: string[]) =>
+    spawnSync(join(root, 'bin/coop-claude'), args, {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+    })
+  expect(run('demo', '--model', 'x').stdout.trim()).toBe(
     'demo|1|--dangerously-load-development-channels server:coop --model x',
   )
-  const usage = spawnSync(join(root, 'bin/coop-claude'), [], { encoding: 'utf8' })
-  expect(usage.status).toBe(2)
+  // No session argument: the session comes from the environment or the project's .coop file.
+  expect(run('--model', 'x').stdout.trim()).toBe(
+    '|1|--dangerously-load-development-channels server:coop --model x',
+  )
+  expect(run('--help').status).toBe(0)
 })

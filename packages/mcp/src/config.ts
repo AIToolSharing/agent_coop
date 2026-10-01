@@ -1,8 +1,9 @@
-// Shim configuration. The session comes from the agent's environment; the service address and
-// the machine credential come from the environment or from ~/.config/coop/env (mode 0600).
-import { readFileSync, statSync } from 'node:fs'
+// Shim configuration. The session and the agent name come from the agent's environment or from a
+// `.coop` file in the project; the service address and the machine credential come from the
+// environment or from ~/.config/coop/env (mode 0600).
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { AGENT_RE, TOKEN_RE } from '@coop/core'
 
 export interface ShimConfig {
@@ -16,19 +17,11 @@ export interface ShimConfig {
 }
 
 export const DEFAULT_ENV_FILE = join(homedir(), '.config', 'coop', 'env')
+/** The per-project file. It holds the session and the agent name, never a credential. */
+export const PROJECT_FILE = '.coop'
 
-/** Read KEY=VALUE lines. The file holds a credential, so it must not be readable by others. */
-export function readEnvFile(path: string, warn: (m: string) => void): Record<string, string> {
-  let text: string
-  try {
-    if ((statSync(path).mode & 0o077) !== 0) {
-      warn(`${path} is readable by other users; run: chmod 600 ${path}`)
-      return {}
-    }
-    text = readFileSync(path, 'utf8')
-  } catch {
-    return {}
-  }
+/** Parse KEY=VALUE lines. Blank lines and `#` comments are skipped; quotes around a value go. */
+export function parseEnv(text: string): Record<string, string> {
   const out: Record<string, string> = {}
   for (const raw of text.split('\n')) {
     const line = raw.trim()
@@ -41,31 +34,89 @@ export function readEnvFile(path: string, warn: (m: string) => void): Record<str
   return out
 }
 
+/** Read the credential file. It must not be readable by others. */
+export function readEnvFile(path: string, warn: (m: string) => void): Record<string, string> {
+  try {
+    if ((statSync(path).mode & 0o077) !== 0) {
+      warn(`${path} is readable by other users; run: chmod 600 ${path}`)
+      return {}
+    }
+    return parseEnv(readFileSync(path, 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+/** The directory that holds `.git`, from `cwd` upwards, or undefined. */
+export function findGitRoot(cwd: string): string | undefined {
+  for (const dir of ancestors(cwd)) if (existsSync(join(dir, '.git'))) return dir
+  return undefined
+}
+
+/**
+ * The nearest `.coop` file from `cwd` upwards. The search stops at the git root, so a file in a
+ * parent of the repository does not apply to it.
+ */
+export function findProjectFile(cwd: string): string | undefined {
+  for (const dir of ancestors(cwd)) {
+    const file = join(dir, PROJECT_FILE)
+    if (existsSync(file)) return file
+    if (existsSync(join(dir, '.git'))) return undefined
+  }
+  return undefined
+}
+
+function* ancestors(start: string): Generator<string> {
+  let dir = start
+  for (;;) {
+    yield dir
+    const parent = dirname(dir)
+    if (parent === dir) return
+    dir = parent
+  }
+}
+
 export function loadConfig(
   env: NodeJS.ProcessEnv = process.env,
   file: string = DEFAULT_ENV_FILE,
   warn: (m: string) => void = (m) => console.error(`coop: ${m}`),
+  cwd: string = process.cwd(),
 ): ShimConfig {
   const fromFile = readEnvFile(file, warn)
-  const pick = (k: string) => {
-    const v = env[k] ?? fromFile[k]
-    return v === undefined || v === '' ? undefined : v
+  const projectFile = findProjectFile(cwd)
+  const fromProject = projectFile === undefined ? {} : readProjectFile(projectFile)
+  const pick = (k: string, ...sources: Record<string, string | undefined>[]) => {
+    for (const s of [env, ...sources]) {
+      const v = s[k]
+      if (v !== undefined && v !== '') return v
+    }
+    return undefined
   }
-  let session = pick('COOP_SESSION')
+  const where = (k: string) =>
+    env[k] !== undefined && env[k] !== '' ? k : `${k} in ${projectFile ?? PROJECT_FILE}`
+  let session = pick('COOP_SESSION', fromProject)
   if (session !== undefined && !TOKEN_RE.test(session)) {
-    warn(`COOP_SESSION "${session}" is not a valid session name; ignoring it`)
+    warn(`${where('COOP_SESSION')} "${session}" is not a valid session name; ignoring it`)
     session = undefined
   }
-  let agent = pick('COOP_AGENT') ?? 'agent'
+  let agent = pick('COOP_AGENT', fromProject) ?? 'agent'
   if (!AGENT_RE.test(agent)) {
-    warn(`COOP_AGENT "${agent}" is not a valid agent name; using "agent"`)
+    warn(`${where('COOP_AGENT')} "${agent}" is not a valid agent name; using "agent"`)
     agent = 'agent'
   }
   return {
     session,
     agent,
-    push: pick('COOP_PUSH') === '1',
-    url: pick('COOP_URL')?.replace(/\/+$/, ''),
-    token: pick('COOP_TOKEN'),
+    push: pick('COOP_PUSH', fromFile) === '1',
+    url: pick('COOP_URL', fromFile)?.replace(/\/+$/, ''),
+    token: pick('COOP_TOKEN', fromFile),
+  }
+}
+
+function readProjectFile(path: string): Record<string, string> {
+  try {
+    return parseEnv(readFileSync(path, 'utf8'))
+  } catch {
+    return {}
   }
 }

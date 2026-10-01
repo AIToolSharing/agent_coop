@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Start Claude Code in a shared session. Messages from peers are pushed into the session.
-# Usage: coop-claude <session> [claude arguments...]
+# Usage: coop-claude [<session>] [claude arguments...]
+# Without <session>, the session comes from COOP_SESSION or from the project's .coop file
+# (see: coop-mcp session <name>).
 set -euo pipefail
-if [ $# -lt 1 ]; then
-  echo "usage: coop-claude <session> [claude arguments...]" >&2
-  exit 2
+if [ "${1-}" = "--help" ] || [ "${1-}" = "-h" ]; then
+  echo "usage: coop-claude [<session>] [claude arguments...]"
+  exit 0
 fi
-session=$1
-shift
-export COOP_SESSION="$session"
+# A first argument that does not start with "-" is the session name.
+if [ $# -ge 1 ] && [ "${1#-}" = "$1" ]; then
+  export COOP_SESSION="$1"
+  shift
+fi
 export COOP_PUSH=1
 exec claude --dangerously-load-development-channels server:coop "$@"
