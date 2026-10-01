@@ -72,9 +72,13 @@ export class Inbox {
       }
     }
     if (this.o.push) {
-      await this.o.onPush(item)
-      this.delivered([item], 'push')
-      return
+      try {
+        await this.o.onPush(item)
+        this.delivered([item], 'push')
+        return
+      } catch {
+        // The push failed (the session is closing or busy). The queue keeps the item.
+      }
     }
     this.queue.push(item)
     const cap = this.o.cap ?? 1000

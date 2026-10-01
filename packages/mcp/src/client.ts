@@ -45,6 +45,8 @@ export interface JoinInfo {
 
 const RETRY_CLOSED_MS = 30_000
 const MAX_BACKOFF_MS = 30_000
+/** The service pings every 15 s. A stream silent for this long is dead; open a new one. */
+const IDLE_MS = 45_000
 
 export class HubClient {
   /** The agent name the stream holds; it can get a suffix when the name is taken. */
@@ -56,6 +58,7 @@ export class HubClient {
     readonly session: string,
     private readonly join: JoinInfo,
     private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void> = abortableSleep,
+    private readonly idleMs: number = IDLE_MS,
   ) {
     this.agent = join.agent
   }
@@ -74,6 +77,14 @@ export class HubClient {
         client_name: this.join.clientName,
         client_version: this.join.clientVersion,
       })
+      // A watchdog: no bytes for idleMs (a lost connection shows no error) aborts the stream.
+      const idle = new AbortController()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const arm = () => {
+        clearTimeout(timer)
+        timer = setTimeout(() => idle.abort(), this.idleMs)
+      }
+      arm()
       let res: Response
       try {
         res = await fetch(`${this.path('/stream')}?${q}`, {
@@ -82,9 +93,10 @@ export class HubClient {
             accept: 'text/event-stream',
             ...(lastId === undefined ? {} : { 'last-event-id': lastId }),
           },
-          signal,
+          signal: AbortSignal.any([signal, idle.signal]),
         })
       } catch {
+        clearTimeout(timer)
         if (signal.aborted) return
         h.state({ kind: 'unreachable' })
         await this.sleep(backoff, signal)
@@ -93,6 +105,7 @@ export class HubClient {
       }
 
       if (!res.ok || res.body === null) {
+        clearTimeout(timer)
         const e = await errorBody(res)
         if (res.status === 409 && lastId === undefined && suffix < 9) {
           suffix++
@@ -140,9 +153,14 @@ export class HubClient {
       })
       const decoder = new TextDecoder()
       try {
-        for await (const chunk of res.body) parser.feed(decoder.decode(chunk, { stream: true }))
+        for await (const chunk of res.body) {
+          arm()
+          parser.feed(decoder.decode(chunk, { stream: true }))
+        }
       } catch {
-        // The connection dropped; reconnect below.
+        // The connection dropped, or the watchdog ended it; reconnect below.
+      } finally {
+        clearTimeout(timer)
       }
       if (removed) return h.state({ kind: 'removed' })
       if (signal.aborted) return

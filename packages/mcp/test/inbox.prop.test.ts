@@ -97,6 +97,30 @@ const leftNotice = (peer: string): Item => ({
   notice: { kind: 'peer_left', peer, at: '2026-09-30T00:00:00.000Z' },
 })
 
+describe('a push that fails', () => {
+  test.prop([fc.array(peer, { minLength: 1, maxLength: 20 })])(
+    'queues the item instead of losing it; take then delivers it as a pull',
+    async (froms) => {
+      const delivered: [string, DeliveryVia][] = []
+      const inbox = new Inbox({
+        push: true,
+        onPush: async () => {
+          throw new Error('transport closed')
+        },
+        onDelivered: (id, via) => delivered.push([id, via]),
+      })
+      const msgs = froms.map((f, i) => message(i, f))
+      for (const m of msgs) await inbox.accept({ kind: 'message', msg: m })
+      expect(inbox.unread).toBe(msgs.length)
+      expect(delivered).toEqual([])
+      expect(inbox.take().map((it) => (it.kind === 'message' ? it.msg.id : ''))).toEqual(
+        msgs.map((m) => m.id),
+      )
+      expect(delivered).toEqual(msgs.map((m) => [m.id, 'pull']))
+    },
+  )
+})
+
 describe('a peer leaves', () => {
   test.prop([fc.boolean(), peer, peer])(
     'peer_left ends every ask and every wait on that peer, and goes nowhere else',
