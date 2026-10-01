@@ -5,6 +5,7 @@ import {
   buildPresenceKey,
   buildSessionsKey,
   OPERATOR,
+  parseSessionsKey,
   parseSubject,
   STREAM_NAME,
   sessionSubjects,
@@ -30,6 +31,18 @@ export class Operator {
   async getSession(sid: string): Promise<SessionRecord | undefined> {
     const e = await this.b.sessions.get(buildSessionsKey({ kind: 'session', sid }))
     return e?.operation === 'PUT' ? decode(SessionRecord, e.value) : undefined
+  }
+
+  /** Every session with its record, sorted by id. */
+  async listSessions(): Promise<{ sid: string; record: SessionRecord }[]> {
+    const out: { sid: string; record: SessionRecord }[] = []
+    for await (const key of await this.b.sessions.keys()) {
+      const k = parseSessionsKey(key)
+      if (k?.kind !== 'session') continue
+      const record = await this.getSession(k.sid)
+      if (record !== undefined) out.push({ sid: k.sid, record })
+    }
+    return out.sort((a, b) => a.sid.localeCompare(b.sid))
   }
 
   /** Create an open session. Fails if the session exists. */

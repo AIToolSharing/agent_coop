@@ -37,6 +37,7 @@ import {
   type Broker,
   follow,
   lastSeq,
+  Operator,
   PRESENCE_HEARTBEAT_MS,
   publishEvent,
   readRange,
@@ -68,6 +69,11 @@ export const DEFAULT_LIMITS: Record<'join' | 'msg' | 'activity', Limit> = {
   activity: { burst: 120, perSecond: 20 },
 }
 const now = () => new Date().toISOString()
+
+export interface HubOptions {
+  /** Let the first join of an unknown session create it, open. A closed session stays closed. */
+  readonly autoCreate?: boolean
+}
 
 class Connection {
   state: AgentState = 'idle'
@@ -115,11 +121,14 @@ export class Hub {
   private readonly status = new Map<string, 'open' | 'closed'>()
   private readonly stops: (() => void)[] = []
   private readonly limits: { join: RateLimiter; msg: RateLimiter; activity: RateLimiter }
+  private readonly op: Operator
 
   constructor(
     private readonly b: Broker,
     limits: Partial<Record<'join' | 'msg' | 'activity', Limit>> = {},
+    private readonly options: HubOptions = {},
   ) {
+    this.op = new Operator(b)
     const l = { ...DEFAULT_LIMITS, ...limits }
     this.limits = {
       join: new RateLimiter(l.join.burst, l.join.perSecond),
@@ -162,7 +171,7 @@ export class Hub {
     lastEventId: string | undefined,
   ): Promise<Joined> {
     if (!this.limits.join.take(machine)) throw new HubError('rate_limited', 'too many joins')
-    await this.requireOpen(sid)
+    await this.requireOpen(sid, this.options.autoCreate === true)
     const me: Address = { agent: q.agent, machine }
     const kick = await this.b.sessions.get(buildSessionsKey({ kind: 'kick', sid, target: me }))
     if (kick?.operation === 'PUT') throw new HubError('forbidden', 'removed from session')
@@ -336,8 +345,13 @@ export class Hub {
     return e?.operation === 'PUT' ? decode(SessionRecord, e.value) : undefined
   }
 
-  private async requireOpen(sid: string): Promise<void> {
-    const r = await this.getSession(sid)
+  private async requireOpen(sid: string, create = false): Promise<void> {
+    let r = await this.getSession(sid)
+    if (r === undefined && create) {
+      // Two first joins can race; the loser's create fails and the re-read sees the winner's.
+      await this.op.createSession(sid).catch(() => undefined)
+      r = await this.getSession(sid)
+    }
     if (r === undefined) throw new HubError('not_found', `no session ${sid}`)
     if (r.status !== 'open') throw new HubError('forbidden', 'session closed')
   }

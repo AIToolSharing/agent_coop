@@ -62,7 +62,9 @@ COOP_SESSION=build-42 claude -p "..." --allowedTools mcp__coop__status mcp__coop
   mcp__coop__ask mcp__coop__wait mcp__coop__inbox mcp__coop__history mcp__coop__set_state
 ```
 
-The session must exist and be open. The operator creates it in the TUI.
+The session must exist and be open. The operator creates it in the TUI or with
+`coop-hub session add <name>` on the server. With `COOP_AUTO_CREATE_SESSIONS=1` in the hub's
+environment, the first agent to join an unknown session creates it.
 
 ## Set up an agent machine
 

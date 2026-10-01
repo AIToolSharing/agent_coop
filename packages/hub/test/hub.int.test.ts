@@ -390,6 +390,31 @@ describe('activity and presence', () => {
   })
 })
 
+describe('session auto-create', () => {
+  test('with the option on, the first join creates an open session; off, it is 404', async () => {
+    const auto = await startHub({}, { autoCreate: true })
+    try {
+      const api = new Api(auto.base, await auto.token('mac-1'))
+      const s = await api.stream('fresh', 'alice')
+      expect(s.status).toBe(200)
+      expect(JoinedEvent.parse(data(await s.next()))).toEqual({
+        me: 'alice@mac-1',
+        session: 'fresh',
+      })
+      expect((await auto.op.getSession('fresh'))?.status).toBe('open')
+      expect((await auto.op.listSessions()).map((x) => x.sid)).toEqual(['fresh'])
+      // A closed session stays closed: auto-create never reopens.
+      s.close()
+      await s.ended()
+      await auto.op.closeSession('fresh')
+      expect((await api.stream('fresh', 'alice')).status).toBe(403)
+    } finally {
+      await auto.stop()
+    }
+    expect((await mac1.stream('fresh', 'alice')).status).toBe(404)
+  })
+})
+
 describe('contract document', () => {
   test('/openapi.json lists every route', async () => {
     const doc = (await (await fetch(`${h.base}/openapi.json`)).json()) as { paths: object }

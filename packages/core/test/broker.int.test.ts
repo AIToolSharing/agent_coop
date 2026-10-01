@@ -127,6 +127,8 @@ describe('operator', () => {
     const r = await op.getSession('life')
     expect(r?.status).toBe('open')
     expect(r?.closed_at).toBeUndefined()
+    expect(await op.listSessions()).toContainEqual({ sid: 'life', record: r })
+    expect((await op.listSessions()).map((s) => s.sid)).not.toContain('life.kick.m.a')
   })
 
   test('delete needs a closed session and removes only that session', async () => {

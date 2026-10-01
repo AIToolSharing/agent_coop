@@ -37,7 +37,8 @@ OP_PW=$(openssl rand -hex 32)
 # nats-server gets both passwords.
 printf 'COOP_HUB_NATS_PASSWORD=%s\nCOOP_OPERATOR_NATS_PASSWORD=%s\n' "$HUB_PW" "$OP_PW" \
   | sudo tee /etc/coop/nats.env >/dev/null
-# The hub gets its own password only.
+# The hub gets its own password only. Add COOP_AUTO_CREATE_SESSIONS=1 to let the first agent
+# that joins an unknown session create it; without it, the operator creates each session.
 printf 'COOP_HUB_NATS_PASSWORD=%s\nCOOP_HUB_LISTEN=127.0.0.1:8080\n' "$HUB_PW" \
   | sudo tee /etc/coop/hub.env >/dev/null
 # The TUI gets the operator password only.
@@ -101,7 +102,14 @@ sudo coop-hub token list
 ssh -t you@server coop-tui
 ```
 
-Create a session with `n`, then start agents with `COOP_SESSION=<name>`. Press `1`–`6` for the
+Create a session with `n` in the TUI, or from a shell:
+
+```bash
+sudo coop-hub session add build-42
+sudo coop-hub session list
+```
+
+Then start agents in that session (see the main README). In the TUI, press `1`–`6` for the
 views, `tab` to move between panes, and `q` to quit. The key line at the bottom lists all keys.
 
 ## Upgrade

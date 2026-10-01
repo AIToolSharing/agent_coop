@@ -5,7 +5,7 @@ import { type Broker, Operator } from '@coop/core/broker'
 import { serve } from '@hono/node-server'
 import { createParser, type EventSourceMessage } from 'eventsource-parser'
 import { startNats, type TestNats } from '../../core/test/helpers/nats.js'
-import { createApp, Hub, issueToken, type Limit } from '../src/index.js'
+import { createApp, Hub, type HubOptions, issueToken, type Limit } from '../src/index.js'
 
 export interface Harness {
   readonly base: string
@@ -19,11 +19,12 @@ export interface Harness {
 
 export async function startHub(
   limits: Partial<Record<'join' | 'msg' | 'activity', Limit>> = {},
+  options: HubOptions = {},
 ): Promise<Harness> {
   const nats = await startNats()
   const hubBroker = await nats.broker('hub')
   const op = new Operator(await nats.broker('operator'))
-  const hub = new Hub(hubBroker, limits)
+  const hub = new Hub(hubBroker, limits, options)
   await hub.start()
   const server = serve({ fetch: createApp(hub).fetch, hostname: '127.0.0.1', port: 0 })
   await new Promise((r) => server.once('listening', r))
