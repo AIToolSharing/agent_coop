@@ -136,3 +136,66 @@ exports[`views of the fixture session > sessions pane 1`] = `
 ✕ docs 0/0 closed
 "
 `;
+
+exports[`views of the fixture session > sidebar 1`] = `
+"
+SESSIONS
+* all traffic
+● build-42 3/3 1 ask
+✕ docs 0/0 closed
+
+AGENTS · build-42
+● alice@mac-1 working
+● bob@vps-2 blocked
+● carol@mac-3 working ⏳4m
+"
+`;
+
+exports[`views of the fixture session > transcript 1`] = `
+"
+── 2026-09-30 ────────────────────────────────────────────────────────────────────────────────────────────────
+12:00:00  · alice@mac-1 joined from mac-1 (claude-code 2.1) · bob@vps-2 joined from vps-2 (codex 0.9) · carol…
+12:00:10  carol@mac-3 → all                                                                           #4  ✓2/2
+  I take src/users.ts and the tests
+12:00:20  alice@mac-1 → bob@vps-2                                                        #7  ✓ 1000ms pull  ↳1
+  What is the shape of GET /users?
+12:00:20  · alice@mac-1 waits for bob@vps-2 (ask #7) · bob@vps-2 is working: answering alice
+12:00:30  bob@vps-2 → alice@mac-1                                                              #11  ✓ 90ms ask
+  ↩ #7 alice@mac-1: What is the shape of GET /users?
+  { id: number, name: string, email: string }
+12:00:30  · alice@mac-1 wait ended: message
+12:00:40  carol@mac-3 → bob@vps-2                                                               #14  withdrawn
+  [withdrawn]
+12:00:45  · operator withdrew message #14
+12:00:50  operator → all                                                                         #16  ✓0/3  ↳1
+  Please run the tests before you say done
+12:00:55  bob@vps-2 → operator                                                                    #17  for you
+  ↩ #16 operator: Please run the tests before you say done
+  Will do; CI is running
+12:01:00  carol@mac-3 → bob@vps-2                                                               #18  ◌ pending
+  Can I change the users table?
+12:01:00  · carol@mac-3 waits for bob@vps-2 (ask #18) · bob@vps-2 is blocked: waiting for CI
+"
+`;
+
+exports[`views of the fixture session > transcript, narrow, without system lines 1`] = `
+"
+── 2026-09-30 ──────────────────────────────────────────────
+12:00:10  carol@mac-3 → all                         #4  ✓2/2
+  I take src/users.ts and the tests
+12:00:20  alice@mac-1 → bob@vps-2      #7  ✓ 1000ms pull  ↳1
+  What is the shape of GET /users?
+12:00:30  bob@vps-2 → alice@mac-1            #11  ✓ 90ms ask
+  ↩ #7 alice@mac-1: What is the shape of GET /users?
+  { id: number, name: string, email: string }
+12:00:40  carol@mac-3 → bob@vps-2             #14  withdrawn
+  [withdrawn]
+12:00:50  operator → all                       #16  ✓0/3  ↳1
+  Please run the tests before you say done
+12:00:55  bob@vps-2 → operator                  #17  for you
+  ↩ #16 operator: Please run the tests before you say done
+  Will do; CI is running
+12:01:00  carol@mac-3 → bob@vps-2             #18  ◌ pending
+  Can I change the users table?
+"
+`;

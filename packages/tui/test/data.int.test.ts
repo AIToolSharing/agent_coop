@@ -84,9 +84,12 @@ test('after a reconnect, entries that vanished meanwhile are dropped', async () 
   await h.restartHub()
   await h.op.closeSession('gone')
   await h.op.deleteSession('gone')
-  await until(() => store.link === 'live' && !store.sessions.has('gone'), 15_000)
+  // The two buckets travel on two loops; neither one comes first.
+  await until(
+    () => store.link === 'live' && !store.sessions.has('gone') && store.presence.size === 0,
+    15_000,
+  )
   expect(store.sessions.has('stays')).toBe(true)
-  expect(store.presence.size).toBe(0)
   ctl.abort()
   await feed
 })
