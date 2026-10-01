@@ -217,5 +217,62 @@ export class Stream {
   }
 }
 
+/** The admin API as the TUI uses it, with an operator token. */
+export class Admin {
+  constructor(
+    readonly base: string,
+    readonly token: string,
+  ) {}
+
+  async req(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; json: unknown }> {
+    const res = await fetch(`${this.base}/v1/admin${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${this.token}`,
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
+    const text = await res.text()
+    return { status: res.status, json: text === '' ? undefined : JSON.parse(text) }
+  }
+
+  sessions() {
+    return this.req('GET', '/sessions')
+  }
+  create(session: string, title?: string) {
+    return this.req('POST', '/sessions', { session, ...(title === undefined ? {} : { title }) })
+  }
+  close(sid: string) {
+    return this.req('POST', `/sessions/${sid}/close`)
+  }
+  reopen(sid: string) {
+    return this.req('POST', `/sessions/${sid}/reopen`)
+  }
+  delete(sid: string) {
+    return this.req('DELETE', `/sessions/${sid}`)
+  }
+  kick(sid: string, target: string) {
+    return this.req('POST', `/sessions/${sid}/kick`, { target })
+  }
+  unkick(sid: string, target: string) {
+    return this.req('POST', `/sessions/${sid}/unkick`, { target })
+  }
+  redact(sid: string, id: string) {
+    return this.req('POST', `/sessions/${sid}/redact`, { id })
+  }
+  send(sid: string, to: string, text: string, reply_to?: string) {
+    return this.req('POST', `/sessions/${sid}/messages`, {
+      to,
+      text,
+      ...(reply_to === undefined ? {} : { reply_to }),
+    })
+  }
+}
+
 export const isMsg = (e: EventSourceMessage) => e.event === 'message'
 export const data = (e: EventSourceMessage) => JSON.parse(e.data)

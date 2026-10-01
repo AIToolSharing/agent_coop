@@ -21,7 +21,18 @@ import {
 import type { Broker } from './connect.js'
 import { publishEvent } from './read.js'
 
-export class OperatorError extends Error {}
+export type OperatorErrorCode = 'exists' | 'not_found' | 'open'
+
+/** A refused operator action. `code` tells the API which status to answer. */
+export class OperatorError extends Error {
+  constructor(
+    readonly code: OperatorErrorCode,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options)
+  }
+}
 
 const now = () => new Date().toISOString()
 
@@ -52,7 +63,7 @@ export class Operator {
     try {
       await this.b.sessions.create(sid, encode(SessionRecord, r))
     } catch (err) {
-      throw new OperatorError(`session ${sid} exists`, { cause: err })
+      throw new OperatorError('exists', `session ${sid} exists`, { cause: err })
     }
   }
 
@@ -66,7 +77,7 @@ export class Operator {
 
   private async setStatus(sid: string, status: 'open' | 'closed'): Promise<void> {
     const r = await this.getSession(sid)
-    if (r === undefined) throw new OperatorError(`no session ${sid}`)
+    if (r === undefined) throw new OperatorError('not_found', `no session ${sid}`)
     const next: SessionRecord = { ...r, status }
     if (status === 'closed') next.closed_at = now()
     else delete next.closed_at
@@ -76,8 +87,10 @@ export class Operator {
   /** Delete a closed session: its log, kicks and presence. Irreversible. */
   async deleteSession(sid: string): Promise<void> {
     const r = await this.getSession(sid)
-    if (r === undefined) throw new OperatorError(`no session ${sid}`)
-    if (r.status !== 'closed') throw new OperatorError(`session ${sid} is open; close it first`)
+    if (r === undefined) throw new OperatorError('not_found', `no session ${sid}`)
+    if (r.status !== 'closed') {
+      throw new OperatorError('open', `session ${sid} is open; close it first`)
+    }
     await this.b.jsm.streams.purge(STREAM_NAME, { filter: sessionSubjects(sid) })
     for (const kv of [this.b.sessions, this.b.presence]) {
       const keys = await kv.keys(`${sid}.>`)
@@ -123,9 +136,20 @@ export class Operator {
 
   /** Send a message as the operator. Returns its id. */
   async send(sid: string, to: To, text: string, reply_to?: string): Promise<string> {
-    const base = { kind: 'msg', sid, from: OPERATOR, to, text, sent_at: now() } as const
+    return (await this.sendMessage(sid, to, text, reply_to)).id
+  }
+
+  /** Send a message as the operator. Returns its id and its time. */
+  async sendMessage(
+    sid: string,
+    to: To,
+    text: string,
+    reply_to?: string,
+  ): Promise<{ id: string; sent_at: string }> {
+    const sent_at = now()
+    const base = { kind: 'msg', sid, from: OPERATOR, to, text, sent_at } as const
     const e: BusEventInput = reply_to === undefined ? base : { ...base, reply_to }
-    return String(await publishEvent(this.b.js, e))
+    return { id: String(await publishEvent(this.b.js, e)), sent_at }
   }
 
   /** Current presence entries of a session, for tests and one-shot views. */

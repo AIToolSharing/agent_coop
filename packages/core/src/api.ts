@@ -10,6 +10,7 @@ import {
   DeliveryVia,
   Id,
   Iso,
+  SessionRecord,
   Text,
   Token,
   WaitTarget,
@@ -139,6 +140,32 @@ export type ErrorCode = z.infer<typeof ErrorCode>
 
 export const ErrorBody = z.strictObject({ error: ErrorCode, message: z.string() })
 export type ErrorBody = z.infer<typeof ErrorBody>
+
+// --- Admin API: the operator token (the TUI) -------------------------------------------------
+
+export const SessionInfo = z.strictObject({ session: Token, ...SessionRecord.shape })
+export type SessionInfo = z.infer<typeof SessionInfo>
+export const SessionList = z.strictObject({ sessions: z.array(SessionInfo) })
+export type SessionList = z.infer<typeof SessionList>
+export const CreateSessionRequest = z.strictObject({
+  session: Token,
+  title: z.string().max(200).optional(),
+})
+export const TargetRequest = z.strictObject({ target: AddressStr })
+export const RedactRequest = z.strictObject({ id: Id })
+/** What the operator writes as `to`: `all`, or a peer (`name` or `name@machine`). */
+export const OperatorSendRequest = z.strictObject({
+  to: z.union([z.literal(BROADCAST), PeerInput]),
+  text: Text,
+  reply_to: Id.optional(),
+})
+export type OperatorSendRequest = z.infer<typeof OperatorSendRequest>
+export const OperatorSendResponse = z.strictObject({
+  id: Id,
+  to: z.union([z.literal(BROADCAST), AddressStr]),
+  sent_at: Iso,
+})
+export type OperatorSendResponse = z.infer<typeof OperatorSendResponse>
 
 /** The API form of a message event. */
 export function toApiMessage(e: Extract<BusEvent, { kind: 'msg' }>): ApiMessage {

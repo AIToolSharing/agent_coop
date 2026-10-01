@@ -14,8 +14,13 @@ values = ["all", "operator", "alice", "bob", "bob@mac-1"]
 [dictionaries.peers]
 values = ["alice", "bob", "bob@mac-1"]
 
+[dictionaries.targets]
+values = ["alice@mac-1", "bob@mac-1"]
+
 [parameters]
 "path.sid" = { dictionary = "sessions", probability = 0.8 }
+"body.target" = { dictionary = "targets", probability = 0.8 }
+"body.session" = { dictionary = "sessions", probability = 0.3 }
 "query.agent" = { dictionary = "agents", probability = 0.8 }
 "body.agent" = { dictionary = "agents", probability = 0.8 }
 "body.to" = { dictionary = "recipients", probability = 0.8 }

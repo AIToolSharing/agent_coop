@@ -8028,7 +8028,8 @@ discriminatedUnion("kind", [
 		at: Iso
 	})
 ]);
-strictObject({
+/** Value of key <sid> in bucket coop_sessions. */
+const SessionRecord = strictObject({
 	status: _enum(["open", "closed"]),
 	title: string().max(200).optional(),
 	created_at: Iso,
@@ -8185,6 +8186,26 @@ const ErrorBody = strictObject({
 		"unavailable"
 	]),
 	message: string()
+});
+strictObject({ sessions: array(strictObject({
+	session: Token,
+	...SessionRecord.shape
+})) });
+strictObject({
+	session: Token,
+	title: string().max(200).optional()
+});
+strictObject({ target: AddressStr });
+strictObject({ id: Id });
+strictObject({
+	to: union([literal("all"), PeerInput]),
+	text: Text,
+	reply_to: Id.optional()
+});
+strictObject({
+	id: Id,
+	to: union([literal("all"), AddressStr]),
+	sent_at: Iso
 });
 //#endregion
 //#region packages/mcp/dist/config.js

@@ -11,7 +11,7 @@ import {
 } from '@coop/core'
 import { readRange } from '@coop/core/broker'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { Api, data, type Harness, isMsg, startHub } from './harness.js'
+import { Admin, Api, data, type Harness, isMsg, startHub } from './harness.js'
 
 let h: Harness
 let mac1: Api
@@ -553,10 +553,101 @@ describe('session auto-create', () => {
   })
 })
 
+describe('admin API', () => {
+  let admin: Admin
+  beforeAll(async () => {
+    admin = new Admin(h.base, await h.operatorToken('matt'))
+  })
+
+  test('a machine token is refused; a bad token is 401', async () => {
+    // mac1's own token: a new `h.token('mac-1')` would replace it and log mac1 out.
+    const r = await new Admin(h.base, mac1.token).sessions()
+    expect(r.status).toBe(403)
+    expect(err(r.json).message).toContain('operator token')
+    expect((await new Admin(h.base, 'nope').sessions()).status).toBe(401)
+  })
+
+  test('session lifecycle: create, list, close, reopen, delete', async () => {
+    const sid = `adm${++n}`
+    const created = await admin.create(sid, 'Admin test')
+    expect(created.status).toBe(200)
+    expect(created.json).toMatchObject({ session: sid, status: 'open', title: 'Admin test' })
+    expect((await admin.create(sid)).status).toBe(409)
+    const list = (await admin.sessions()).json as { sessions: { session: string }[] }
+    expect(list.sessions.map((s) => s.session)).toContain(sid)
+    const a = await mac1.stream(sid, 'alice')
+    await a.next()
+    expect((await admin.delete(sid)).status).toBe(409)
+    expect((await admin.close(sid)).status).toBe(204)
+    expect(NoticeEvent.parse(data(await a.next((e) => e.event === 'notice'))).kind).toBe('closed')
+    expect((await admin.reopen(sid)).status).toBe(204)
+    expect(NoticeEvent.parse(data(await a.next((e) => e.event === 'notice'))).kind).toBe('reopened')
+    a.close()
+    expect((await admin.close(sid)).status).toBe(204)
+    expect((await admin.delete(sid)).status).toBe(204)
+    const after = (await admin.sessions()).json as { sessions: { session: string }[] }
+    expect(after.sessions.map((s) => s.session)).not.toContain(sid)
+    expect((await admin.close('nosuch')).status).toBe(404)
+    expect((await admin.delete('nosuch')).status).toBe(404)
+  })
+
+  test('kick and unkick reach the agent and the kick record', async () => {
+    const sid = await session()
+    const b = await vps2.stream(sid, 'bob')
+    await b.next()
+    expect((await admin.kick(sid, 'bob@vps-2')).status).toBe(204)
+    expect(NoticeEvent.parse(data(await b.next((e) => e.event === 'notice'))).kind).toBe('kicked')
+    await b.ended()
+    expect((await vps2.stream(sid, 'bob')).status).toBe(403)
+    expect((await admin.unkick(sid, 'bob@vps-2')).status).toBe(204)
+    const again = await vps2.stream(sid, 'bob')
+    expect(again.status).toBe(200)
+    again.close()
+    expect((await admin.kick('nosuch', 'bob@vps-2')).status).toBe(404)
+  })
+
+  test('the operator sends, in a thread, and redacts', async () => {
+    const sid = await session()
+    const a = await mac1.stream(sid, 'alice')
+    const b = await vps2.stream(sid, 'bob')
+    await a.next()
+    await b.next()
+    const q = SendResponse.parse((await mac1.send(sid, 'alice', 'operator', 'may I?')).json)
+    const r = await admin.send(sid, 'alice', 'yes', q.id)
+    expect(r.status).toBe(200)
+    expect(r.json).toMatchObject({ to: 'alice@mac-1' })
+    const m = ApiMessage.parse(data(await a.next(isMsg)))
+    expect(m).toMatchObject({ from: 'operator', text: 'yes', reply_to: q.id })
+    await expect(b.next(isMsg, 300)).rejects.toThrow()
+    const all = await admin.send(sid, 'all', 'everyone: pause')
+    expect(all.status).toBe(200)
+    expect(ApiMessage.parse(data(await b.next(isMsg))).text).toBe('everyone: pause')
+    expect((await admin.send(sid, 'zed', 'hi')).status).toBe(404)
+    const { id } = SendResponse.parse((await vps2.send(sid, 'bob', 'alice', 'oops')).json)
+    await a.next(isMsg)
+    expect((await admin.redact(sid, id)).status).toBe(204)
+    expect(NoticeEvent.parse(data(await a.next((e) => e.event === 'notice')))).toMatchObject({
+      kind: 'redacted',
+      id,
+    })
+    expect((await admin.redact(sid, '999999')).status).toBe(404)
+    a.close()
+    b.close()
+  })
+})
+
 describe('contract document', () => {
   test('/openapi.json lists every route', async () => {
     const doc = (await (await fetch(`${h.base}/openapi.json`)).json()) as { paths: object }
     expect(Object.keys(doc.paths).sort()).toEqual([
+      '/v1/admin/sessions',
+      '/v1/admin/sessions/{sid}',
+      '/v1/admin/sessions/{sid}/close',
+      '/v1/admin/sessions/{sid}/kick',
+      '/v1/admin/sessions/{sid}/messages',
+      '/v1/admin/sessions/{sid}/redact',
+      '/v1/admin/sessions/{sid}/reopen',
+      '/v1/admin/sessions/{sid}/unkick',
       '/v1/sessions/{sid}',
       '/v1/sessions/{sid}/activity',
       '/v1/sessions/{sid}/messages',

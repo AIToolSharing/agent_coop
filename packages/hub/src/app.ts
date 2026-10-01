@@ -2,22 +2,31 @@
 // schemas validate requests and generate /openapi.json.
 import {
   ActivityRequest,
+  CreateSessionRequest,
   ErrorBody,
   HistoryQuery,
   HistoryResponse,
+  OperatorSendRequest,
+  OperatorSendResponse,
+  parseAddress,
+  RedactRequest,
   SendRequest,
   SendResponse,
+  SessionInfo,
+  SessionList,
   SessionView,
   StreamQuery,
+  TargetRequest,
   Token,
 } from '@coop/core'
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
 import { bodyLimit } from 'hono/body-limit'
+import { HTTPException } from 'hono/http-exception'
 import { streamSSE } from 'hono/streaming'
 import { HubError } from './errors.js'
 import type { Hub, Sink } from './hub.js'
 
-type Env = { Variables: { machine: string } }
+type Env = { Variables: { machine: string; operator: string } }
 
 const Params = z.object({ sid: Token })
 const AgentQuery = z.strictObject({ agent: HistoryQuery.shape.agent })
@@ -103,6 +112,111 @@ const historyRoute = createRoute({
   responses: { 200: json(HistoryResponse, 'Messages'), ...errors },
 })
 
+const body = <S extends z.ZodType>(schema: S) => ({
+  content: { 'application/json': { schema } },
+  required: true as const,
+})
+const done = { 204: { description: 'Done' } }
+
+// --- the admin API: the operator token (the TUI) -------------------------------------------
+
+const adminSessionsRoute = createRoute({
+  method: 'get',
+  path: '/v1/admin/sessions',
+  summary: 'List every session with its state',
+  security,
+  responses: { 200: json(SessionList, 'Sessions'), ...errors },
+})
+
+const adminCreateRoute = createRoute({
+  method: 'post',
+  path: '/v1/admin/sessions',
+  summary: 'Create an open session',
+  security,
+  request: { body: body(CreateSessionRequest) },
+  responses: { 200: json(SessionInfo, 'Created'), ...errors },
+})
+
+const adminCloseRoute = createRoute({
+  method: 'post',
+  path: '/v1/admin/sessions/{sid}/close',
+  summary: 'Close a session; its agents are disconnected',
+  security,
+  request: { params: Params },
+  responses: { ...done, ...errors },
+})
+
+const adminReopenRoute = createRoute({
+  method: 'post',
+  path: '/v1/admin/sessions/{sid}/reopen',
+  summary: 'Open a closed session again',
+  security,
+  request: { params: Params },
+  responses: { ...done, ...errors },
+})
+
+const adminDeleteRoute = createRoute({
+  method: 'delete',
+  path: '/v1/admin/sessions/{sid}',
+  summary: 'Delete a closed session with all its messages',
+  security,
+  request: { params: Params },
+  responses: { ...done, ...errors },
+})
+
+const adminKickRoute = createRoute({
+  method: 'post',
+  path: '/v1/admin/sessions/{sid}/kick',
+  summary: 'Remove an agent from a session; it cannot join again until unkick',
+  security,
+  request: { params: Params, body: body(TargetRequest) },
+  responses: { ...done, ...errors },
+})
+
+const adminUnkickRoute = createRoute({
+  method: 'post',
+  path: '/v1/admin/sessions/{sid}/unkick',
+  summary: 'Let a removed agent join again',
+  security,
+  request: { params: Params, body: body(TargetRequest) },
+  responses: { ...done, ...errors },
+})
+
+const adminRedactRoute = createRoute({
+  method: 'post',
+  path: '/v1/admin/sessions/{sid}/redact',
+  summary: 'Withdraw a message; agents that got it are told to disregard it',
+  security,
+  request: { params: Params, body: body(RedactRequest) },
+  responses: { ...done, ...errors },
+})
+
+const adminSendRoute = createRoute({
+  method: 'post',
+  path: '/v1/admin/sessions/{sid}/messages',
+  summary: 'Send a message as the operator',
+  security,
+  request: { params: Params, body: body(OperatorSendRequest) },
+  responses: { 200: json(OperatorSendResponse, 'Sent'), 413: errors[422], ...errors },
+})
+
+const ROUTES = [
+  streamRoute,
+  sendRoute,
+  activityRoute,
+  viewRoute,
+  historyRoute,
+  adminSessionsRoute,
+  adminCreateRoute,
+  adminCloseRoute,
+  adminReopenRoute,
+  adminDeleteRoute,
+  adminKickRoute,
+  adminUnkickRoute,
+  adminRedactRoute,
+  adminSendRoute,
+]
+
 export function createApp(hub: Hub) {
   const app = new OpenAPIHono<Env>({
     defaultHook: (result, c) => {
@@ -123,6 +237,10 @@ export function createApp(hub: Hub) {
       const body: ErrorBody = { error: err.code, message: err.message }
       return c.json(body, err.status)
     }
+    // Hono refuses a body it cannot parse (malformed JSON) with a 400; that is bad input to us.
+    if (err instanceof HTTPException && err.status < 500) {
+      return c.json({ error: 'invalid', message: err.message } satisfies ErrorBody, 422)
+    }
     console.error(err)
     return c.json({ error: 'unavailable', message: 'internal error' } satisfies ErrorBody, 503)
   })
@@ -141,6 +259,14 @@ export function createApp(hub: Hub) {
       throw new HubError('forbidden', 'an operator token cannot act as an agent')
     }
     c.set('machine', who.name)
+    await next()
+  })
+  app.use('/v1/admin/*', async (c, next) => {
+    const who = await hub.auth(c.req.header('authorization'))
+    if (who.role !== 'operator') {
+      throw new HubError('forbidden', 'this needs an operator token')
+    }
+    c.set('operator', who.name)
     await next()
   })
 
@@ -187,6 +313,59 @@ export function createApp(hub: Hub) {
     const h = await hub.history(c.get('machine'), c.req.valid('param').sid, c.req.valid('query'))
     return c.json(h, 200)
   })
+
+  const target = (s: string) => {
+    const t = parseAddress(s)
+    if (t === undefined) throw new HubError('invalid', `bad target ${s}`)
+    return t
+  }
+  app.openapi(adminSessionsRoute, async (c) => c.json({ sessions: await hub.listSessions() }, 200))
+  app.openapi(adminCreateRoute, async (c) => {
+    const b = c.req.valid('json')
+    return c.json(await hub.createSession(b.session, b.title), 200)
+  })
+  app.openapi(adminCloseRoute, async (c) => {
+    await hub.closeSession(c.req.valid('param').sid)
+    return c.body(null, 204)
+  })
+  app.openapi(adminReopenRoute, async (c) => {
+    await hub.reopenSession(c.req.valid('param').sid)
+    return c.body(null, 204)
+  })
+  app.openapi(adminDeleteRoute, async (c) => {
+    await hub.deleteSession(c.req.valid('param').sid)
+    return c.body(null, 204)
+  })
+  app.openapi(adminKickRoute, async (c) => {
+    await hub.kick(c.req.valid('param').sid, target(c.req.valid('json').target))
+    return c.body(null, 204)
+  })
+  app.openapi(adminUnkickRoute, async (c) => {
+    await hub.unkick(c.req.valid('param').sid, target(c.req.valid('json').target))
+    return c.body(null, 204)
+  })
+  app.openapi(adminRedactRoute, async (c) => {
+    await hub.redact(c.req.valid('param').sid, c.req.valid('json').id)
+    return c.body(null, 204)
+  })
+  app.openapi(adminSendRoute, async (c) => {
+    const r = await hub.operatorSend(c.req.valid('param').sid, c.req.valid('json'))
+    return c.json(r, 200)
+  })
+
+  // A known path with a method that no route lists is 405 with `Allow`, not 404. Registered
+  // after the routes, so a listed method matches its route first.
+  const allowed = new Map<string, string[]>()
+  for (const r of ROUTES) {
+    const path = r.path.replace(/\{(\w+)\}/g, ':$1')
+    allowed.set(path, [...(allowed.get(path) ?? []), r.method.toUpperCase()])
+  }
+  for (const [path, methods] of allowed) {
+    app.all(path, (c) => {
+      c.header('Allow', methods.join(', '))
+      return c.json({ error: 'invalid', message: 'method not allowed' } satisfies ErrorBody, 405)
+    })
+  }
 
   app.doc('/openapi.json', {
     openapi: '3.0.3',

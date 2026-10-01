@@ -20,11 +20,14 @@ import {
   messageSubjects,
   type NoticeEvent,
   OPERATOR,
+  type OperatorSendRequest,
+  type OperatorSendResponse,
   PresenceRecord,
   parseAddress,
   parseSessionsKey,
   type SendRequest,
   type SendResponse,
+  type SessionInfo,
   SessionRecord,
   type SessionView,
   type StreamQuery,
@@ -38,6 +41,7 @@ import {
   follow,
   lastSeq,
   Operator,
+  OperatorError,
   PRESENCE_HEARTBEAT_MS,
   publishEvent,
   readRange,
@@ -403,6 +407,74 @@ export class Hub {
     return { messages: msgs.slice(-q.limit) }
   }
 
+  // --- the admin API: the operator token ------------------------------------------------------
+
+  async listSessions(): Promise<SessionInfo[]> {
+    return (await this.op.listSessions()).map(({ sid, record }) => ({ session: sid, ...record }))
+  }
+
+  async createSession(sid: string, title?: string): Promise<SessionInfo> {
+    await this.admin(() => this.op.createSession(sid, title))
+    const r = await this.getSession(sid)
+    if (r === undefined) throw new HubError('unavailable', 'the new session could not be read')
+    return { session: sid, ...r }
+  }
+
+  closeSession(sid: string): Promise<void> {
+    return this.admin(() => this.op.closeSession(sid))
+  }
+
+  reopenSession(sid: string): Promise<void> {
+    return this.admin(() => this.op.reopenSession(sid))
+  }
+
+  deleteSession(sid: string): Promise<void> {
+    return this.admin(() => this.op.deleteSession(sid))
+  }
+
+  async kick(sid: string, target: Address): Promise<void> {
+    await this.requireSession(sid)
+    await this.op.kick(sid, target)
+  }
+
+  async unkick(sid: string, target: Address): Promise<void> {
+    await this.requireSession(sid)
+    await this.op.unkick(sid, target)
+  }
+
+  async redact(sid: string, id: string): Promise<void> {
+    await this.requireSession(sid)
+    if (!(await this.op.redact(sid, id))) {
+      throw new HubError('not_found', `no message ${id} in session ${sid}`)
+    }
+  }
+
+  /** Send as the operator: to all, or to a peer that is or was in the session. */
+  async operatorSend(sid: string, req: OperatorSendRequest): Promise<OperatorSendResponse> {
+    await this.requireOpen(sid)
+    const to: To = req.to === BROADCAST ? BROADCAST : this.peer(sid, req.to, undefined, false)
+    const { id, sent_at } = await this.op.sendMessage(sid, to, req.text, req.reply_to)
+    return { id, to: typeof to === 'string' ? to : formatAddress(to), sent_at }
+  }
+
+  /** Run an operator action; a refused action becomes the matching API error. */
+  private async admin<T>(f: () => Promise<T>): Promise<T> {
+    try {
+      return await f()
+    } catch (err) {
+      if (err instanceof OperatorError) {
+        throw new HubError(err.code === 'not_found' ? 'not_found' : 'conflict', err.message)
+      }
+      throw err
+    }
+  }
+
+  private async requireSession(sid: string): Promise<void> {
+    if ((await this.getSession(sid)) === undefined) {
+      throw new HubError('not_found', `no session ${sid}`)
+    }
+  }
+
   // --- internals -------------------------------------------------------------------------
 
   private requireConn(machine: string, sid: string, agent: string): Connection {
@@ -483,25 +555,31 @@ export class Hub {
 
   /**
    * Turn a peer as a client writes it (`name` or `name@machine`) into an address. A bare name
-   * must match exactly one agent that is or was in the session. With `allowUnknown`, a full
-   * address passes even if the hub never saw it (a `wait` or `history` filter).
+   * must match exactly one agent that is or was in the session, other than `me` (undefined for
+   * the operator). With `allowUnknown`, a full address passes even if the hub never saw it (a
+   * `wait` or `history` filter).
    */
-  private peer(sid: string, input: string, me: Address, allowUnknown: boolean): Address {
+  private peer(
+    sid: string,
+    input: string,
+    me: Address | undefined,
+    allowUnknown: boolean,
+  ): Address {
     const live = this.inSession(sid).map((c) => c.me)
+    const notMe = (p: Address) => me === undefined || !sameAddress(p, me)
     const peers = [...live, ...this.away(sid).map((k) => k.me)]
     const isLive = (p: Address) => live.some((l) => sameAddress(l, p))
     const list = () =>
       peers
-        .filter((p) => !sameAddress(p, me))
+        .filter(notMe)
         .map((p) => (isLive(p) ? formatAddress(p) : `${formatAddress(p)} (away)`))
         .join(', ')
     // The request schema already checked the format (PEER_RE, RECIPIENT_RE).
     const full = input.includes('@') ? parseAddress(input) : undefined
-    const matches =
-      full !== undefined ? [full] : peers.filter((p) => p.agent === input && !sameAddress(p, me))
+    const matches = full !== undefined ? [full] : peers.filter((p) => p.agent === input && notMe(p))
     const target = matches[0]
     // Yourself and an ambiguous name conflict with the session state (409), not with the format.
-    if (target === undefined ? input === me.agent : sameAddress(target, me)) {
+    if (me !== undefined && (target === undefined ? input === me.agent : sameAddress(target, me))) {
       throw new HubError('conflict', 'cannot address yourself')
     }
     if (matches.length > 1) {
