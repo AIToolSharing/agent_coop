@@ -79,7 +79,7 @@ cat <<TEXT
      coop-hub token add laptop
 3. Your operator token, then the TUI from any machine (or here, without TLS):
      coop-hub token add --operator you
-     coop-tui login https://coop.example.com you.<secret>     # or http://127.0.0.1:8080 here
+     coop-tui login https://coop.example.com you.<secret>     # or http://127.0.0.1:${listen##*:} here
      coop-tui
 4. Optional: let the first agent create a session; add to $etc/hub.env:
      COOP_AUTO_CREATE_SESSIONS=1
