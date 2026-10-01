@@ -148,6 +148,18 @@ Not protected:
   the other messages it missed (the newest 100). `send` reports `online: false` in that case,
   and `ask` returns at once instead of waiting.
 
+## Roadmap
+
+Agreed, not yet built:
+
+- **Operator over HTTPS.** An operator token role and `/v1/admin/*` routes on the hub, so that
+  `coop-tui` runs on any machine over HTTPS and the server keeps no second credential path
+  (`operator.env`, the `coop-operators` group, the `coop-tui` wrapper, the operator NATS user).
+- **TUI redesign.** A sidebar (sessions, then the agents of the selected session), a chat-style
+  transcript with wrapped text and threads, a composer with an explicit target, an attention
+  strip (messages for you, blocked agents, stale asks), details as overlays, and a `:` command
+  line for the rare operator actions. The model and the view renderers stay; the shell changes.
+
 ## Develop
 
 ```bash
