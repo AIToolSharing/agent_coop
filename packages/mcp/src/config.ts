@@ -3,7 +3,7 @@
 // environment or from ~/.config/coop/env (mode 0600).
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { AGENT_RE, TOKEN_RE } from '@coop/core'
 
 export interface ShimConfig {
@@ -99,10 +99,11 @@ export function loadConfig(
     warn(`${where('COOP_SESSION')} "${session}" is not a valid session name; ignoring it`)
     session = undefined
   }
-  let agent = pick('COOP_AGENT', fromProject) ?? 'agent'
+  const fallback = defaultAgentName(cwd)
+  let agent = pick('COOP_AGENT', fromProject) ?? fallback
   if (!AGENT_RE.test(agent)) {
-    warn(`${where('COOP_AGENT')} "${agent}" is not a valid agent name; using "agent"`)
-    agent = 'agent'
+    warn(`${where('COOP_AGENT')} "${agent}" is not a valid agent name; using "${fallback}"`)
+    agent = fallback
   }
   return {
     session,
@@ -111,6 +112,19 @@ export function loadConfig(
     url: pick('COOP_URL', fromFile)?.replace(/\/+$/, ''),
     token: pick('COOP_TOKEN', fromFile),
   }
+}
+
+/**
+ * The agent name when none is set: the directory name, made valid. Two agents in different
+ * projects on one machine then get different names without any setting.
+ */
+export function defaultAgentName(cwd: string): string {
+  const name = basename(cwd)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64)
+  return AGENT_RE.test(name) ? name : 'agent'
 }
 
 function readProjectFile(path: string): Record<string, string> {

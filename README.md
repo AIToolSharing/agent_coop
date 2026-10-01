@@ -42,7 +42,7 @@ On an agent machine that is set up (see below), tell the project which session i
 ```bash
 cd ~/work/app
 coop-mcp session build-42           # writes ./.coop; agents started here (or below) join build-42
-coop-mcp session build-42 --agent reviewer   # and choose the agent name (default: agent)
+coop-mcp session build-42 --agent reviewer   # and choose the agent name (default: the directory name)
 bin/coop-claude                     # Claude Code in that session, messages pushed
 codex                               # any other MCP client: no push, the agent uses wait/inbox
 ```

@@ -66,3 +66,35 @@ describe('the .coop file', () => {
     expect(warnings.join('\n')).toContain('Not Valid')
   })
 })
+
+describe('the default agent name', () => {
+  test('is the directory name, made valid; the file and the environment win', () => {
+    const t = tree()
+    const dir = join(t.project, 'My App.v2')
+    mkdirSync(dir)
+    expect(loadConfig({}, noCred, noWarn, dir).agent).toBe('my-app-v2')
+    writeFileSync(join(t.project, '.coop'), 'COOP_AGENT=from-file\n')
+    expect(loadConfig({}, noCred, noWarn, dir).agent).toBe('from-file')
+    expect(loadConfig({ COOP_AGENT: 'from-env' }, noCred, noWarn, dir).agent).toBe('from-env')
+  })
+
+  test('falls back to "agent" when the directory name cannot be an agent name', () => {
+    const t = tree()
+    for (const name of ['all', 'operator', '...', '日本']) {
+      const dir = join(t.project, name)
+      mkdirSync(dir)
+      expect(loadConfig({}, noCred, noWarn, dir).agent).toBe('agent')
+    }
+  })
+
+  test('an invalid COOP_AGENT is reported, and the default takes its place', () => {
+    const t = tree()
+    const dir = join(t.project, 'proj-x')
+    mkdirSync(dir)
+    const warnings: string[] = []
+    expect(loadConfig({ COOP_AGENT: 'Bad!' }, noCred, (m) => warnings.push(m), dir).agent).toBe(
+      'proj-x',
+    )
+    expect(warnings.join('\n')).toContain('Bad!')
+  })
+})
