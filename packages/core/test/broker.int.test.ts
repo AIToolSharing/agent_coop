@@ -85,6 +85,8 @@ describe('reading the stream', () => {
     const s3 = await publishEvent(b.js, msg('r1', bob, 'two'))
     const got = await readRange(b.js, b.jsm, [sessionSubjects('r1')])
     expect(got.map((e) => e.seq)).toEqual([s1, s3])
+    const upTo = await readRange(b.js, b.jsm, [sessionSubjects('r1')], 1, s1)
+    expect(upTo.map((e) => e.seq)).toEqual([s1])
   })
 
   test('readRange of an empty session returns quickly', async () => {

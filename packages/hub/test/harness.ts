@@ -14,6 +14,8 @@ export interface Harness {
   readonly op: Operator
   readonly hub: Hub
   token(machine: string): Promise<string>
+  /** Stop the hub and start a new one on the same port and broker, as a restart would. */
+  restartHub(): Promise<void>
   stop(): Promise<void>
 }
 
@@ -24,22 +26,34 @@ export async function startHub(
   const nats = await startNats()
   const hubBroker = await nats.broker('hub')
   const op = new Operator(await nats.broker('operator'))
-  const hub = new Hub(hubBroker, limits, options)
+  let hub = new Hub(hubBroker, limits, options)
   await hub.start()
-  const server = serve({ fetch: createApp(hub).fetch, hostname: '127.0.0.1', port: 0 })
+  let server = serve({ fetch: createApp(hub).fetch, hostname: '127.0.0.1', port: 0 })
   await new Promise((r) => server.once('listening', r))
   const { port } = server.address() as AddressInfo
+  const shutdown = async () => {
+    await hub.stop()
+    if ('closeAllConnections' in server) server.closeAllConnections()
+    await new Promise((r) => server.close(r))
+  }
   return {
     base: `http://127.0.0.1:${port}`,
     nats,
     hubBroker,
     op,
-    hub,
+    get hub() {
+      return hub
+    },
     token: (machine) => issueToken(hubBroker.tokens, machine),
+    async restartHub() {
+      await shutdown()
+      hub = new Hub(hubBroker, limits, options)
+      await hub.start()
+      server = serve({ fetch: createApp(hub).fetch, hostname: '127.0.0.1', port })
+      await new Promise((r) => server.once('listening', r))
+    },
     async stop() {
-      await hub.stop()
-      if ('closeAllConnections' in server) server.closeAllConnections()
-      await new Promise((r) => server.close(r))
+      await shutdown()
       await nats.stop()
     },
   }

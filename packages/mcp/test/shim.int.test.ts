@@ -265,6 +265,27 @@ describe('in a session', () => {
     expect(await c.json('inbox')).toEqual({ messages: [], notices: [] })
   })
 
+  test('a peer that left: send says so, ask returns at once, status lists it offline', async () => {
+    const sid = await session()
+    const a = await agent('mac-1', { session: sid, agent: 'alice' })
+    const b = await agent('vps-2', { session: sid, agent: 'bob' })
+    await joined(a)
+    await joined(b)
+    await b.shim.stop()
+    await eventually(async () =>
+      ((await a.json('status')).peers as { online: boolean }[]).some((p) => !p.online),
+    )
+    expect(await a.json('status')).toMatchObject({
+      peers: [{ name: 'bob@vps-2', state: 'idle', online: false }],
+    })
+    expect(await a.json('send', { to: 'bob', text: 'read me later' })).toMatchObject({
+      to: 'bob@vps-2',
+      online: false,
+    })
+    const r = await a.json('ask', { to: 'bob', text: 'quick one?', timeout_s: 60 })
+    expect(r).toMatchObject({ peer_offline: true, note: expect.stringContaining('bob@vps-2') })
+  })
+
   test('wait(from) ignores other peers; their message stays in the inbox', async () => {
     const sid = await session()
     const a = await agent('mac-1', { session: sid, agent: 'alice' })

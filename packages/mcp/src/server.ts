@@ -272,6 +272,14 @@ export class Shim {
       case 'ask': {
         const x = parseArgs(Args.ask, raw)
         const sent = await client.send(x.to, x.text)
+        const late = `A late answer arrives as a message with reply_to ${sent.id}.`
+        if (!sent.online) {
+          return ok({
+            question: sent.id,
+            peer_offline: true,
+            note: `${sent.to} is not in the session now; it gets the question when it joins again. ${late}`,
+          })
+        }
         await this.report({
           kind: 'wait_start',
           from: sent.to,
@@ -279,7 +287,6 @@ export class Shim {
           timeout_s: x.timeout_s,
         })
         const reply = await inbox.expectReply(sent.id, sent.to, x.timeout_s * 1000)
-        const late = `A late answer arrives as a message with reply_to ${sent.id}.`
         if (reply === 'peer_left') {
           await this.report({ kind: 'wait_end', result: 'cancelled' })
           return ok({

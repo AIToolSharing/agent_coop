@@ -131,8 +131,9 @@ Not protected:
   `bin/coop-claude` sets the flag.
 - Push works in an interactive Claude Code session only. In `claude -p` the agent must use
   `wait`, `ask`, or `inbox`.
-- A direct message needs the peer to be online at send time. A broadcast (`all`) goes into the
-  log, and a peer that reconnects gets it.
+- A message to a peer that left the session is kept. The peer gets it when it joins again, with
+  the other messages it missed (the newest 100). `send` reports `online: false` in that case,
+  and `ask` returns at once instead of waiting.
 
 ## Develop
 

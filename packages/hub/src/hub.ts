@@ -56,6 +56,8 @@ export interface Sink {
 type CloseReason = 'disconnected' | 'kicked' | 'revoked' | 'closed' | 'replaced'
 
 const PING_MS = 15_000
+/** How many missed messages an agent gets when it joins again without a resume point. */
+const REPLAY_MAX = 100
 
 export interface Limit {
   readonly burst: number
@@ -113,11 +115,26 @@ class Connection {
 
 export interface Joined {
   readonly conn: Connection
+  /** The first stream sequence to deliver. */
   readonly startSeq: number
+  /** The last sequence that existed at the join; events up to it are replayed, later ones followed. */
+  readonly catchUpUntil: number
+}
+
+/** An agent the hub saw in a session: who it is, its last state, and when it left. */
+interface Known {
+  readonly sid: string
+  readonly me: Address
+  state: AgentState
+  note: string | undefined
+  /** Stream sequence of its latest `left`; undefined while it is in the session. */
+  leftSeq: number | undefined
 }
 
 export class Hub {
   private readonly conns = new Map<string, Connection>()
+  /** Every agent that was in a session, by presence key. Rebuilt from the stream at start. */
+  private readonly known = new Map<string, Known>()
   private readonly status = new Map<string, 'open' | 'closed'>()
   private readonly stops: (() => void)[] = []
   private readonly limits: { join: RateLimiter; msg: RateLimiter; activity: RateLimiter }
@@ -137,8 +154,9 @@ export class Hub {
     }
   }
 
-  /** Watch sessions and tokens, and start the presence heartbeat. */
+  /** Load who was in which session, watch sessions and tokens, and start the heartbeat. */
   async start(): Promise<void> {
+    await this.loadKnown()
     const sessions = await this.b.sessions.watch()
     const tokens = await this.b.tokens.watch()
     this.stops.push(
@@ -177,10 +195,13 @@ export class Hub {
     if (kick?.operation === 'PUT') throw new HubError('forbidden', 'removed from session')
 
     const resume = lastEventId !== undefined && Id.safeParse(lastEventId).success
-    const startSeq = resume ? Number(lastEventId) + 1 : (await lastSeq(this.b.jsm)) + 1
+    const end = await lastSeq(this.b.jsm)
+    const key = buildPresenceKey({ sid, agent: me })
+    // A new process of an agent that left gets what it missed since then.
+    const left = this.known.get(key)?.leftSeq
+    const startSeq = resume ? Number(lastEventId) + 1 : left === undefined ? end + 1 : left + 1
 
     // No await from here to the reservation: two joins of one name must not both pass the check.
-    const key = buildPresenceKey({ sid, agent: me })
     const old = this.conns.get(key)
     if (old !== undefined && old.instance !== q.instance) {
       throw new HubError('conflict', `name ${formatAddress(me)} is taken`)
@@ -193,11 +214,12 @@ export class Hub {
     }
     const conn = new Connection(sid, me, q.instance, meta, now(), old !== undefined)
     this.conns.set(key, conn)
-    return { conn, startSeq }
+    this.knownOf(sid, me).leftSeq = undefined
+    return { conn, startSeq, catchUpUntil: end }
   }
 
   /** Deliver events to one connection until it closes. */
-  async run({ conn, startSeq }: Joined, sink: Sink): Promise<void> {
+  async run({ conn, startSeq, catchUpUntil }: Joined, sink: Sink): Promise<void> {
     conn.sink = sink
     const { sid, me } = conn
     const ping = setInterval(
@@ -217,7 +239,7 @@ export class Hub {
       await this.putPresence(conn)
       await sink.write('joined', { me: formatAddress(me), session: sid })
       const wasSent = (id: string) => conn.sent.has(id)
-      for await (const e of follow(this.b.js, deliverySubjects(sid), startSeq, conn.ctl.signal)) {
+      const deliver = async (e: BusEvent) => {
         const d = deliveryFor(e, me, wasSent)
         if (d === 'message' && e.kind === 'msg') {
           const m = toApiMessage(e)
@@ -233,6 +255,22 @@ export class Hub {
           await this.notice(conn, n, String(e.seq))
         }
       }
+      if (startSeq <= catchUpUntil) {
+        // Missed messages first, newest REPLAY_MAX only. A notice from before the join is stale.
+        const missed = await readRange(
+          this.b.js,
+          this.b.jsm,
+          deliverySubjects(sid),
+          startSeq,
+          catchUpUntil,
+        )
+        const msgs = missed.filter(
+          (e) => e.kind === 'msg' && deliveryFor(e, me, wasSent) === 'message',
+        )
+        for (const e of msgs.slice(-REPLAY_MAX)) await deliver(e)
+      }
+      const live = follow(this.b.js, deliverySubjects(sid), catchUpUntil + 1, conn.ctl.signal)
+      for await (const e of live) await deliver(e)
     } catch {
       conn.close('disconnected')
     } finally {
@@ -253,7 +291,8 @@ export class Hub {
       this.b.js,
       req.reply_to === undefined ? base : { ...base, reply_to: req.reply_to },
     )
-    return { id: String(seq), to: typeof to === 'string' ? to : formatAddress(to), sent_at }
+    const online = typeof to === 'string' || this.conns.has(buildPresenceKey({ sid, agent: to }))
+    return { id: String(seq), to: typeof to === 'string' ? to : formatAddress(to), online, sent_at }
   }
 
   async activity(machine: string, sid: string, req: ActivityRequest): Promise<void> {
@@ -314,6 +353,16 @@ export class Hub {
         if (c.waiting?.on !== undefined) p.waiting_on = formatAddress(c.waiting.on)
         return p
       })
+    for (const k of this.away(sid)) {
+      if (sameAddress(k.me, conn.me)) continue
+      const p: SessionView['peers'][number] = {
+        name: formatAddress(k.me),
+        state: k.state,
+        online: false,
+      }
+      if (k.note !== undefined) p.note = k.note
+      peers.push(p)
+    }
     return { session: sid, status: r.status, me: formatAddress(conn.me), peers }
   }
 
@@ -363,22 +412,64 @@ export class Hub {
     return [...this.conns.values()].filter((c) => c.sid === sid)
   }
 
-  /** A `send` target: `all`, `operator` (the user), or a peer that is in the session now. */
+  /** A `send` target: `all`, `operator` (the user), or a peer that is or was in the session. */
   private recipient(sid: string, input: string, me: Address): To {
     if (input === BROADCAST || input === OPERATOR) return input
     return this.peer(sid, input, me, false)
   }
 
+  /** The agents that were in `sid` and left. */
+  private away(sid: string): Known[] {
+    return [...this.known.values()].filter((k) => k.sid === sid && k.leftSeq !== undefined)
+  }
+
+  private knownOf(sid: string, me: Address): Known {
+    const key = buildPresenceKey({ sid, agent: me })
+    let k = this.known.get(key)
+    if (k === undefined) {
+      k = { sid, me, state: 'idle', note: undefined, leftSeq: undefined }
+      this.known.set(key, k)
+    }
+    return k
+  }
+
+  /**
+   * Rebuild `known` from the activity events. No agent is connected to a hub that starts, so
+   * each one counts as away from its last join, leave, or delivery report.
+   */
+  private async loadKnown(): Promise<void> {
+    for (const e of await readRange(this.b.js, this.b.jsm, ['coop.*.evt.>'])) {
+      if (e.kind !== 'evt') continue
+      const k = this.knownOf(e.sid, e.from)
+      switch (e.evt.kind) {
+        case 'joined':
+        case 'left':
+        case 'delivered':
+          k.leftSeq = e.seq
+          break
+        case 'state':
+          k.state = e.evt.state
+          k.note = e.evt.note
+          break
+        default:
+          break
+      }
+    }
+  }
+
   /**
    * Turn a peer as a client writes it (`name` or `name@machine`) into an address. A bare name
-   * must match exactly one agent that is in the session now.
+   * must match exactly one agent that is or was in the session. With `allowUnknown`, a full
+   * address passes even if the hub never saw it (a `wait` or `history` filter).
    */
-  private peer(sid: string, input: string, me: Address, offline: boolean): Address {
-    const peers = this.inSession(sid).map((c) => c.me)
+  private peer(sid: string, input: string, me: Address, allowUnknown: boolean): Address {
+    const live = this.inSession(sid).map((c) => c.me)
+    const peers = [...live, ...this.away(sid).map((k) => k.me)]
+    const isLive = (p: Address) => live.some((l) => sameAddress(l, p))
     const list = () =>
       peers
         .filter((p) => !sameAddress(p, me))
-        .map(formatAddress)
+        .map((p) => (isLive(p) ? formatAddress(p) : `${formatAddress(p)} (away)`))
         .join(', ')
     // The request schema already checked the format (PEER_RE, RECIPIENT_RE).
     const full = input.includes('@') ? parseAddress(input) : undefined
@@ -392,8 +483,8 @@ export class Hub {
     if (matches.length > 1) {
       throw new HubError('ambiguous', `"${input}" matches ${matches.map(formatAddress).join(', ')}`)
     }
-    const online = target !== undefined && peers.some((p) => sameAddress(p, target))
-    if (target === undefined || (!online && !offline)) {
+    const known = target !== undefined && peers.some((p) => sameAddress(p, target))
+    if (target === undefined || (!known && !allowUnknown)) {
       throw new HubError(
         'not_found',
         `no peer ${input} in this session; peers: ${list() || 'none'}`,
@@ -406,11 +497,11 @@ export class Hub {
     await conn.sink?.write('notice', n, id)
   }
 
-  private async publishEvt(
+  private publishEvt(
     conn: Connection,
     evt: Extract<BusEvent, { kind: 'evt' }>['evt'],
-  ): Promise<void> {
-    await publishEvent(this.b.js, { kind: 'evt', sid: conn.sid, from: conn.me, evt })
+  ): Promise<number> {
+    return publishEvent(this.b.js, { kind: 'evt', sid: conn.sid, from: conn.me, evt })
   }
 
   private async putPresence(conn: Connection): Promise<void> {
@@ -437,10 +528,15 @@ export class Hub {
     this.conns.delete(conn.key)
     const reason = conn.closeReason
     if (reason === 'replaced') return
-    await Promise.allSettled([
+    const [left] = await Promise.allSettled([
       this.publishEvt(conn, { kind: 'left', reason, at: now() }),
       this.b.presence.delete(conn.key),
     ])
+    const k = this.knownOf(conn.sid, conn.me)
+    k.state = conn.state
+    k.note = conn.note
+    // If the `left` event could not be written, replay from the start (REPLAY_MAX caps it).
+    k.leftSeq = left.status === 'fulfilled' ? left.value : 0
   }
 
   private async heartbeat(): Promise<void> {
@@ -458,6 +554,7 @@ export class Hub {
       if (r === undefined) {
         this.status.delete(k.sid)
         for (const c of this.inSession(k.sid)) c.close('closed')
+        for (const [key, known] of this.known) if (known.sid === k.sid) this.known.delete(key)
         continue
       }
       this.status.set(k.sid, r.status)

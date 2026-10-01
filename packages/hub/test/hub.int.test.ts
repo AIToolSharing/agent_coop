@@ -341,6 +341,87 @@ describe('peer presence', () => {
   })
 })
 
+describe('peers that left', () => {
+  const notice = (e: { event?: string | undefined }) => e.event === 'notice'
+
+  test('a direct message to a peer that left is kept, and replayed when it joins again', async () => {
+    const sid = await session()
+    const a = await mac1.stream(sid, 'alice')
+    await a.next()
+    await mac1.send(sid, 'alice', 'all', 'before bob')
+    const b = await vps2.stream(sid, 'bob')
+    await b.next()
+    await vps2.activity(sid, { kind: 'state', agent: 'bob', state: 'done', note: 'shipped' })
+    b.close()
+    expect(NoticeEvent.parse(data(await a.next(notice))).kind).toBe('peer_left')
+    const r = await mac1.send(sid, 'alice', 'bob', 'while away')
+    expect(r.status).toBe(200)
+    expect(SendResponse.parse(r.json)).toMatchObject({ to: 'bob@vps-2', online: false })
+    await mac1.send(sid, 'alice', 'all', 'news while away')
+    const v = SessionView.parse((await mac1.view(sid, 'alice')).json)
+    expect(v.peers).toEqual([{ name: 'bob@vps-2', state: 'done', note: 'shipped', online: false }])
+    // A new process without Last-Event-ID gets what it missed, in order, and nothing older.
+    const b2 = await vps2.stream(sid, 'bob')
+    await b2.next((e) => e.event === 'joined')
+    expect(ApiMessage.parse(data(await b2.next(isMsg))).text).toBe('while away')
+    expect(ApiMessage.parse(data(await b2.next(isMsg))).text).toBe('news while away')
+    await expect(b2.next(isMsg, 300)).rejects.toThrow()
+    const live = await mac1.send(sid, 'alice', 'bob', 'live')
+    expect(SendResponse.parse(live.json).online).toBe(true)
+    expect(ApiMessage.parse(data(await b2.next(isMsg))).text).toBe('live')
+    a.close()
+    b2.close()
+  })
+
+  test('the replay stops at the newest 100 missed messages', async () => {
+    const sid = await session()
+    const a = await mac1.stream(sid, 'alice')
+    await a.next()
+    const b = await vps2.stream(sid, 'bob')
+    await b.next()
+    b.close()
+    await a.next(notice)
+    for (let i = 1; i <= 120; i++) await mac1.send(sid, 'alice', 'bob', `m${i}`)
+    const b2 = await vps2.stream(sid, 'bob')
+    await b2.next((e) => e.event === 'joined')
+    expect(ApiMessage.parse(data(await b2.next(isMsg))).text).toBe('m21')
+    let n = 1
+    for (;;) {
+      try {
+        await b2.next(isMsg, 300)
+        n++
+      } catch {
+        break
+      }
+    }
+    expect(n).toBe(100)
+    a.close()
+    b2.close()
+  }, 20_000)
+
+  test('after a hub restart, the hub still knows who left', async () => {
+    const sid = await session()
+    const a = await mac1.stream(sid, 'alice')
+    await a.next()
+    const b = await vps2.stream(sid, 'bob')
+    await b.next()
+    b.close()
+    await a.next(notice)
+    a.close()
+    await h.restartHub()
+    const a2 = await mac1.stream(sid, 'alice')
+    await a2.next()
+    const r = await mac1.send(sid, 'alice', 'bob', 'after restart')
+    expect(r.status).toBe(200)
+    expect(SendResponse.parse(r.json).online).toBe(false)
+    const b2 = await vps2.stream(sid, 'bob')
+    await b2.next((e) => e.event === 'joined')
+    expect(ApiMessage.parse(data(await b2.next(isMsg))).text).toBe('after restart')
+    a2.close()
+    b2.close()
+  })
+})
+
 describe('activity and presence', () => {
   test('state, waits and deliveries show in the view, presence, and the stream', async () => {
     const sid = await session()

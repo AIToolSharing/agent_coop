@@ -48,7 +48,13 @@ export const SendRequest = z.strictObject({
 })
 export type SendRequest = z.infer<typeof SendRequest>
 
-export const SendResponse = z.strictObject({ id: Id, to: ApiMessage.shape.to, sent_at: Iso })
+export const SendResponse = z.strictObject({
+  id: Id,
+  to: ApiMessage.shape.to,
+  /** False when the recipient left the session: it gets the message when it joins again. */
+  online: z.boolean(),
+  sent_at: Iso,
+})
 export type SendResponse = z.infer<typeof SendResponse>
 
 export const ActivityRequest = z.discriminatedUnion('kind', [
@@ -78,6 +84,7 @@ export const Peer = z.strictObject({
   name: AddressStr,
   state: AgentState,
   note: z.string().max(500).optional(),
+  /** False for a peer that left; it is listed with its last state and can still be written to. */
   online: z.boolean(),
   waiting_on: AddressStr.optional(),
 })

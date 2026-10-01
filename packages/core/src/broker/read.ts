@@ -32,14 +32,15 @@ async function orderedConsumer(js: JetStreamClient, filters: string[], fromSeq: 
   })
 }
 
-/** All events that match `filters` from `fromSeq` to the end of the stream at call time. */
+/** All events that match `filters` from `fromSeq` to `toSeq` (default: the end of the stream). */
 export async function readRange(
   js: JetStreamClient,
   jsm: JetStreamManager,
   filters: string[],
   fromSeq = 1,
+  toSeq?: number,
 ): Promise<BusEvent[]> {
-  const end = await lastSeq(jsm)
+  const end = toSeq ?? (await lastSeq(jsm))
   if (fromSeq > end) return []
   const c = await orderedConsumer(js, filters, fromSeq)
   const out: BusEvent[] = []
