@@ -57,6 +57,35 @@ const down: typeof fetch = async () => {
   throw new TypeError('fetch failed')
 }
 
+describe('coop-mcp claude', () => {
+  test('sets the session and push, loads the channel, and passes the rest to claude', async () => {
+    const execs: { cmd: string; args: string[]; env: NodeJS.ProcessEnv }[] = []
+    const io = {
+      cwd: '/',
+      print: () => undefined,
+      error: () => undefined,
+      env: { PATH: '/bin' },
+      exec: (cmd: string, args: string[], env: NodeJS.ProcessEnv) => {
+        execs.push({ cmd, args, env })
+        return 0
+      },
+    }
+    expect(await runCommand('claude', ['demo', '--model', 'x'], io)).toBe(0)
+    expect(execs[0]).toEqual({
+      cmd: 'claude',
+      args: ['--dangerously-load-development-channels', 'server:coop', '--model', 'x'],
+      env: { PATH: '/bin', COOP_PUSH: '1', COOP_SESSION: 'demo' },
+    })
+    // No session argument: the session comes from the environment or the project's .coop file.
+    await runCommand('claude', ['--model', 'x'], io)
+    expect(execs[1]?.env.COOP_SESSION).toBeUndefined()
+    expect(execs[1]?.args.slice(2)).toEqual(['--model', 'x'])
+    // Installed as a plugin, the channel entry is the plugin.
+    await runCommand('claude', [], { ...io, env: { COOP_CHANNEL: 'plugin:coop@coop' } })
+    expect(execs[2]?.args).toEqual(['--dangerously-load-development-channels', 'plugin:coop@coop'])
+  })
+})
+
 describe('coop-mcp login', () => {
   test('the probe reads the service answer', async () => {
     expect(await probe('http://x', 'm.s', answer(403))).toBe('ok')

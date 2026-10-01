@@ -30,10 +30,9 @@ act on them.
 |---|---|---|---|
 | `packages/core` | — | all | Names, message schemas, API contract, delivery rules, broker access |
 | `packages/hub` | `coop-hub` | server | HTTPS API. The only way from an agent machine to the broker |
-| `packages/mcp` | `coop-mcp` | agent machine | Local MCP server that gives the agent its tools |
+| `packages/mcp` | `coop-mcp` | agent machine | Local MCP server that gives the agent its tools, and the setup commands |
 | `packages/tui` | `coop-tui` | server | Observe and control sessions |
-| `skill/coop` | — | agent machine | Tells the agent when and how to use the tools |
-| `bin/coop-claude` | `coop-claude` | agent machine | Starts Claude Code in a session with push on |
+| `plugin/` | — | agent machine | The Claude Code plugin: the MCP server as one file, and the skill |
 
 ## Use it
 
@@ -43,23 +42,23 @@ On an agent machine that is set up (see below), tell the project which session i
 cd ~/work/app
 coop-mcp session build-42           # writes ./.coop; agents started here (or below) join build-42
 coop-mcp session build-42 --agent reviewer   # and choose the agent name (default: the directory name)
-bin/coop-claude                     # Claude Code in that session, messages pushed
+coop-mcp claude                     # Claude Code in that session, messages pushed in
 codex                               # any other MCP client: no push, the agent uses wait/inbox
 ```
 
 The environment wins over the file, so one-off runs need no file:
 
 ```bash
-bin/coop-claude build-42            # Claude Code in session build-42, messages pushed
+coop-mcp claude build-42            # Claude Code in session build-42, messages pushed in
 COOP_SESSION=build-42 codex
 ```
 
-A headless agent (`claude -p`) gets no push and runs without a person to approve tool calls, so
-allow the coop tools up front:
+A headless agent (`claude -p`) runs without a person to approve tool calls, so allow the coop
+tools up front. The tool prefix is `mcp__coop__` for a server added with `claude mcp add`, and
+`mcp__plugin_coop_coop__` for the plugin:
 
 ```bash
-COOP_SESSION=build-42 claude -p "..." --allowedTools mcp__coop__status mcp__coop__send \
-  mcp__coop__ask mcp__coop__wait mcp__coop__inbox mcp__coop__history mcp__coop__set_state
+COOP_SESSION=build-42 claude -p "..." --allowedTools 'mcp__coop__*'
 ```
 
 The session must exist and be open. The operator creates it in the TUI or with
@@ -68,14 +67,18 @@ environment, the first agent to join an unknown session creates it.
 
 ## Set up an agent machine
 
-Requirements: Node.js 24, Claude Code (or another MCP client).
+Requirements: Node.js 24, and Claude Code or another MCP client.
 
-1. Build, and give the shim a command name:
+1. Get the `coop-mcp` command. It is one file:
 
    ```bash
-   npm ci && npm run build
-   alias coop-mcp="node $PWD/packages/mcp/dist/main.js"   # put it in your shell profile
+   mkdir -p ~/.local/bin
+   curl -fsSL https://raw.githubusercontent.com/AIToolSharing/agent_coop/main/plugin/coop-mcp.mjs \
+     -o ~/.local/bin/coop-mcp && chmod +x ~/.local/bin/coop-mcp
    ```
+
+   (In a clone of this repository, `npm ci && npm run bundle` builds the same file at
+   `plugin/coop-mcp.mjs`.)
 
 2. Get a token for this machine from the operator. On the server:
    `coop-hub token add <machine>`. The token shows one time only.
@@ -87,15 +90,23 @@ Requirements: Node.js 24, Claude Code (or another MCP client).
    coop-mcp login https://coop.example.com <machine>.<secret>
    ```
 
-4. Register the MCP server and the skill for your user:
+4. Give your agent the tools. In Claude Code, install the plugin; it brings the MCP server and the
+   skill that tells the agent when to use it:
 
-   ```bash
-   claude mcp add --scope user coop -- node "$PWD/packages/mcp/dist/main.js"
-   ln -s "$PWD/skill/coop" ~/.claude/skills/coop
+   ```
+   /plugin marketplace add AIToolSharing/agent_coop
+   /plugin install coop@coop
    ```
 
-Without `COOP_SESSION`, the server offers no tools, so a session that does not use coop pays
-nothing for it.
+   Then start sessions with `COOP_CHANNEL=plugin:coop@coop coop-mcp claude`. For any other MCP
+   client, register the server yourself:
+
+   ```bash
+   claude mcp add --scope user coop -- coop-mcp
+   ```
+
+Without a session, the server offers no tools, so a session that does not use coop pays nothing
+for it.
 
 To set up the server, see [deploy/README.md](deploy/README.md).
 
@@ -126,11 +137,13 @@ Not protected:
 
 ## Limits
 
-- Push into a Claude Code session uses channels, a research preview. A custom channel needs
-  `--dangerously-load-development-channels`, which shows a warning at each start.
-  `bin/coop-claude` sets the flag.
-- Push works in an interactive Claude Code session only. In `claude -p` the agent must use
-  `wait`, `ask`, or `inbox`.
+- Push into a Claude Code session uses channels, a research preview. A channel that is not on
+  Anthropic's allowlist needs `--dangerously-load-development-channels`, which shows a warning at
+  each start. `coop-mcp claude` sets the flag. On a Team or Enterprise plan, an admin can list
+  the plugin in `allowedChannelPlugins` instead, and `claude --channels plugin:coop@coop` runs
+  without the warning.
+- Claude Code documents that channels also work in `claude -p`. coop has not verified this yet;
+  a headless agent can always use `wait`, `ask`, or `inbox`.
 - A message to a peer that left the session is kept. The peer gets it when it joins again, with
   the other messages it missed (the newest 100). `send` reports `online: false` in that case,
   and `ask` returns at once instead of waiting.
@@ -138,9 +151,13 @@ Not protected:
 ## Develop
 
 ```bash
-npm run check       # format and lint (Biome), types (strict), all tests
+npm run check       # format and lint (Biome), types (strict), all tests, bundle up to date
 npm run contract    # property-based API contract test (Schemathesis, needs uvx)
+npm run bundle      # rebuild plugin/coop-mcp.mjs after a change to packages/core or packages/mcp
 ```
+
+`plugin/coop-mcp.mjs` is committed, so a plugin install and the `curl` step need no build.
+`npm run check` fails when it is stale.
 
 The tests start their own `nats-server` (2.11 or later) on a free port with
 `deploy/nats.conf`. They do not touch a server that runs on the machine.

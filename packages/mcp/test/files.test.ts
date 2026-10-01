@@ -1,36 +1,37 @@
-// The skill and the launcher are files outside the packages; these tests keep them honest.
+// The plugin files and the bundle are outside the packages; these tests keep them honest.
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from 'vitest'
 import { FORBIDDEN_RE } from '../src/server.js'
 
 const root = fileURLToPath(new URL('../../../', import.meta.url))
+const read = (p: string) => readFileSync(join(root, p), 'utf8')
 
 test('the skill names no part of how the service works', () => {
-  const skill = readFileSync(join(root, 'skill/coop/SKILL.md'), 'utf8')
+  const skill = read('plugin/skills/coop/SKILL.md')
   expect(skill.match(FORBIDDEN_RE)).toBeNull()
   expect(skill).toMatch(/^---\nname: coop\ndescription: .+\n---\n/)
 })
 
-test('coop-claude sets the session, turns push on, and loads the channel', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'coop-bin-'))
-  const fake = join(dir, 'claude')
-  writeFileSync(fake, '#!/usr/bin/env bash\necho "$COOP_SESSION|$COOP_PUSH|$*"\n')
-  chmodSync(fake, 0o755)
-  const run = (...args: string[]) =>
-    spawnSync(join(root, 'bin/coop-claude'), args, {
-      encoding: 'utf8',
-      env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
-    })
-  expect(run('demo', '--model', 'x').stdout.trim()).toBe(
-    'demo|1|--dangerously-load-development-channels server:coop --model x',
+test('the plugin manifest, the server entry, and the marketplace fit together', () => {
+  const manifest = JSON.parse(read('plugin/.claude-plugin/plugin.json'))
+  expect(manifest.name).toBe('coop')
+  expect(manifest.channels).toEqual([{ server: 'coop', displayName: 'coop' }])
+  const mcp = JSON.parse(read('plugin/.mcp.json'))
+  expect(mcp.mcpServers.coop.command).toBe('node')
+  expect(mcp.mcpServers.coop.args[0]).toMatch(/^\$\{CLAUDE_PLUGIN_ROOT\}\/coop-mcp\.mjs$/)
+  const market = JSON.parse(read('.claude-plugin/marketplace.json'))
+  expect(market.name).toBe('coop')
+  expect(market.plugins).toContainEqual(
+    expect.objectContaining({ name: 'coop', source: './plugin' }),
   )
-  // No session argument: the session comes from the environment or the project's .coop file.
-  expect(run('--model', 'x').stdout.trim()).toBe(
-    '|1|--dangerously-load-development-channels server:coop --model x',
-  )
-  expect(run('--help').status).toBe(0)
+})
+
+test('the committed bundle runs on its own', () => {
+  const r = spawnSync('node', [join(root, 'plugin/coop-mcp.mjs'), 'help'], { encoding: 'utf8' })
+  expect(r.status).toBe(0)
+  expect(r.stdout).toContain('coop-mcp session')
+  expect(r.stdout).toContain('coop-mcp claude')
 })

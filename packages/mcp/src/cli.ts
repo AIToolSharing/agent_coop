@@ -1,4 +1,6 @@
 // The coop-mcp commands that set a machine and a project up. The MCP server itself is in main.ts.
+
+import { spawnSync } from 'node:child_process'
 import {
   appendFileSync,
   chmodSync,
@@ -16,9 +18,16 @@ import { DEFAULT_ENV_FILE, findGitRoot, PROJECT_FILE } from './config.js'
 /** A wrong command line. The message is for the person, and the exit code is 2. */
 export class UsageError extends Error {}
 
-export const USAGE = `usage: coop-mcp                                 serve (an MCP client starts it this way)
-       coop-mcp login <url> <token>              store this machine's credential and check it
-       coop-mcp session <name> [--agent <name>]  agents started in this directory join <name>`
+export const USAGE = `usage: coop-mcp                                    serve (an MCP client starts it this way)
+       coop-mcp login <url> <token>                 store this machine's credential and check it
+       coop-mcp session <name> [--agent <name>]     agents started in this directory join <name>
+       coop-mcp claude [<session>] [claude args...] start Claude Code with messages pushed in
+
+coop-mcp claude loads the channel with --dangerously-load-development-channels. The entry is
+server:coop; set COOP_CHANNEL=plugin:coop@coop when coop is installed as a plugin.`
+
+/** The channel entry for a server registered with `claude mcp add`. */
+export const DEFAULT_CHANNEL = 'server:coop'
 
 export type ProbeResult = 'ok' | 'bad_token' | 'unreachable' | { readonly unexpected: number }
 
@@ -110,6 +119,18 @@ export interface CommandIo {
   /** The credential file; tests point it at a temp file. */
   readonly envFile?: string
   readonly fetch?: typeof fetch
+  readonly env?: NodeJS.ProcessEnv
+  /** Run a program in the foreground and return its exit code. */
+  readonly exec?: (cmd: string, args: string[], env: NodeJS.ProcessEnv) => number
+}
+
+function execForeground(cmd: string, args: string[], env: NodeJS.ProcessEnv): number {
+  const r = spawnSync(cmd, args, { stdio: 'inherit', env })
+  if (r.error !== undefined) {
+    console.error(`cannot start ${cmd}: ${r.error.message}`)
+    return 127
+  }
+  return r.status ?? 1
 }
 
 /** The absolute path of the served program, for the `claude mcp add` line. */
@@ -145,14 +166,28 @@ export async function runCommand(cmd: string, args: string[], io: CommandIo): Pr
       const file = io.envFile ?? DEFAULT_ENV_FILE
       writeCredentialFile(file, url, token)
       io.print(`wrote ${file} (mode 0600)`)
-      io.print('next, once per user:')
-      io.print(`  claude mcp add --scope user coop -- node ${MAIN}`)
+      io.print('next, once per user, one of:')
+      io.print('  in Claude Code: /plugin marketplace add AIToolSharing/agent_coop')
+      io.print('                  /plugin install coop@coop')
+      io.print(`  any MCP client: claude mcp add --scope user coop -- node ${MAIN}`)
       io.print('then, in each project:')
-      io.print('  coop-mcp session <name>      # agents started there join <name>')
-      io.print(
-        `  ${join(dirname(dirname(dirname(MAIN))), '..', 'bin', 'coop-claude')}   # Claude Code with push`,
-      )
+      io.print('  coop-mcp session <name>   # agents started there join <name>')
+      io.print('  coop-mcp claude           # Claude Code with messages pushed in')
       return 0
+    }
+    if (cmd === 'claude') {
+      const [first, ...rest] = args
+      const session = first !== undefined && !first.startsWith('-') ? first : undefined
+      const base = io.env ?? process.env
+      const env: NodeJS.ProcessEnv = { ...base, COOP_PUSH: '1' }
+      if (session !== undefined) env.COOP_SESSION = session
+      const channel = base.COOP_CHANNEL ?? DEFAULT_CHANNEL
+      const claudeArgs = [
+        '--dangerously-load-development-channels',
+        channel,
+        ...(session === undefined ? args : rest),
+      ]
+      return (io.exec ?? execForeground)('claude', claudeArgs, env)
     }
     if (cmd === 'session') {
       const { values, positionals } = parseArgs({
