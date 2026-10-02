@@ -293,3 +293,22 @@ func TestFactsAboutAMessageMayArriveBeforeIt(t *testing.T) {
 		t.Fatal("messages are not in sequence order")
 	}
 }
+
+func TestASnapshotRemovesWhatTheFeedDidNotSendAgain(t *testing.T) {
+	s := load(fixture())
+	bobKey := wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: bob})
+	s.Apply(model.Update{Snapshot: &model.Snapshot{Bucket: "presence", Seen: map[string]bool{
+		wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: alice}): true,
+		wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: carol}): true,
+	}}})
+	if _, ok := s.Presence[bobKey]; ok || s.View(sid).Agents["bob@vps-2"].Online {
+		t.Fatal("bob's presence should be gone")
+	}
+	s.Apply(model.Update{Snapshot: &model.Snapshot{Bucket: "sessions", Seen: map[string]bool{"docs": true}}})
+	if got := s.SessionIDs(); fmt.Sprint(got) != "[docs]" {
+		t.Fatalf("sessions %v", got)
+	}
+	if len(s.View(model.AllSessions).Timeline) != 0 {
+		t.Fatal("the deleted session's traffic is still in the all view")
+	}
+}

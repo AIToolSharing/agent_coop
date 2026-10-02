@@ -145,6 +145,12 @@ type SessionRecord struct {
 	ClosedAt  string `json:"closed_at,omitempty"`
 }
 
+// SessionInfo is one entry of GET /v1/admin/sessions: the id with its record.
+type SessionInfo struct {
+	Session string `json:"session"`
+	SessionRecord
+}
+
 // KickRecord is the value of key <sid>.kick.<machine>.<agent> in coop_sessions.
 type KickRecord struct {
 	At string `json:"at"`

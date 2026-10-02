@@ -30,7 +30,16 @@ type Update struct {
 	Session  *wire.SessionUpdate
 	Kick     *wire.KickUpdate
 	Presence *wire.PresenceUpdate
+	Snapshot *Snapshot
 	Link     Link
+}
+
+// Snapshot says that the feed has sent every current entry of a bucket since it connected:
+// entries of that bucket that are not in Seen are gone. The sessions bucket holds session ids
+// and kick keys; the presence bucket holds presence keys.
+type Snapshot struct {
+	Bucket string // sessions or presence
+	Seen   map[string]bool
 }
 
 // Msg is one message. Replies are the messages that answer it, in sequence order.
@@ -210,6 +219,8 @@ func (s *Store) Apply(u Update) {
 		}
 	case u.Link != "":
 		s.Link = u.Link
+	case u.Snapshot != nil:
+		s.applySnapshot(u.Snapshot)
 	case u.Session != nil:
 		if s.stale("session:"+u.Session.SID, u.Session.Revision) {
 			return
@@ -259,6 +270,28 @@ func (s *Store) Apply(u Update) {
 			a.live = u.Presence.Record
 			a.refresh()
 			v.Version++
+		}
+	}
+}
+
+func (s *Store) applySnapshot(snap *Snapshot) {
+	switch snap.Bucket {
+	case "sessions":
+		for sid := range s.Sessions {
+			if !snap.Seen[sid] {
+				s.Apply(Update{Session: &wire.SessionUpdate{SID: sid}})
+			}
+		}
+		for key := range s.Kicks {
+			if !snap.Seen[key] {
+				s.Apply(Update{Kick: &wire.KickUpdate{Key: key}})
+			}
+		}
+	case "presence":
+		for key := range s.Presence {
+			if !snap.Seen[key] {
+				s.Apply(Update{Presence: &wire.PresenceUpdate{Key: key}})
+			}
 		}
 	}
 }
