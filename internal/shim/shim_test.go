@@ -121,7 +121,10 @@ func start(t *testing.T, o Options) *testAgent {
 		once.Do(func() {
 			_ = cs.Close()
 			select {
-			case <-served:
+			case err := <-served:
+				if err != nil {
+					t.Errorf("Serve gave %v when the client went away", err)
+				}
 			case <-time.After(5 * time.Second):
 				t.Error("Serve did not return after the client went away")
 			}
