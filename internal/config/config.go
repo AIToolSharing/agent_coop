@@ -27,16 +27,24 @@ type Config struct {
 }
 
 // Load finds the configuration. For each key, a value in env wins, and an empty value counts as
-// not set. COOP_SESSION and COOP_AGENT then come from the nearest .coop file (FindProjectFile).
-// COOP_URL, COOP_TOKEN, COOP_OPERATOR_TOKEN and COOP_PUSH then come from the credential file.
-// A .coop file cannot set an address or a token, because a repository can hold one.
+// not set. COOP_SESSION and COOP_AGENT then come from the nearest .coop file (FindProjectFile)
+// from cwd, or else from CLAUDE_PROJECT_DIR in env. COOP_URL, COOP_TOKEN, COOP_OPERATOR_TOKEN
+// and COOP_PUSH then come from the credential file. A .coop file cannot set an address or a
+// token, because a repository can hold one. The default agent name always comes from cwd.
 //
 // Load calls warn for a credential file that other users can read, for an invalid session
 // name (Load then uses no session) and for an invalid agent name (Load then uses
 // DefaultAgentName). A bad value in env does not fall back to the .coop file.
 func Load(env map[string]string, file string, warn func(string), cwd string) Config {
 	fromFile := ReadEnvFile(file, warn)
-	projectFile, _ := FindProjectFile(cwd)
+	projectFile, found := FindProjectFile(cwd)
+	// Claude Code sets CLAUDE_PROJECT_DIR to the project directory when it starts an MCP server
+	// (seen on Claude Code 2.1.287), and the server starts in that directory. When the working
+	// directory is a different one and the search from it finds no .coop file, the search
+	// starts again at CLAUDE_PROJECT_DIR. The TypeScript shim does not do this.
+	if dir := env["CLAUDE_PROJECT_DIR"]; !found && dir != "" {
+		projectFile, _ = FindProjectFile(dir)
+	}
 	fromProject := readProjectFile(projectFile)
 	pick := func(key string, other map[string]string) string {
 		return cmp.Or(env[key], other[key])

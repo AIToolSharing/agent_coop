@@ -329,3 +329,61 @@ func TestDefaultAgentNameKeepsAValidName(t *testing.T) {
 		}
 	})
 }
+
+// claudeTree makes root/proj (with .git) and root/other (with .git): two projects, so a .coop
+// file in one cannot apply to the other through the search upwards.
+func claudeTree(t *testing.T) (project, other string) {
+	t.Helper()
+	root := t.TempDir()
+	project = filepath.Join(root, "proj")
+	other = filepath.Join(root, "other")
+	mkdir(t, filepath.Join(project, ".git"))
+	mkdir(t, filepath.Join(other, ".git"))
+	return project, other
+}
+
+func TestProjectFileFromClaudeProjectDirWhenCwdHasNone(t *testing.T) {
+	project, other := claudeTree(t)
+	writeFile(t, filepath.Join(project, ".coop"), "COOP_SESSION=from-project\nCOOP_AGENT=planner\n", 0o644)
+	c := config.Load(map[string]string{"CLAUDE_PROJECT_DIR": project}, noCred, noWarn, other)
+	if c.Session != "from-project" || c.Agent != "planner" {
+		t.Fatalf("got %+v", c)
+	}
+	// The search from CLAUDE_PROJECT_DIR also goes up to the git root.
+	sub := filepath.Join(project, "sub")
+	mkdir(t, sub)
+	if c := config.Load(map[string]string{"CLAUDE_PROJECT_DIR": sub}, noCred, noWarn, other); c.Session != "from-project" {
+		t.Fatalf("from a subdirectory: got %+v", c)
+	}
+}
+
+func TestProjectFileFromCwdWinsOverClaudeProjectDir(t *testing.T) {
+	project, other := claudeTree(t)
+	writeFile(t, filepath.Join(project, ".coop"), "COOP_SESSION=from-project\n", 0o644)
+	writeFile(t, filepath.Join(other, ".coop"), "COOP_SESSION=from-cwd\n", 0o644)
+	c := config.Load(map[string]string{"CLAUDE_PROJECT_DIR": project}, noCred, noWarn, other)
+	if c.Session != "from-cwd" {
+		t.Fatalf("got %+v", c)
+	}
+}
+
+func TestAgentNameDefaultStaysTheNameOfCwd(t *testing.T) {
+	project, other := claudeTree(t)
+	writeFile(t, filepath.Join(project, ".coop"), "COOP_SESSION=s\n", 0o644)
+	c := config.Load(map[string]string{"CLAUDE_PROJECT_DIR": project}, noCred, noWarn, other)
+	if c.Session != "s" || c.Agent != "other" {
+		t.Fatalf("got %+v", c)
+	}
+}
+
+func TestWarningNamesTheProjectFileFromClaudeProjectDir(t *testing.T) {
+	project, other := claudeTree(t)
+	file := filepath.Join(project, ".coop")
+	writeFile(t, file, "COOP_SESSION=Not Valid\n", 0o644)
+	var warnings []string
+	config.Load(map[string]string{"CLAUDE_PROJECT_DIR": project}, noCred, collect(&warnings), other)
+	want := []string{"COOP_SESSION in " + file + ` "Not Valid" is not a valid session name; ignoring it`}
+	if !slices.Equal(warnings, want) {
+		t.Fatalf("warnings %q, want %q", warnings, want)
+	}
+}
