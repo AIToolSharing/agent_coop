@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AIToolSharing/agent_coop/internal/channel"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"pgregory.net/rapid"
 )
@@ -159,4 +160,56 @@ func TestPushRoundTrip(t *testing.T) {
 			rt.Fatal("method with a newline")
 		}
 	})
+}
+
+// With Classic set, a server/discover request is answered "method not found" on the spot, so
+// the client falls back to the initialize handshake; nothing else is touched.
+func TestClassicAnswersDiscoverWithMethodNotFound(t *testing.T) {
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	t.Cleanup(func() { _ = inW.Close(); _ = outR.Close() })
+	tr := channel.Wrap(&mcp.IOTransport{Reader: inR, Writer: outW})
+	tr.Classic = true
+	ctx := context.Background()
+	conn, err := tr.Connect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_, _ = io.WriteString(inW, `{"jsonrpc":"2.0","id":"server-discover-probe-1","method":"server/discover","params":{}}`+"\n")
+		_, _ = io.WriteString(inW, `{"jsonrpc":"2.0","id":7,"method":"tools/list","params":{}}`+"\n")
+	}()
+	// The client side reads the answer as it comes (a pipe write blocks until it is read).
+	answer := make(chan string, 1)
+	go func() {
+		line, _ := bufio.NewReader(outR).ReadString('\n')
+		answer <- line
+	}()
+	// The SDK side reads: it must see tools/list, not server/discover.
+	m, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, ok := m.(*jsonrpc.Request)
+	if !ok || req.Method != "tools/list" {
+		t.Fatalf("the server read %#v", m)
+	}
+	var line string
+	select {
+	case line = <-answer:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no answer to the probe")
+	}
+	var resp struct {
+		ID    any `json:"id"`
+		Error struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(line), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.ID != "server-discover-probe-1" || resp.Error.Code != -32601 {
+		t.Fatalf("answer %s", line)
+	}
 }

@@ -30,11 +30,37 @@ var metaKey = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 // Transport is an MCP transport that remembers the connection it opens.
 type Transport struct {
 	inner mcp.Transport
+	// Classic makes the server answer `server/discover` with "method not found". Claude Code
+	// then falls back to the `initialize` handshake of the older protocol versions, which is
+	// the handshake its channels were built on. Set it before Connect.
+	Classic bool
 
 	once  sync.Once
 	ready chan struct{}
 	mu    sync.Mutex
 	conn  mcp.Connection
+}
+
+// classicConn drops server/discover before the SDK sees it.
+type classicConn struct {
+	mcp.Connection
+}
+
+func (c classicConn) Read(ctx context.Context) (jsonrpc.Message, error) {
+	for {
+		m, err := c.Connection.Read(ctx)
+		if err != nil {
+			return m, err
+		}
+		if r, ok := m.(*jsonrpc.Request); ok && r.Method == "server/discover" && r.ID.IsValid() {
+			resp := &jsonrpc.Response{ID: r.ID, Error: &jsonrpc.Error{Code: jsonrpc.CodeMethodNotFound, Message: "method not found"}}
+			if err := c.Connection.Write(ctx, resp); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		return m, nil
+	}
 }
 
 // Wrap returns a Transport over inner.
@@ -47,6 +73,9 @@ func (t *Transport) Connect(ctx context.Context) (mcp.Connection, error) {
 	conn, err := t.inner.Connect(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if t.Classic {
+		conn = classicConn{conn}
 	}
 	t.mu.Lock()
 	t.conn = conn
