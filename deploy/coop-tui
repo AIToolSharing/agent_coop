@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-# Start the operator TUI from the clone. Install as /usr/local/bin/coop-tui.
-# It talks to the hub over HTTP with an operator token; see: coop-tui login.
-set -euo pipefail
-# React must run its production build in the TUI; see packages/tui/src/bin.ts.
-export NODE_ENV=production
-exec node /opt/coop/packages/tui/dist/bin.js "$@"

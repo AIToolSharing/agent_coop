@@ -1,137 +1,145 @@
 # coop
 
 coop lets AI agents on different machines talk to each other in a shared session, in near real
-time. A person sees all sessions, agents, and messages in a terminal UI (TUI) on a server, and can
-act on them.
+time. A person sees every session, agent and message in a terminal UI (TUI) and can act on them.
 
 - Agents get a small messaging interface: `status`, `send`, `ask`, `wait`, `inbox`, `history`,
   `set_state`. The interface does not show how delivery works.
 - The person who starts an agent sets the session. The agent does not choose it.
 - In Claude Code, a message from a peer wakes an idle agent (channel push).
-- The TUI shows the conversation as a log, a sequence diagram, threads, a who-talks-to-whom
-  matrix, and per-agent and per-message details.
+- The TUI shows the conversation as a transcript and as threads, every message whole, with
+  details per agent and per message, and a line for what needs the person.
 
 ## Parts
 
 ```
- agent machine (any number)                 server (VPS)
+ agent machine (any number)                 server
 ┌──────────────────────────────┐        ┌──────────────────────────────────────────────┐
-│ claude / codex               │        │ Caddy :443 (TLS) ──► coop-hub :8080          │
-│   └ coop-mcp (stdio, local)  │ HTTPS  │   API, tokens, sender, visibility, admin     │
+│ claude / codex               │        │ nginx :8443 (TLS) ──► coop-hub 127.0.0.1:8090│
+│   └ coop mcp (stdio, local)  │ HTTPS  │   API, tokens, sender, visibility, admin     │
 │       requests  ─────────────┼───────►│        │                                     │
 │       events    ◄────────────┼────────│        ▼                                     │
 │ ~/.config/coop/env (0600)    │        │ nats-server 127.0.0.1:4222 (JetStream, KV)   │
 └──────────────────────────────┘        └──────────────────────────────────────────────┘
  operator (any machine)                              ▲
 ┌──────────────────────────────┐        HTTPS        │
-│ coop-tui  ───────────────────┼─────────────────────┘  operator token, admin API
+│ coop tui ────────────────────┼─────────────────────┘  operator token, admin API
 └──────────────────────────────┘
 ```
 
-| Package | Program | Runs on | Does |
+| Part | Program | Runs on | Does |
 |---|---|---|---|
-| `packages/core` | — | all | Names, message schemas, API contract, delivery rules, broker access |
-| `packages/hub` | `coop-hub` | server | HTTPS API. The only way from an agent machine to the broker |
-| `packages/mcp` | `coop-mcp` | agent machine | Local MCP server that gives the agent its tools, and the setup commands |
-| `packages/tui` | `coop-tui` | any machine | Observe and control sessions over the hub's admin API |
-| `plugin/` | — | agent machine | The Claude Code plugin: the MCP server as one file, and the skill |
+| `cmd/coop`, `internal/` | `coop` (Go, one binary) | agent machines, operator | `coop mcp` is the agent's MCP server; `coop tui` is the operator's UI; `coop login`, `setup`, `session`, `claude` and `doctor` set a machine up |
+| `packages/core` | — | server | Names, message schemas, API contract, delivery rules, broker access |
+| `packages/hub` | `coop-hub` | server | The HTTPS API (Node). The only way from an agent machine to the broker |
+| `deploy/` | — | server | The installer, the systemd units, the TLS front |
 
-## Use it
-
-On an agent machine that is set up (see below), tell the project which session it is in:
-
-```bash
-cd ~/work/app
-coop-mcp session build-42           # writes ./.coop; agents started here (or below) join build-42
-coop-mcp session build-42 --agent reviewer   # and choose the agent name (default: the directory name)
-coop-mcp claude                     # Claude Code in that session, messages pushed in
-codex                               # any other MCP client: no push, the agent uses wait/inbox
-```
-
-The environment wins over the file, so one-off runs need no file:
-
-```bash
-coop-mcp claude build-42            # Claude Code in session build-42, messages pushed in
-COOP_SESSION=build-42 codex
-```
-
-A headless agent (`claude -p`) runs without a person to approve tool calls, so allow the coop
-tools up front. The tool prefix is `mcp__coop__` for a server added with `claude mcp add`, and
-`mcp__plugin_coop_coop__` for the plugin:
-
-```bash
-COOP_SESSION=build-42 claude -p "..." --allowedTools 'mcp__coop__*'
-```
-
-The session must exist and be open. The operator creates it in the TUI or with
-`coop-hub session add <name>` on the server. With `COOP_AUTO_CREATE_SESSIONS=1` in the hub's
-environment, the first agent to join an unknown session creates it.
+The hub moves into the `coop` binary next; the Node parts go then.
 
 ## Set up an agent machine
 
-Requirements: Node.js 24, and Claude Code or another MCP client.
+Requirements: Claude Code (or another MCP client) and the `coop` binary.
 
-1. Get the commands. In a clone of this repository:
+1. Get `coop`. From a clone of this repository, with Go 1.25 or later:
 
    ```bash
-   npm ci && npm run cli
+   make install        # builds dist/coop and links ~/.local/bin/coop to it; run again after git pull
    ```
 
-   This builds and puts `coop-mcp` (the shim, one file) and `coop-tui` into `~/.local/bin`
-   (`COOP_BIN` chooses another directory). Run it again after `git pull`.
+   `make release` writes `dist/coop-<os>-<arch>` for macOS and Linux; copy one into a PATH
+   directory on a machine without Go.
 
 2. Get a token for this machine from the operator. On the server:
-   `coop-hub token add <machine>`. The token shows one time only.
+   `sudo coop-hub token add <machine>`. The token shows one time only.
 
 3. Store it. The command checks the token against the service, then writes
-   `~/.config/coop/env` with mode 0600 and prints the next steps:
+   `~/.config/coop/env` with mode 0600:
 
    ```bash
-   coop-mcp login https://coop.example.com <machine>.<secret>
+   coop login https://coop.example.com:8443 <machine>.<secret>
    ```
 
-4. Give your agent the tools:
+   A self-signed certificate is accepted by its fingerprint: `login` shows the fingerprint and
+   pins it; compare it with the one the server's host printed. Nothing is added to the system
+   trust store.
+
+4. Give Claude Code the tools and the skill:
 
    ```bash
-   claude mcp add --scope user coop -- coop-mcp
+   coop setup          # claude mcp add --scope user coop -- <path to coop> mcp, and the skill
+   coop doctor         # every check green, or the command that fixes it
    ```
 
-   Claude Code can take the plugin instead; it brings the MCP server and the skill in one step
-   (`/plugin marketplace add AIToolSharing/agent_coop`, then `/plugin install coop@coop`), and
-   sessions then start with `COOP_CHANNEL=plugin:coop@coop coop-mcp claude`. Without the plugin,
-   link the skill: `ln -s "$PWD/plugin/skills/coop" ~/.claude/skills/coop`.
+On macOS the first connection asks to allow local network access; approve once. The build is
+signed with a fixed identifier, so a rebuild keeps the approval.
 
 Without a session, the server offers no tools, so a session that does not use coop pays nothing
 for it.
 
 To set up the server, see [deploy/README.md](deploy/README.md).
 
-## Operate
+## Use it
 
-On the server, make yourself an operator token. Then run the TUI from any machine that has the
-commands (step 1 above):
+Tell the project which session it is in, then start Claude Code through `coop`:
 
 ```bash
-sudo coop-hub token add --operator you                 # on the server; shows one time only
-coop-tui login https://coop.example.com you.<secret>
-coop-tui
+cd ~/work/app
+coop session build-42                 # writes ./.coop; agents started here (or below) join build-42
+coop session build-42 --agent reviewer   # and choose the agent name (default: the directory name)
+coop claude                           # Claude Code in that session, messages pushed in
+codex                                 # any other MCP client: no push, the agent uses wait/inbox
+```
+
+The environment wins over the file, so one-off runs need no file:
+
+```bash
+coop claude build-42                  # Claude Code in session build-42
+COOP_SESSION=build-42 codex
+```
+
+`coop claude` adds `--dangerously-load-development-channels server:coop` and `COOP_PUSH=1`.
+Claude Code shows a warning about development channels at each start; choose "I am using this
+for local development". A plain `claude` gets the same tools, but messages then wait until the
+agent calls `wait` or `inbox`.
+
+A headless agent (`claude -p`) gets no channel events; it uses `wait`, `ask` or `inbox`, and
+needs the tools allowed up front:
+
+```bash
+COOP_SESSION=build-42 claude -p "..." --allowedTools 'mcp__coop__*'
+```
+
+The session must exist and be open. The operator creates it in the TUI (`:new <name>`) or with
+`sudo coop-hub session add <name>` on the server. With `COOP_AUTO_CREATE_SESSIONS=1` in the hub's
+environment, the first agent to join an unknown session creates it.
+
+## Operate
+
+On the server, make yourself an operator token. Then run the TUI from any machine that has
+`coop`:
+
+```bash
+sudo coop-hub token add --operator you                   # on the server; shows one time only
+coop login https://coop.example.com:8443 you.<secret>
+coop tui
 ```
 
 In the TUI: `tab` moves between the sidebar (sessions, then the agents of the shown session) and
 the main pane; `↑↓` move, `enter` opens, `esc` goes back. `1` is the transcript, `2` the threads
-with the open asks, `3` the who-talks-to-whom matrix. `m` writes to the session (`tab` picks the
-target), `r` answers the selected message in its thread, `a` goes to the next thing that needs
-you (a message for you, an ask that waits, a blocked agent). The rare actions are commands:
-`:new`, `:close`, `:reopen`, `:delete`, `:kick`, `:allow`, `:withdraw`, `:filter`, `:sys`,
-`:seq`; `tab` completes them. `?` shows every key.
+with the open asks. `m` writes to the session (`tab` picks the target), `r` answers the selected
+message in its thread, `a` goes to the next thing that needs you (a message for you, an ask that
+waits, a blocked agent). The rare actions are commands: `:new`, `:close`, `:reopen`, `:delete`,
+`:kick`, `:allow`, `:withdraw`, `:filter`, `:sys`; `tab` completes them. `?` shows every key.
 
 ## Security
 
 Protected:
 
-- Network traffic: TLS between agent machines and the server.
+- Network traffic: TLS between the machines and the server. With a public certificate the usual
+  verification applies; with a self-signed one, each client pins the fingerprint it saw at
+  `coop login` and refuses any other certificate.
 - The broker: it listens on the server's localhost only. Agent machines have no broker
-  credentials.
+  credentials. The hub itself listens on localhost; only the TLS front is reachable.
 - Identity: the hub sets the sender of each message from the machine token and the agent's live
   connection. A client cannot send a `from` field.
 - Visibility: an agent gets only messages to it, to `all`, or from it, in the session it joined.
@@ -156,12 +164,11 @@ Not protected:
 
 - Push into a Claude Code session uses channels, a research preview. A channel that is not on
   Anthropic's allowlist needs `--dangerously-load-development-channels`, which shows a warning at
-  each start. `coop-mcp claude` sets the flag. On a Team or Enterprise plan, an admin can list
-  the plugin in `allowedChannelPlugins` instead, and `claude --channels plugin:coop@coop` runs
-  without the warning.
-- Push and `claude -p`: a test on Claude Code 2.1.285 (2026-09-30) found that channel events do
-  not reach a headless session, although the Claude Code documentation now says they do. Until a
-  newer version is checked, a headless agent uses `wait`, `ask`, or `inbox`.
+  each start; `coop claude` sets the flag. Claude Code 2.1.287 speaks the stateless MCP
+  handshake (2026-07-28); `coop mcp` answers `server/discover` with "method not found" so that
+  Claude Code falls back to `initialize`, the handshake its channels were built on.
+- Headless sessions (`claude -p`, also with several turns over stream-json) receive no channel
+  events (checked on 2.1.287). A headless agent uses `wait`, `ask` or `inbox`.
 - A message to a peer that left the session is kept. The peer gets it when it joins again, with
   the other messages it missed (the newest 100). `send` reports `online: false` in that case,
   and `ask` returns at once instead of waiting.
@@ -169,13 +176,11 @@ Not protected:
 ## Develop
 
 ```bash
-npm run check       # format and lint (Biome), types (strict), all tests, bundle up to date
-npm run contract    # property-based API contract test (Schemathesis, needs uvx)
-npm run bundle      # rebuild plugin/coop-mcp.mjs after a change to packages/core or packages/mcp
+make check          # Go: gofmt, go vet, staticcheck, go test -race
+make build          # dist/coop for this machine
+npm run check       # hub: format and lint (Biome), types (strict), all tests
+npm run contract    # property-based API contract test of the hub (Schemathesis, needs uvx)
 ```
 
-`plugin/coop-mcp.mjs` is committed, so a plugin install and the `curl` step need no build.
-`npm run check` fails when it is stale.
-
-The tests start their own `nats-server` (2.11 or later) on a free port with
+The hub tests start their own `nats-server` (2.11 or later) on a free port with
 `deploy/nats.conf`. They do not touch a server that runs on the machine.

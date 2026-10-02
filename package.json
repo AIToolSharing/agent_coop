@@ -4,9 +4,7 @@
   "type": "module",
   "workspaces": [
     "packages/core",
-    "packages/hub",
-    "packages/mcp",
-    "packages/tui"
+    "packages/hub"
   ],
   "engines": {
     "node": ">=24"
@@ -17,17 +15,14 @@
     "lint": "biome ci .",
     "format": "biome format --write .",
     "test": "vitest run",
-    "check": "biome ci . && tsc -b && tsc -p tsconfig.test.json && vitest run && node scripts/bundle.mjs --check",
-    "contract": "COOP_CONTRACT=1 vitest run packages/hub/test/contract.int.test.ts",
-    "bundle": "tsc -b && node scripts/bundle.mjs",
-    "cli": "node scripts/install-cli.mjs"
+    "check": "biome ci . && tsc -b && tsc -p tsconfig.test.json && vitest run",
+    "contract": "COOP_CONTRACT=1 vitest run packages/hub/test/contract.int.test.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
     "@fast-check/vitest": "^0.5.0",
     "@types/node": "^26.6.3",
     "fast-check": "^4.10.2",
-    "rolldown": "^1.2.12",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2"
   },

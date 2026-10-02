@@ -1,5 +1,5 @@
 [Unit]
-Description=coop hub API (behind Caddy)
+Description=coop hub API
 After=nats.service
 Requires=nats.service
 

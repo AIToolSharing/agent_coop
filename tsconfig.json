@@ -1,9 +1,11 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/core" },
-    { "path": "packages/hub" },
-    { "path": "packages/mcp" },
-    { "path": "packages/tui" }
+    {
+      "path": "packages/core"
+    },
+    {
+      "path": "packages/hub"
+    }
   ]
 }

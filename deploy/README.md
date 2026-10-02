@@ -1,25 +1,22 @@
 # Deploy the coop server
 
-This guide sets up one Linux server (a VPS) with:
+This guide sets up one Linux server with:
 
 - `nats-server` on `127.0.0.1:4222` (message store, localhost only),
-- `coop-hub` on `127.0.0.1:8080` (the API for agent machines),
-- Caddy on port 443 (TLS in front of the hub),
-- `coop-tui` for the operator, from any machine, with an operator token.
+- `coop-hub` on `127.0.0.1:8090` (the API, Node.js, until the Go hub replaces it),
+- a TLS front on port 8443: nginx with a self-signed certificate that the clients pin.
 
-Agent machines and the TUI connect only to port 443.
+Agent machines and the operator's `coop tui` connect only to port 8443.
 
 ## 1. Prerequisites
 
-- A DNS name for the server. Your own domain works, or `<ip-with-dashes>.sslip.io`
-  (for example `203-0-113-7.sslip.io`).
-- Node.js 24 (`node` on the PATH; a tarball from nodejs.org under `/usr/local` works), Caddy 2,
-  and `nats-server` 2.11 or later (release binary in `/usr/local/bin`).
-- Open ports: 22 (SSH), 80 (certificate challenge), 443. Keep 4222 and 8080 closed; both
-  services listen on localhost only.
+- Node.js 24 (`node` on the PATH; a tarball from nodejs.org under `/usr/local` works),
+  `nats-server` 2.11 or later (release binary in `/usr/local/bin`), nginx, openssl.
+- Open port: 8443 (and SSH). Keep 4222 and 8090 closed; both services listen on localhost only.
 
-On a LAN without a DNS name, skip Caddy: run the installer with `COOP_HUB_LISTEN=0.0.0.0:8090`
-(any free port) and give agents `http://<host>:8090`. Tokens then travel in clear on that LAN.
+Any other reverse proxy works in place of nginx: proxy to `127.0.0.1:8090` with buffering off
+and long read timeouts (the live feeds are server-sent events). With a certificate from a
+public authority the clients need no pin.
 
 ## 2. Install
 
@@ -30,9 +27,8 @@ sudo deploy/install.sh
 ```
 
 The script creates the `coop` user, the configuration in `/etc/coop` with a new broker
-password, the systemd units, and the `coop-hub` and `coop-tui` commands. It is safe to run
-again: it keeps the password and changes only what is missing. It ends with the steps that are
-left: TLS and tokens.
+password, the systemd units, and the `coop-hub` command. It is safe to run again: it keeps the
+password and changes only what is missing. It ends with the steps that are left: TLS and tokens.
 
 What it writes, for reference:
 
@@ -40,7 +36,7 @@ What it writes, for reference:
 |---|---|---|
 | `/etc/coop/nats.conf` | 644 | the broker configuration (no secrets) |
 | `/etc/coop/nats.env` | 640 root:coop | the broker password |
-| `/etc/coop/hub.env` | 640 root:coop | the same password for the hub; add `COOP_AUTO_CREATE_SESSIONS=1` here to let the first agent create a session |
+| `/etc/coop/hub.env` | 640 root:coop | the same password for the hub, and `COOP_HUB_LISTEN`; add `COOP_AUTO_CREATE_SESSIONS=1` here to let the first agent create a session |
 
 Check: `systemctl status nats coop-hub` shows both active. The hub creates the stream and the
 buckets when it starts.
@@ -48,16 +44,18 @@ buckets when it starts.
 ## 3. TLS
 
 ```bash
-sudo cp /opt/coop/deploy/Caddyfile /etc/caddy/Caddyfile
-sudo systemctl edit caddy        # add: [Service]  Environment=COOP_DOMAIN=coop.example.com
-sudo systemctl restart caddy
+sudo deploy/tls-selfsigned.sh          # or: sudo deploy/tls-selfsigned.sh 9443
 ```
 
-Check from another machine:
+It makes `/etc/coop/tls/{cert,key}.pem` (self-signed, ten years), installs the nginx site from
+`deploy/nginx-coop.conf`, moves the hub to `127.0.0.1:8090`, and prints the certificate's
+SHA-256 fingerprint. Each client shows the same fingerprint at `coop login` and pins it. It is
+safe to run again; it keeps the certificate.
+
+Check from another machine (`-k` only because the certificate is self-signed):
 
 ```bash
-curl -s https://coop.example.com/openapi.json | head -c 80          # the API document
-curl -s -o /dev/null -w '%{http_code}\n' https://coop.example.com/v1/sessions/x   # 401
+curl -sk -o /dev/null -w '%{http_code}\n' https://<host>:8443/v1/admin/sessions   # 401
 ```
 
 ## 4. Add an agent machine
@@ -68,8 +66,15 @@ On the server, make a token for the machine. The token shows one time only:
 sudo coop-hub token add laptop
 ```
 
-Give the token to the machine's owner over a private channel. On the machine, follow
-"Set up an agent machine" in the main README. To remove a machine and its agents at once:
+Give the token to the machine's owner over a private channel. On the machine:
+
+```bash
+coop login https://<host>:8443 laptop.<secret>     # shows and pins the fingerprint
+coop setup
+coop doctor
+```
+
+To remove a machine and its agents at once:
 
 ```bash
 sudo coop-hub token revoke laptop
@@ -78,16 +83,15 @@ sudo coop-hub token list
 
 ## 5. Operate
 
-Make yourself an operator token on the server, then run the TUI from any machine that reaches
-the hub (on the server itself, `http://127.0.0.1:8080` works without TLS):
+Make yourself an operator token on the server, then run the TUI from any machine with `coop`:
 
 ```bash
 sudo coop-hub token add --operator you          # shows one time only
-coop-tui login https://coop.example.com you.<secret>
-coop-tui
+coop login https://<host>:8443 you.<secret>
+coop tui
 ```
 
-Create a session with `n` in the TUI, or from a shell:
+Create a session with `:new <name>` in the TUI, or from a shell:
 
 ```bash
 sudo coop-hub session add build-42
@@ -99,18 +103,18 @@ command; the hint line at the bottom shows the ones that apply.
 
 ## Upgrade
 
-Upgrade all parts together: the hub, the TUI, and the MCP server on every agent machine. A part
-reads messages with its own version of the message schema, and an older part drops a message
-that only a newer schema allows.
+Upgrade the hub and the `coop` binary on every machine together. A part reads messages with its
+own version of the message schema, and an older part drops a message that only a newer schema
+allows.
 
 ```bash
 cd /opt/coop && sudo git pull && sudo npm ci && sudo npm run build
 sudo deploy/install.sh
 ```
 
-Then restart each open TUI and each agent session.
+Then restart each open `coop tui` and each agent session.
 
 ## Backup
 
 The whole state is in `/var/lib/nats`. Stop `nats` (or take a filesystem snapshot) and copy the
-directory.
+directory. The TLS key and certificate are in `/etc/coop/tls`.

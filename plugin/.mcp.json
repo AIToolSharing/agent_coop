@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "coop": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/coop-mcp.mjs"]
-    }
-  }
-}
