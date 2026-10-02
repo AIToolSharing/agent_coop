@@ -43,7 +43,7 @@ func cmdTUI(args []string, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "no hub address or no operator token yet; run: coop login <url> <operator token>")
 		return 2
 	}
-	client := &admin.Client{Base: url, Token: token}
+	client := &admin.Client{Base: url, Token: token, HTTP: hubHTTP(cfg, stderr)}
 	store := model.New()
 	updates := make(chan model.Update, 256)
 	ctx, cancel := context.WithCancel(context.Background())

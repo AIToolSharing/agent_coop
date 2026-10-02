@@ -34,7 +34,9 @@ func cmdMCP(args []string, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	log := func(format string, a ...any) { fmt.Fprintf(stderr, format+"\n", a...) }
-	if err := shim.Serve(ctx, mcpOptions(cfg, log)); err != nil {
+	o := mcpOptions(cfg, log)
+	o.HTTPClient = hubHTTP(cfg, stderr)
+	if err := shim.Serve(ctx, o); err != nil {
 		fmt.Fprintln(stderr, "coop mcp:", err)
 		return 1
 	}

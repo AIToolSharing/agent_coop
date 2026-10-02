@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"slices"
 	"sync"
@@ -42,6 +43,9 @@ type Options struct {
 	ClientName, ClientVersion string
 	// Transport is the MCP transport. Nil means stdio.
 	Transport mcp.Transport
+	// HTTPClient talks to the hub. Nil means http.DefaultClient. A pinned certificate comes
+	// in through here.
+	HTTPClient *http.Client
 	// Log, when set, gets diagnostics for stderr.
 	Log func(format string, args ...any)
 
@@ -345,6 +349,7 @@ func (s *shim) start(client *mcp.Implementation) {
 		join.clientVersion = client.Version
 	}
 	s.client = newHubClient(s.o.URL, s.o.Token, s.o.Session, join)
+	s.client.httpc = s.o.HTTPClient
 	s.inbox = newInbox(inboxOptions{
 		push:   s.o.Push,
 		onPush: s.pushItem,

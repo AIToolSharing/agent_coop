@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
+	"github.com/AIToolSharing/agent_coop/internal/pin"
 )
 
 func TestUsageAndVersion(t *testing.T) {
@@ -239,5 +242,45 @@ func TestMCPOptionsFollowTheConfiguration(t *testing.T) {
 	o := mcpOptions(cfg, nil)
 	if o.URL != cfg.URL || o.Token != cfg.Token || o.Session != "build-42" || o.Agent != "alice" || !o.Push || o.Transport != nil || o.ClientName != "" {
 		t.Fatalf("%+v", o)
+	}
+}
+
+func TestLoginPinsASelfSignedHubAndDoctorUsesThePin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("COOP_SESSION", "")
+	t.Setenv("COOP_AGENT", "")
+	srv := httptest.NewTLSServer(hub(t, "op.1", "mac.2").Config.Handler)
+	defer srv.Close()
+	sum := sha256.Sum256(srv.Certificate().Raw)
+	fp := hex.EncodeToString(sum[:])
+	var out, errOut bytes.Buffer
+	if code := run([]string{"login", srv.URL, "op.1"}, &out, &errOut); code != 0 {
+		t.Fatalf("code %d: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "self-signed") || !strings.Contains(out.String(), pin.Format(fp)) {
+		t.Fatalf("stdout %q", out.String())
+	}
+	got := config.ReadEnvFile(filepath.Join(home, ".config", "coop", "env"), func(s string) { t.Fatal(s) })
+	if got["COOP_CERT_SHA256"] != fp || got["COOP_OPERATOR_TOKEN"] != "op.1" || got["COOP_URL"] != srv.URL {
+		t.Fatalf("env file %v", got)
+	}
+	f := &fakeClaude{}
+	f.install(t, "/opt/coop/coop")
+	out.Reset()
+	run([]string{"doctor"}, &out, &errOut)
+	for _, want := range []string{"ok    tls: the hub's certificate is pinned, " + pin.Format(fp), "ok    the hub answers", "ok    operator token accepted"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q in\n%s", want, out.String())
+		}
+	}
+	// A login to a plain hub clears the pin.
+	plain := hub(t, "op.1", "mac.2")
+	if code := run([]string{"login", plain.URL, "mac.2"}, &out, &errOut); code != 0 {
+		t.Fatal(errOut.String())
+	}
+	got = config.ReadEnvFile(filepath.Join(home, ".config", "coop", "env"), func(s string) { t.Fatal(s) })
+	if got["COOP_CERT_SHA256"] != "" || got["COOP_TOKEN"] != "mac.2" {
+		t.Fatalf("env file after a plain login %v", got)
 	}
 }

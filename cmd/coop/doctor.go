@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
+	"github.com/AIToolSharing/agent_coop/internal/pin"
 )
 
 // cmdDoctor checks everything an agent machine or an operator needs, in the order a connection
@@ -45,9 +45,15 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 		fail("no hub address: run coop login <url> <token>")
 	} else {
 		ok("hub address " + cfg.URL)
+		if cfg.CertSHA256 != "" {
+			ok("tls: the hub's certificate is pinned, " + pin.Format(cfg.CertSHA256))
+		}
+		client := hubHTTP(cfg, stderr)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if _, err := probeToken(ctx, http.DefaultClient, cfg.URL, "none"); err != nil && strings.Contains(err.Error(), "cannot reach") {
+		if _, err := probeToken(ctx, client, cfg.URL, "none"); err != nil && pin.IsCertError(err) {
+			fail("the hub's certificate is not trusted or has changed: run coop login " + cfg.URL + " <token> again")
+		} else if err != nil && strings.Contains(err.Error(), "cannot reach") {
 			fail(err.Error())
 		} else {
 			ok("the hub answers")
@@ -56,7 +62,7 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 					note("no " + want + " token (" + key + "): coop login " + cfg.URL + " <" + want + " token>")
 					return
 				}
-				role, err := probeToken(ctx, http.DefaultClient, cfg.URL, token)
+				role, err := probeToken(ctx, client, cfg.URL, token)
 				switch {
 				case err != nil:
 					fail(key + ": " + err.Error())

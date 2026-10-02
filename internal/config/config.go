@@ -21,6 +21,7 @@ type Config struct {
 	URL           string // the hub address, with no "/" at the end
 	Token         string // the machine token, COOP_TOKEN
 	OperatorToken string // the operator token, COOP_OPERATOR_TOKEN
+	CertSHA256    string // the pinned hub certificate, COOP_CERT_SHA256 (hex); "" = none
 	Session       string // the session, or "" when the agent is in no session
 	Agent         string // the agent name; never empty
 	Push          bool   // true when Claude Code loads the server as a channel
@@ -28,8 +29,8 @@ type Config struct {
 
 // Load finds the configuration. For each key, a value in env wins, and an empty value counts as
 // not set. COOP_SESSION and COOP_AGENT then come from the nearest .coop file (FindProjectFile)
-// from cwd, or else from CLAUDE_PROJECT_DIR in env. COOP_URL, COOP_TOKEN, COOP_OPERATOR_TOKEN
-// and COOP_PUSH then come from the credential file. A .coop file cannot set an address or a
+// from cwd, or else from CLAUDE_PROJECT_DIR in env. COOP_URL, COOP_TOKEN, COOP_OPERATOR_TOKEN,
+// COOP_CERT_SHA256 and COOP_PUSH then come from the credential file. A .coop file cannot set an address or a
 // token, because a repository can hold one. The default agent name always comes from cwd.
 //
 // Load calls warn for a credential file that other users can read, for an invalid session
@@ -74,6 +75,7 @@ func Load(env map[string]string, file string, warn func(string), cwd string) Con
 		URL:           strings.TrimRight(pick("COOP_URL", fromFile), "/"),
 		Token:         pick("COOP_TOKEN", fromFile),
 		OperatorToken: pick("COOP_OPERATOR_TOKEN", fromFile),
+		CertSHA256:    strings.ToLower(pick("COOP_CERT_SHA256", fromFile)),
 		Session:       session,
 		Agent:         agent,
 		Push:          pick("COOP_PUSH", fromFile) == "1",

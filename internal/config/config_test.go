@@ -387,3 +387,15 @@ func TestWarningNamesTheProjectFileFromClaudeProjectDir(t *testing.T) {
 		t.Fatalf("warnings %q, want %q", warnings, want)
 	}
 }
+
+func TestLoadTakesThePinnedCertificateFromTheCredentialFile(t *testing.T) {
+	tr := tree(t)
+	cred := filepath.Join(tr.root, "env")
+	writeFile(t, cred, "COOP_URL=https://hub\nCOOP_CERT_SHA256=ABCD\n", 0o600)
+	if c := config.Load(map[string]string{}, cred, noWarn, tr.deep); c.CertSHA256 != "abcd" {
+		t.Fatalf("file: %q", c.CertSHA256)
+	}
+	if c := config.Load(map[string]string{"COOP_CERT_SHA256": "ef01"}, cred, noWarn, tr.deep); c.CertSHA256 != "ef01" {
+		t.Fatalf("environment: %q", c.CertSHA256)
+	}
+}

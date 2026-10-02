@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
+	"github.com/AIToolSharing/agent_coop/internal/pin"
 )
 
 // errBadToken: the hub answered, and refused the token.
@@ -54,7 +55,22 @@ func cmdLogin(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	role, err := probeToken(ctx, http.DefaultClient, base, args[1])
+	// A hub with a public certificate, or plain http, needs no pin. A self-signed certificate
+	// is pinned by its fingerprint after the token was accepted through it.
+	values := map[string]string{"COOP_URL": base, "COOP_CERT_SHA256": ""}
+	role, err := probeToken(ctx, &http.Client{}, base, args[1])
+	if err != nil && pin.IsCertError(err) && strings.HasPrefix(base, "https://") {
+		fp, ferr := pin.Fingerprint(ctx, base)
+		if ferr != nil {
+			fmt.Fprintln(stderr, ferr)
+			return 1
+		}
+		pinned, _ := pin.Client(fp)
+		if role, err = probeToken(ctx, pinned, base, args[1]); err == nil {
+			values["COOP_CERT_SHA256"] = fp
+			fmt.Fprintf(stdout, "the hub's certificate is self-signed; its fingerprint is pinned for %s:\n  %s\n  compare it with the fingerprint the hub's host shows\n", base, pin.Format(fp))
+		}
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -63,8 +79,9 @@ func cmdLogin(args []string, stdout, stderr io.Writer) int {
 	if role == "operator" {
 		key = "COOP_OPERATOR_TOKEN"
 	}
+	values[key] = args[1]
 	file := config.DefaultEnvFile()
-	if err := config.UpdateEnvFile(file, map[string]string{"COOP_URL": base, key: args[1]}); err != nil {
+	if err := config.UpdateEnvFile(file, values); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
