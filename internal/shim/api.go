@@ -75,9 +75,15 @@ type sendResponse struct {
 	To     string `json:"to"`
 	Online bool   `json:"online"`
 	SentAt string `json:"sent_at"`
+	// State is the peer's state (working, blocked, done, idle) or away; empty for all and
+	// operator.
+	State string `json:"state,omitempty"`
 }
 
-func (r sendResponse) valid() bool { return wire.IsID(r.ID) && isTo(r.To) && wire.IsTime(r.SentAt) }
+func (r sendResponse) valid() bool {
+	return wire.IsID(r.ID) && isTo(r.To) && wire.IsTime(r.SentAt) &&
+		(r.State == "" || r.State == "away" || slices.Contains(agentStates, r.State))
+}
 
 // activity is what an agent reports: state, wait_start or wait_end.
 type activity struct {

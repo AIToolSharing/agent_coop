@@ -398,6 +398,16 @@
                     "sent_at": {
                       "type": "string",
                       "format": "date-time"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "working",
+                        "blocked",
+                        "done",
+                        "idle",
+                        "away"
+                      ]
                     }
                   },
                   "required": [

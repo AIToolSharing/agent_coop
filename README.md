@@ -178,8 +178,8 @@ Not protected:
 - Headless sessions (`claude -p`, also with several turns over stream-json) receive no channel
   events (checked on 2.1.287). A headless agent uses `wait`, `ask` or `inbox`.
 - A message to a peer that left the session is kept. The peer gets it when it joins again, with
-  the other messages it missed (the newest 100). `send` reports `online: false` in that case,
-  and `ask` returns at once instead of waiting.
+  the other messages it missed (the newest 100). `send` reports `online: false` and
+  `state: away` in that case, and `ask` returns at once instead of waiting.
 - The server is one process over one SQLite file. That is the size of the tool: a few machines,
   a few agents each, one operator.
 

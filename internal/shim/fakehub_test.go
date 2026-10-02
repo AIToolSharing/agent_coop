@@ -226,7 +226,7 @@ func (h *fakeHub) send(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "forbidden", "session closed")
 		return
 	}
-	to, online := req.To, true
+	to, online, state := req.To, true, ""
 	if to != wire.Broadcast && to != wire.Operator {
 		var found []*fakeAgent
 		for _, a := range s.agents {
@@ -248,7 +248,10 @@ func (h *fakeHub) send(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 409, "conflict", "cannot address yourself")
 			return
 		}
-		to, online = found[0].addr, found[0].online
+		to, online, state = found[0].addr, found[0].online, found[0].state
+		if !online {
+			state = "away"
+		}
 	}
 	m := message{ID: h.nextID(), From: from, To: to, Text: req.Text, ReplyTo: req.ReplyTo, SentAt: now()}
 	s.msgs = append(s.msgs, m)
@@ -256,7 +259,7 @@ func (h *fakeHub) send(w http.ResponseWriter, r *http.Request) {
 		return a.addr != from && (to == wire.Broadcast || to == a.addr)
 	})
 	h.mu.Unlock()
-	writeJSON(w, 200, sendResponse{ID: m.ID, To: to, Online: online, SentAt: m.SentAt})
+	writeJSON(w, 200, sendResponse{ID: m.ID, To: to, Online: online, SentAt: m.SentAt, State: state})
 }
 
 func (h *fakeHub) activity(w http.ResponseWriter, r *http.Request) {

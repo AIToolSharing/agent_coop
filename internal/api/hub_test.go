@@ -261,6 +261,34 @@ func (x *hubSuite) messages(t *testing.T) {
 		}
 	})
 
+	// Added with v0.3.0: the sender learns the recipient's state and can decide to wait.
+	t.Run("send tells the recipient's state: live state, away, or none for all and operator", func(t *testing.T) {
+		sid := x.session(t)
+		a := x.mac1.stream(sid, "alice")
+		defer a.close()
+		b := x.vps2.stream(sid, "bob")
+		defer b.close()
+		a.wait(t, nil)
+		b.wait(t, nil)
+		wantStatus(t, 204)(x.vps2.activity(sid, map[string]any{"kind": "state", "agent": "bob", "state": "blocked", "note": "need API"}))
+		r := parse[sendResponse](t, wantStatus(t, 200)(x.mac1.send(sid, "alice", "bob", "one", "")))
+		if !r.Online || r.State != "blocked" {
+			t.Fatalf("send to a live peer: %+v, want online true and state blocked", r)
+		}
+		b.close()
+		a.wait(t, eventIs("notice"))
+		r = parse[sendResponse](t, wantStatus(t, 200)(x.mac1.send(sid, "alice", "bob", "two", "")))
+		if r.Online || r.State != "away" {
+			t.Fatalf("send to an away peer: %+v, want online false and state away", r)
+		}
+		for _, to := range []string{"all", "operator"} {
+			r = parse[sendResponse](t, wantStatus(t, 200)(x.mac1.send(sid, "alice", to, "three", "")))
+			if !r.Online || r.State != "" {
+				t.Fatalf("send to %s: %+v, want online true and no state", to, r)
+			}
+		}
+	})
+
 	t.Run("size limits: text over 8000 is 422, a body over 32 KiB is 413", func(t *testing.T) {
 		sid := x.session(t)
 		a := x.mac1.stream(sid, "alice")

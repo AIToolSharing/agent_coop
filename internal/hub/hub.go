@@ -141,6 +141,9 @@ type SendResponse struct {
 	// again.
 	Online bool   `json:"online"`
 	SentAt string `json:"sent_at"`
+	// State is the recipient's state when it is a peer: working, blocked, done or idle while
+	// it is in the session, else away. Empty for all and operator.
+	State string `json:"state,omitempty"`
 }
 
 // ActivityRequest is what an agent reports: state, wait_start or wait_end.
@@ -646,11 +649,15 @@ func (h *Hub) Send(machine, sid string, req SendRequest) (SendResponse, error) {
 	if err != nil {
 		return SendResponse{}, storeErr(err)
 	}
-	online := true
+	res := SendResponse{ID: strconv.FormatInt(seq, 10), To: to, Online: true, SentAt: sentAt}
 	if a, ok := wire.ParseAddress(to); ok {
-		_, online = h.conns[wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: a})]
+		if peer, live := h.conns[wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: a})]; live {
+			res.State = peer.state
+		} else {
+			res.Online, res.State = false, "away"
+		}
 	}
-	return SendResponse{ID: strconv.FormatInt(seq, 10), To: to, Online: online, SentAt: sentAt}, nil
+	return res, nil
 }
 
 func (h *Hub) Activity(machine, sid string, req ActivityRequest) error {

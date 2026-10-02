@@ -606,6 +606,8 @@ type sendResponse struct {
 	To     string `json:"to"`
 	Online bool   `json:"online"`
 	SentAt string `json:"sent_at"`
+	// State is the recipient's state for a peer: its live state, or away.
+	State string `json:"state"`
 }
 
 func (r *sendResponse) UnmarshalJSON(b []byte) error {
@@ -616,6 +618,7 @@ func (r *sendResponse) UnmarshalJSON(b []byte) error {
 	return checkRules(
 		rule{wire.IsID(r.ID), "id"},
 		rule{isRecipient(r.To), "to"},
+		rule{r.State == "" || validState(r.State) || r.State == "away", "state"},
 		rule{wire.IsTime(r.SentAt), "sent_at"},
 	)
 }

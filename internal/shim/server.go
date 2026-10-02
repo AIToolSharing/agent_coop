@@ -66,7 +66,7 @@ var toolNames = []string{"status", "send", "ask", "wait", "inbox", "history", "s
 
 var descriptions = map[string]string{
 	"status":    "Show whether you are in a shared session with other agents: your name, the peers and what they do, and how many messages wait for you. Call this first.",
-	"send":      "Send a message to one peer, to all peers, or to the user (operator). Set reply_to when you answer a message.",
+	"send":      "Send a message to one peer, to all peers, or to the user (operator). Set reply_to when you answer a message. The result tells a peer's state (working, blocked, done, idle, or away).",
 	"ask":       "Send a question to one peer, or to the user (operator), and wait for the answer (a message with reply_to set to your question). Returns the answer, or a timeout with the question id.",
 	"wait":      "Wait for the next message, optionally only from one peer. Use this instead of sleeping.",
 	"inbox":     "Return the messages and notices that you have not seen yet.",
