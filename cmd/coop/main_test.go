@@ -131,3 +131,105 @@ func TestClaudeCommandLine(t *testing.T) {
 		t.Fatalf("%q %v", session, argv)
 	}
 }
+
+// fakeClaude stands in for the claude command: it records calls and answers `mcp get coop`.
+type fakeClaude struct {
+	calls      []string
+	registered string // the command line `mcp get coop` reports, or "" for not registered
+}
+
+func (f *fakeClaude) install(t *testing.T, exe string) {
+	t.Helper()
+	oldRun, oldLook, oldExe := runClaude, lookPath, executable
+	t.Cleanup(func() { runClaude, lookPath, executable = oldRun, oldLook, oldExe })
+	runClaude = func(args ...string) (string, error) {
+		f.calls = append(f.calls, strings.Join(args, " "))
+		if strings.Join(args, " ") == "mcp get coop" {
+			if f.registered == "" {
+				return "No MCP server found with name: coop", errors.New("exit 1")
+			}
+			return "coop:\n  Scope: User config\n  Command: " + f.registered + "\n  Args: mcp\n", nil
+		}
+		if len(args) > 1 && args[1] == "add" {
+			f.registered = args[len(args)-2]
+		}
+		return "", nil
+	}
+	lookPath = func(name string) (string, error) { return "/usr/local/bin/" + name, nil }
+	executable = func() string { return exe }
+}
+
+func TestSetupRegistersTheBinaryAndWritesTheSkill(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	f := &fakeClaude{}
+	f.install(t, "/opt/coop/coop")
+	var out, errOut bytes.Buffer
+	if code := run([]string{"setup"}, &out, &errOut); code != 0 {
+		t.Fatalf("code %d: %s", code, errOut.String())
+	}
+	if strings.Join(f.calls, " | ") != "mcp get coop | mcp add --scope user coop -- /opt/coop/coop mcp" {
+		t.Fatalf("calls %v", f.calls)
+	}
+	b, err := os.ReadFile(filepath.Join(home, ".claude", "skills", "coop", "SKILL.md"))
+	if err != nil || !strings.HasPrefix(string(b), "---\nname: coop") {
+		t.Fatalf("skill: %v %q", err, b)
+	}
+	if !strings.Contains(out.String(), "registered coop with Claude Code") || !strings.Contains(out.String(), "coop login") {
+		t.Fatalf("stdout %q", out.String())
+	}
+	// A second run with the same binary changes nothing.
+	f.calls = nil
+	out.Reset()
+	if code := run([]string{"setup"}, &out, &errOut); code != 0 || strings.Join(f.calls, " | ") != "mcp get coop" {
+		t.Fatalf("second run: code %d calls %v", code, f.calls)
+	}
+	// A registration that points elsewhere is replaced.
+	f.registered = "/old/coop"
+	f.calls = nil
+	if code := run([]string{"setup"}, &out, &errOut); code != 0 || strings.Join(f.calls, " | ") != "mcp get coop | mcp remove coop -s user | mcp add --scope user coop -- /opt/coop/coop mcp" {
+		t.Fatalf("replace: code %d calls %v", code, f.calls)
+	}
+}
+
+func TestDoctorReportsEachStep(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("COOP_SESSION", "")
+	t.Setenv("COOP_AGENT", "")
+	t.Setenv("CLAUDE_PROJECT_DIR", "")
+	dir := t.TempDir()
+	t.Chdir(dir)
+	f := &fakeClaude{}
+	f.install(t, "/opt/coop/coop")
+	var out, errOut bytes.Buffer
+	// Nothing set up yet.
+	if code := run([]string{"doctor"}, &out, &errOut); code != 1 {
+		t.Fatalf("code %d:\n%s", code, out.String())
+	}
+	for _, want := range []string{"FAIL  no credential file", "FAIL  no hub address", "--    no session here", "FAIL  Claude Code has no MCP server named coop: run coop setup"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q in\n%s", want, out.String())
+		}
+	}
+	// Logged in, registered, in a session.
+	srv := hub(t, "op.1", "mac.2")
+	if code := run([]string{"login", srv.URL, "mac.2"}, &out, &errOut); code != 0 {
+		t.Fatal(errOut.String())
+	}
+	if code := run([]string{"setup"}, &out, &errOut); code != 0 {
+		t.Fatal(errOut.String())
+	}
+	if code := run([]string{"session", "build-42"}, &out, &errOut); code != 0 {
+		t.Fatal(errOut.String())
+	}
+	out.Reset()
+	if code := run([]string{"doctor"}, &out, &errOut); code != 0 {
+		t.Fatalf("code %d:\n%s", code, out.String())
+	}
+	for _, want := range []string{"ok    credential file", "ok    hub address " + srv.URL, "ok    the hub answers", "ok    machine token accepted", "--    no operator token", "ok    session build-42 (" + filepath.Join(dir, ".coop") + ")", "ok    agent name " + filepath.Base(dir), "ok    Claude Code starts /opt/coop/coop mcp as coop", "ok    skill "} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q in\n%s", want, out.String())
+		}
+	}
+}

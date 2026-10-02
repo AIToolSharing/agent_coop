@@ -19,6 +19,8 @@ const usageText = `usage:
   coop claude [<session>] [args]  start Claude Code with the coop channel enabled
   coop tui [--url <url>] [--token <token>]
                                   watch and steer all sessions (operator token)
+  coop setup                      register coop with Claude Code and install the skill
+  coop doctor                     check the connection, the tokens, the session, the setup
   coop mcp                        the MCP server Claude Code starts (stdio)
   coop version
 `
@@ -41,6 +43,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdClaude(args[1:], stderr)
 	case "tui":
 		return cmdTUI(args[1:], stderr)
+	case "setup":
+		return cmdSetup(args[1:], stdout, stderr)
+	case "doctor":
+		return cmdDoctor(args[1:], stdout, stderr)
 	case "mcp":
 		if err := runSpike(args[1:]); err != nil {
 			fmt.Fprintln(stderr, "coop mcp:", err)
