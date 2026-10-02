@@ -22,10 +22,15 @@ import (
 // dbName is the database file inside the data directory.
 const dbName = "coop.db"
 
-// defaultDataDir is /var/lib/coop for root, else $XDG_DATA_HOME/coop or ~/.local/share/coop.
+// serviceData is the data directory of the service (deploy/coop.service).
+const serviceData = "/var/lib/coop"
+
+// defaultDataDir is the service's directory when it exists or the user is root, so that the
+// admin commands on the hub's host find the hub's database without a flag; else
+// $XDG_DATA_HOME/coop or ~/.local/share/coop.
 func defaultDataDir() string {
-	if os.Geteuid() == 0 {
-		return "/var/lib/coop"
+	if _, err := os.Stat(serviceData); err == nil || os.Geteuid() == 0 {
+		return serviceData
 	}
 	if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
 		return filepath.Join(dir, "coop")

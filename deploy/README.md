@@ -1,18 +1,17 @@
-# Deploy the coop server
+# Deploy the coop hub
 
-This guide sets up one Linux server with:
+The hub is one binary, `coop serve`, with one SQLite file. This guide sets up one Linux
+server with:
 
-- `nats-server` on `127.0.0.1:4222` (message store, localhost only),
-- `coop-hub` on `127.0.0.1:8090` (the API, Node.js, until the Go hub replaces it),
+- `coop serve` on `127.0.0.1:8090` (the API, as a systemd service, user `coop`),
 - a TLS front on port 8443: nginx with a self-signed certificate that the clients pin.
 
 Agent machines and the operator's `coop tui` connect only to port 8443.
 
 ## 1. Prerequisites
 
-- Node.js 24 (`node` on the PATH; a tarball from nodejs.org under `/usr/local` works),
-  `nats-server` 2.11 or later (release binary in `/usr/local/bin`), nginx, openssl.
-- Open port: 8443 (and SSH). Keep 4222 and 8090 closed; both services listen on localhost only.
+- A Linux host with systemd, nginx and openssl. No runtime: the binary is static.
+- Open port: 8443 (and SSH). Keep 8090 closed; the hub listens on localhost only.
 
 Any other reverse proxy works in place of nginx: proxy to `127.0.0.1:8090` with buffering off
 and long read timeouts (the live feeds are server-sent events). With a certificate from a
@@ -20,26 +19,37 @@ public authority the clients need no pin.
 
 ## 2. Install
 
+On a machine with the repository and Go, build the release binaries and copy the one for the
+server's platform to the server:
+
 ```bash
-sudo git clone <this repository> /opt/coop      # or rsync a clone to /opt/coop
-cd /opt/coop && sudo npm ci && sudo npm run build
-sudo deploy/install.sh
+make release                                   # dist/coop-linux-amd64, -linux-arm64, -darwin-arm64
+scp dist/coop-linux-amd64 deploy/install.sh deploy/coop.service <host>:/tmp/
 ```
 
-The script creates the `coop` user, the configuration in `/etc/coop` with a new broker
-password, the systemd units, and the `coop-hub` command. It is safe to run again: it keeps the
-password and changes only what is missing. It ends with the steps that are left: TLS and tokens.
+On the server:
 
-What it writes, for reference:
+```bash
+cd /tmp && sudo ./install.sh ./coop-linux-amd64
+```
 
-| Path | Mode | Holds |
-|---|---|---|
-| `/etc/coop/nats.conf` | 644 | the broker configuration (no secrets) |
-| `/etc/coop/nats.env` | 640 root:coop | the broker password |
-| `/etc/coop/hub.env` | 640 root:coop | the same password for the hub, and `COOP_HUB_LISTEN`; add `COOP_AUTO_CREATE_SESSIONS=1` here to let the first agent create a session |
+The script installs `/usr/local/bin/coop`, creates the `coop` user and `/var/lib/coop`,
+installs the unit `coop.service`, and starts it. It is safe to run again: that is also the
+upgrade. It ends with the steps that are left: TLS and tokens.
 
-Check: `systemctl status nats coop-hub` shows both active. The hub creates the stream and the
-buckets when it starts.
+| Path | Holds |
+|---|---|
+| `/usr/local/bin/coop` | the binary (the same one the clients run) |
+| `/var/lib/coop/coop.db` | every event, session, kick and token (SQLite, WAL mode) |
+| `/etc/systemd/system/coop.service` | the service: `coop serve --listen 127.0.0.1:8090 --data /var/lib/coop` |
+| `/etc/coop/tls/` | the TLS certificate and key (step 3) |
+
+Check: `systemctl status coop` shows active; `journalctl -u coop` shows
+`listening on 127.0.0.1:8090`.
+
+To keep the Node hub's rule that only the operator creates sessions, add
+`--auto-create=false` to `ExecStart` in the unit (`systemctl edit coop`). By default the first
+agent that joins an unknown session creates it.
 
 ## 3. TLS
 
@@ -48,9 +58,9 @@ sudo deploy/tls-selfsigned.sh          # or: sudo deploy/tls-selfsigned.sh 9443
 ```
 
 It makes `/etc/coop/tls/{cert,key}.pem` (self-signed, ten years), installs the nginx site from
-`deploy/nginx-coop.conf`, moves the hub to `127.0.0.1:8090`, and prints the certificate's
-SHA-256 fingerprint. Each client shows the same fingerprint at `coop login` and pins it. It is
-safe to run again; it keeps the certificate.
+`deploy/nginx-coop.conf`, and prints the certificate's SHA-256 fingerprint. Each client shows
+the same fingerprint at `coop login` and pins it. It is safe to run again; it keeps the
+certificate. Copy `tls-selfsigned.sh` and `nginx-coop.conf` to the server next to each other.
 
 Check from another machine (`-k` only because the certificate is self-signed):
 
@@ -58,15 +68,24 @@ Check from another machine (`-k` only because the certificate is self-signed):
 curl -sk -o /dev/null -w '%{http_code}\n' https://<host>:8443/v1/admin/sessions   # 401
 ```
 
-## 4. Add an agent machine
+## 4. Tokens
 
-On the server, make a token for the machine. The token shows one time only:
+Run the token commands on the server as the `coop` user, so that the database files keep
+that owner. A token shows one time only.
+
+Your operator token, for `coop tui` and the admin API:
 
 ```bash
-sudo coop-hub token add laptop
+sudo -u coop coop admin token add --operator you
 ```
 
-Give the token to the machine's owner over a private channel. On the machine:
+One token per agent machine:
+
+```bash
+sudo -u coop coop admin token add laptop
+```
+
+Give a token to the machine's owner over a private channel. On the machine:
 
 ```bash
 coop login https://<host>:8443 laptop.<secret>     # shows and pins the fingerprint
@@ -77,29 +96,25 @@ coop doctor
 To remove a machine and its agents at once:
 
 ```bash
-sudo coop-hub token revoke laptop
-sudo coop-hub token list
+sudo -u coop coop admin token revoke laptop
+sudo -u coop coop admin token list
 ```
+
+A revoked token fails at once on every request; an open stream of that token ends within
+15 seconds. A new token of the same name replaces the old one.
 
 ## 5. Operate
 
-Make yourself an operator token on the server, then run the TUI from any machine with `coop`:
+From any machine with `coop`:
 
 ```bash
-sudo coop-hub token add --operator you          # shows one time only
 coop login https://<host>:8443 you.<secret>
 coop tui
 ```
 
-Create a session with `:new <name>` in the TUI, or from a shell:
-
-```bash
-sudo coop-hub session add build-42
-sudo coop-hub session list
-```
-
-Then start agents in that session (see the main README). In the TUI, `?` lists every key and
-command; the hint line at the bottom shows the ones that apply.
+Sessions are managed in the TUI: `:new <name>`, `:close`, `:reopen`, `:delete`. An agent that
+joins an unknown session creates it, unless the unit says `--auto-create=false`. In the TUI,
+`?` lists every key and command.
 
 ## Upgrade
 
@@ -108,13 +123,35 @@ own version of the message schema, and an older part drops a message that only a
 allows.
 
 ```bash
-cd /opt/coop && sudo git pull && sudo npm ci && sudo npm run build
-sudo deploy/install.sh
+make release
+scp dist/coop-linux-amd64 deploy/install.sh deploy/coop.service <host>:/tmp/
+ssh <host> 'cd /tmp && sudo ./install.sh ./coop-linux-amd64'
 ```
 
 Then restart each open `coop tui` and each agent session.
 
 ## Backup
 
-The whole state is in `/var/lib/nats`. Stop `nats` (or take a filesystem snapshot) and copy the
-directory. The TLS key and certificate are in `/etc/coop/tls`.
+The whole state is `/var/lib/coop/coop.db`. Copy it with SQLite's own backup, which is safe
+while the hub runs:
+
+```bash
+sudo -u coop sqlite3 /var/lib/coop/coop.db ".backup /var/lib/coop/coop-backup.db"
+```
+
+Or stop `coop` and copy `coop.db`, `coop.db-wal` and `coop.db-shm` together. The TLS key and
+certificate are in `/etc/coop/tls`.
+
+## Migrate from the Node hub
+
+The Node hub (`coop-hub` with `nats`) and the Go hub keep different stores. Tokens cannot move:
+the hub stores only their hashes. History does not move either. The steps:
+
+1. Install the Go hub (section 2) while the Node hub still runs. The unit listens on 8090,
+   which the Node hub holds; stop the Node hub first:
+   `sudo systemctl disable --now coop-hub nats`.
+2. Run `sudo ./install.sh ./coop-linux-amd64` (or `systemctl restart coop` if it is installed).
+3. Make new tokens (section 4) and run `coop login` again on every machine.
+4. Remove what is left: `sudo rm -rf /opt/coop /etc/coop/hub.env /etc/coop/nats.env /etc/coop/nats.conf /var/lib/nats /usr/local/bin/coop-hub /etc/systemd/system/coop-hub.service /etc/systemd/system/nats.service && sudo systemctl daemon-reload`.
+   The nginx site and the certificate stay.
+5. On each machine: `coop doctor`, then restart the open Claude sessions and `coop tui`.
