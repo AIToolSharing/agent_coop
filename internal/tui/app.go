@@ -169,7 +169,7 @@ type screen struct {
 	attn       view.Line
 	items      []view.Item
 	current    string // the message under the cursor: the newest one while following
-	selectable []string
+	lastID     string // the newest message with a line in the main pane
 	following  bool
 	bodyH      int
 	mainBodyH  int
@@ -215,17 +215,11 @@ func (a *App) screen() screen {
 		s.main = t.Render(s.v, o)
 	}
 	if a.overlay == nil {
-		for _, id := range s.main.IDs {
-			if id != "" {
-				s.selectable = append(s.selectable, id)
-			}
-		}
+		s.lastID = nextID(s.main.IDs, len(s.main.IDs), -1)
 	}
 	s.following = a.follow && a.view == viewTranscript && a.overlay == nil
 	if s.following {
-		if n := len(s.selectable); n > 0 {
-			s.current = s.selectable[n-1]
-		}
+		s.current = s.lastID
 	} else {
 		s.current = a.msgID
 	}
@@ -285,6 +279,16 @@ func reveal(line, offset, bodyH int) int {
 		return line - bodyH + 1
 	}
 	return offset
+}
+
+// nextID is the first message id in ids after (dir 1) or before (dir -1) line `from`, or "".
+func nextID(ids []string, from, dir int) string {
+	for i := from + dir; i >= 0 && i < len(ids); i += dir {
+		if ids[i] != "" {
+			return ids[i]
+		}
+	}
+	return ""
 }
 
 func indexOf(xs []string, x string) int {
@@ -405,15 +409,18 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 		if a.focus == "sidebar" {
 			return a.moveSidebar(s, delta)
 		}
-		if len(s.selectable) == 0 {
+		if s.lastID == "" {
 			return a.scrollBy(s, delta, false)
 		}
-		i := len(s.selectable)
+		from := len(s.main.IDs)
 		if s.current != "" {
-			i = indexOf(s.selectable, s.current)
+			from = indexOf(s.main.IDs, s.current)
 		}
-		j := min(len(s.selectable)-1, max(0, i+delta))
-		a.selectMessage(s, s.selectable[j])
+		if id := nextID(s.main.IDs, from, delta); id != "" {
+			a.selectMessage(s, id)
+		} else if s.current == "" {
+			a.selectMessage(s, s.lastID)
+		}
 		return nil
 	case isKey(k, tea.KeyPgDown) || isKey(k, tea.KeyPgUp):
 		delta := s.mainBodyH - 1
@@ -438,8 +445,8 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case isKey(k, tea.KeyHome):
 		a.scroll, a.follow = 0, false
-		if len(s.selectable) > 0 && a.overlay == nil {
-			a.msgID = s.selectable[0]
+		if first := nextID(s.main.IDs, -1, 1); first != "" && a.overlay == nil {
+			a.msgID = first
 		}
 		return nil
 	case isKey(k, tea.KeyEnd):

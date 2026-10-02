@@ -30,13 +30,19 @@ func Summaries(s *model.Store, now time.Time) []Summary {
 				sum.Online++
 			}
 		}
+		// Count from the newest message back to the first one older than a minute. The scan
+		// stops after 1000 messages: a rate past that is noise, and a clock ahead of ours
+		// must not make every repaint walk the whole history.
 		msgs := v.Messages()
-		for i := len(msgs) - 1; i >= 0; i-- {
+		floor := mustTime(minuteAgo)
+		for i, n := len(msgs)-1, 0; i >= 0 && n < 1000; i, n = i-1, n+1 {
 			t, ok := parseTime(msgs[i].SentAt)
-			if !ok || t.Before(mustTime(minuteAgo)) {
+			if !ok || t.Before(floor) {
 				break
 			}
-			sum.PerMinute++
+			if !t.After(now) {
+				sum.PerMinute++
+			}
 		}
 		return sum
 	}
