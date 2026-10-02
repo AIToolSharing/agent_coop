@@ -5,3 +5,4 @@ coverage/
 .env
 .tokensave/
 .schemathesis/
+.claude/settings.local.json

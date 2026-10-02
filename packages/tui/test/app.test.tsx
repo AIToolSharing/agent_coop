@@ -1,6 +1,6 @@
 import { formatAddress } from '@coop/core'
 import { render } from 'ink-testing-library'
-import { beforeEach, describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { App, complete, type OperatorApi } from '../src/app.js'
 import { derive } from '../src/model.js'
 import { FIX_SID, fixture, NOW } from './fixture.js'
@@ -308,6 +308,19 @@ describe('the TUI', () => {
     await app.type(KEY.esc)
     expect(app.frame()).toContain(`coop · ${FIX_SID} · transcript`)
     app.unmount()
+  })
+
+  // An empty segment once gave the next segment the same React key: a warning on every repaint.
+  test('paints every line without duplicate React keys', async () => {
+    const errors: string[] = []
+    const spy = vi
+      .spyOn(console, 'error')
+      .mockImplementation((...args: unknown[]) => void errors.push(args.map(String).join(' ')))
+    const app = start()
+    await openSession(app)
+    app.unmount()
+    spy.mockRestore()
+    expect(errors.filter((e) => e.includes('same key'))).toEqual([])
   })
 
   test('[ hides and shows the sidebar', async () => {

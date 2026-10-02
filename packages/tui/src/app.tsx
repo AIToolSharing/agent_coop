@@ -846,14 +846,16 @@ export function App({ store, subscribe, op, now = Date.now }: AppProps) {
 }
 
 function Paint({ line }: { line: Line }) {
-  // A segment's key is its character offset in the line: unique and stable.
-  const offsets = line.reduce<number[]>((acc, _s, i) => {
-    acc.push(i === 0 ? 0 : (acc[i - 1] ?? 0) + [...(line[i - 1]?.text ?? '')].length)
+  // A segment's key is its character offset in the line: unique and stable, once the empty
+  // segments are gone (an empty one would share its offset with the next).
+  const segs = line.filter((s) => s.text !== '')
+  const offsets = segs.reduce<number[]>((acc, _s, i) => {
+    acc.push(i === 0 ? 0 : (acc[i - 1] ?? 0) + [...(segs[i - 1]?.text ?? '')].length)
     return acc
   }, [])
   return (
     <Text wrap="truncate">
-      {line.map((s, i) => (
+      {segs.map((s, i) => (
         <Text
           key={offsets[i]}
           {...(s.color === undefined ? {} : { color: s.color })}

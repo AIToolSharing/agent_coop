@@ -49,7 +49,10 @@ test('npm run cli puts coop-mcp and coop-tui into COOP_BIN', () => {
   expect(r.stdout).toContain(`export PATH="${bin}:$PATH"`)
   expect(statSync(join(bin, 'coop-mcp')).mode & 0o111).toBe(0o111)
   expect(readFileSync(join(bin, 'coop-mcp'), 'utf8')).toBe(read('plugin/coop-mcp.mjs'))
-  expect(readFileSync(join(bin, 'coop-tui'), 'utf8')).toContain('packages/tui/dist/main.js')
+  const launcher = readFileSync(join(bin, 'coop-tui'), 'utf8')
+  expect(launcher).toContain('packages/tui/dist/bin.js')
+  // React must run its production build in the TUI; the launcher says so.
+  expect(launcher).toMatch(/NODE_ENV=.*production/)
   const help = spawnSync(join(bin, 'coop-mcp'), ['help'], {
     encoding: 'utf8',
     env: { ...process.env, PATH },

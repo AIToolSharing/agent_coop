@@ -22,7 +22,14 @@ chmodSync(mcp, 0o755)
 const tui = join(bin, 'coop-tui')
 writeFileSync(
   tui,
-  `#!/usr/bin/env bash\n# The coop operator TUI, from the clone at ${root}\nexec node "${join(root, 'packages', 'tui', 'dist', 'main.js')}" "$@"\n`,
+  [
+    '#!/usr/bin/env bash',
+    `# The coop operator TUI, from the clone at ${root}`,
+    '# React must run its production build in the TUI; see packages/tui/src/bin.ts.',
+    'export NODE_ENV=production',
+    `exec node "${join(root, 'packages', 'tui', 'dist', 'bin.js')}" "$@"`,
+    '',
+  ].join('\n'),
 )
 chmodSync(tui, 0o755)
 

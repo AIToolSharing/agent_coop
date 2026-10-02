@@ -1,6 +1,6 @@
-#!/usr/bin/env node
 // coop-tui: observe and control all sessions through the hub's admin API. It runs on any
 // machine that can reach the hub; see config.ts for where the address and the token come from.
+// bin.ts is the entry: it sets NODE_ENV before this module loads React.
 import { DEFAULT_ENV_FILE } from '@coop/core'
 import { render } from 'ink'
 import { App } from './app.js'
