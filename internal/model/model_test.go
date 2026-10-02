@@ -5,83 +5,24 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/AIToolSharing/agent_coop/internal/model"
+	"github.com/AIToolSharing/agent_coop/internal/model/modeltest"
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 	"pgregory.net/rapid"
 )
 
-const sid = "build-42"
+const sid = modeltest.SID
 
 var (
-	alice = wire.Address{Agent: "alice", Machine: "mac-1"}
-	bob   = wire.Address{Agent: "bob", Machine: "vps-2"}
-	carol = wire.Address{Agent: "carol", Machine: "mac-3"}
-	t0    = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	alice = modeltest.Alice
+	bob   = modeltest.Bob
+	carol = modeltest.Carol
 )
 
-func at(s float64) string {
-	return t0.Add(time.Duration(s * float64(time.Second))).UTC().Format("2006-01-02T15:04:05.000Z07:00")
-}
+func at(s float64) string { return modeltest.At(s) }
 
-// fixture is the session of packages/tui/test/fixture.ts: alice asks bob, bob answers, carol
-// broadcasts, the operator steps in, a message is withdrawn, one question stays open.
-func fixture() []model.Update {
-	client := wire.Client{Name: "claude-code", Version: "2.1"}
-	var seq int64
-	var updates []model.Update
-	ev := func(e wire.Event) string {
-		seq++
-		e.Seq = seq
-		e.SID = sid
-		updates = append(updates, model.Update{Event: &e})
-		return fmt.Sprint(seq)
-	}
-	act := func(from wire.Address, a wire.Activity) {
-		ev(wire.Event{Kind: wire.EventActivity, From: from.String(), Activity: &a})
-	}
-	msg := func(from, to, text, replyTo, sentAt string) string {
-		return ev(wire.Event{Kind: wire.EventMsg, From: from, To: to, Text: text, ReplyTo: replyTo, SentAt: sentAt})
-	}
-	updates = append(updates,
-		model.Update{Session: &wire.SessionUpdate{SID: sid, Record: &wire.SessionRecord{Status: "open", CreatedAt: at(-60)}}},
-		model.Update{Session: &wire.SessionUpdate{SID: "docs", Record: &wire.SessionRecord{Status: "closed", CreatedAt: at(-600), ClosedAt: at(-60)}}},
-	)
-	act(alice, wire.Activity{Kind: "joined", Host: "mac-1", Cwd: "/src/app", Client: client, At: at(0)})
-	act(bob, wire.Activity{Kind: "joined", Host: "vps-2", Cwd: "/srv/api", Client: wire.Client{Name: "codex", Version: "0.9"}, At: at(2)})
-	act(carol, wire.Activity{Kind: "joined", Host: "mac-3", Cwd: "/src/app", Client: client, At: at(3)})
-	plan := msg(carol.String(), "all", "I take src/users.ts and the tests", "", at(10))
-	act(alice, wire.Activity{Kind: "delivered", ID: plan, Via: "push", At: at(10.12)})
-	act(bob, wire.Activity{Kind: "delivered", ID: plan, Via: "pull", At: at(14)})
-	q := msg(alice.String(), bob.String(), "What is the shape of GET /users?", "", at(20))
-	act(alice, wire.Activity{Kind: "wait_start", From: bob.String(), ReplyTo: q, TimeoutS: 300, At: at(20.05)})
-	act(bob, wire.Activity{Kind: "delivered", ID: q, Via: "pull", At: at(21)})
-	act(bob, wire.Activity{Kind: "state", State: "working", Note: "answering alice", At: at(21.5)})
-	a := msg(bob.String(), alice.String(), "{ id: number, name: string, email: string }", q, at(30))
-	act(alice, wire.Activity{Kind: "delivered", ID: a, Via: "ask", At: at(30.09)})
-	act(alice, wire.Activity{Kind: "wait_end", Result: "message", At: at(30.1)})
-	wrong := msg(carol.String(), bob.String(), "the password is hunter2", "", at(40))
-	ev(wire.Event{Kind: wire.EventRedact, ID: wrong, At: at(45)})
-	op := msg(wire.Operator, "all", "Please run the tests before you say done", "", at(50))
-	msg(bob.String(), wire.Operator, "Will do; CI is running", op, at(55))
-	q2 := msg(carol.String(), bob.String(), "Can I change the users table?", "", at(60))
-	act(carol, wire.Activity{Kind: "wait_start", From: bob.String(), ReplyTo: q2, TimeoutS: 300, At: at(60.02)})
-	act(bob, wire.Activity{Kind: "state", State: "blocked", Note: "waiting for CI", At: at(70)})
-
-	presence := func(a wire.Address, state, note string, waiting *wire.Waiting) model.Update {
-		return model.Update{Presence: &wire.PresenceUpdate{
-			Key:    wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: a}),
-			Record: &wire.PresenceRecord{Host: a.Machine, Cwd: "/src/app", Client: client, State: state, Note: note, JoinedAt: at(0), Waiting: waiting},
-		}}
-	}
-	updates = append(updates,
-		presence(alice, "working", "parser", nil),
-		presence(bob, "blocked", "waiting for CI", nil),
-		presence(carol, "working", "users.ts", &wire.Waiting{On: bob.String(), ReplyTo: q2, Since: at(60.02)}),
-	)
-	return updates
-}
+func fixture() []model.Update { return modeltest.Fixture() }
 
 func load(updates []model.Update) *model.Store {
 	s := model.New()
@@ -310,5 +251,28 @@ func TestASnapshotRemovesWhatTheFeedDidNotSendAgain(t *testing.T) {
 	}
 	if len(s.View(model.AllSessions).Timeline) != 0 {
 		t.Fatal("the deleted session's traffic is still in the all view")
+	}
+}
+
+func TestReshapedCountsChangesToWhatWasAlreadyShown(t *testing.T) {
+	s := model.New()
+	s.Apply(model.Update{Session: &wire.SessionUpdate{SID: sid, Record: &wire.SessionRecord{Status: "open", CreatedAt: at(0)}}})
+	v := s.View(sid)
+	s.Apply(model.Update{Event: &wire.Event{Kind: wire.EventMsg, Seq: 5, SID: sid, From: alice.String(), To: "all", Text: "a", SentAt: at(1)}})
+	s.Apply(model.Update{Event: &wire.Event{Kind: wire.EventMsg, Seq: 6, SID: sid, From: bob.String(), To: "all", Text: "b", SentAt: at(2)}})
+	if v.Reshaped != 0 {
+		t.Fatalf("appends reshaped: %d", v.Reshaped)
+	}
+	s.Apply(model.Update{Event: &wire.Event{Kind: wire.EventMsg, Seq: 4, SID: sid, From: bob.String(), To: "all", Text: "late", SentAt: at(0.5)}})
+	if v.Reshaped != 1 {
+		t.Fatalf("an insert before the end reshaped: %d", v.Reshaped)
+	}
+	s.Apply(model.Update{Event: &wire.Event{Kind: wire.EventMsg, Seq: 7, SID: sid, From: bob.String(), To: "all", Text: "re", ReplyTo: "5", SentAt: at(3)}})
+	if v.Reshaped != 2 {
+		t.Fatalf("a reply to a shown message reshaped: %d", v.Reshaped)
+	}
+	s.Apply(model.Update{Event: &wire.Event{Kind: wire.EventRedact, Seq: 8, SID: sid, ID: "6", At: at(4)}})
+	if v.Reshaped != 3 {
+		t.Fatalf("a withdrawal reshaped: %d", v.Reshaped)
 	}
 }

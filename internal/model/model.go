@@ -128,6 +128,9 @@ type Session struct {
 	Asks     map[string]*Ask
 	// Version changes whenever the view changes, so renderers can cache.
 	Version int
+	// Reshaped changes when something already in the timeline changes: an item inserted
+	// before the end, or a message withdrawn. A renderer that only appends must start over.
+	Reshaped int
 
 	store    *Store
 	all      bool
@@ -411,6 +414,7 @@ func (v *Session) applyEvent(e *wire.Event) {
 			v.children[e.ReplyTo] = insertMsg(v.children[e.ReplyTo], m)
 			if p := v.Msgs[e.ReplyTo]; p != nil {
 				p.Replies = v.children[e.ReplyTo]
+				v.Reshaped++
 			}
 			if e.From == wire.Operator {
 				delete(v.forYou, e.ReplyTo)
@@ -431,6 +435,7 @@ func (v *Session) applyEvent(e *wire.Event) {
 		v.redacted[e.ID] = true
 		if m := v.Msgs[e.ID]; m != nil {
 			m.Redacted = true
+			v.Reshaped++
 		}
 		delete(v.forYou, e.ID)
 		v.insertItem(Item{Seq: e.Seq, At: e.At, SID: e.SID, Sys: &Sys{Who: wire.Operator, Text: "withdrew message #" + e.ID}})
@@ -487,6 +492,9 @@ func (v *Session) hasReplyFrom(id, from string) bool {
 
 func (v *Session) insertItem(it Item) {
 	i := sort.Search(len(v.Timeline), func(i int) bool { return v.Timeline[i].Seq >= it.Seq })
+	if i < len(v.Timeline) {
+		v.Reshaped++
+	}
 	v.Timeline = append(v.Timeline, Item{})
 	copy(v.Timeline[i+1:], v.Timeline[i:])
 	v.Timeline[i] = it
