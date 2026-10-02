@@ -7,7 +7,14 @@ PKG     := ./cmd/coop
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build release check test clean
+.PHONY: build release check test clean install
+
+# install puts `coop` on the PATH as a link to the build, so `make build` updates it in place.
+BINDIR ?= $(HOME)/.local/bin
+install: build
+	mkdir -p $(BINDIR)
+	ln -sf $(abspath $(BIN)) $(BINDIR)/coop
+	@echo "installed $(BINDIR)/coop -> $(abspath $(BIN))"
 
 # On macOS an unsigned binary asks for local-network access on every rebuild. An ad-hoc
 # signature with a fixed identifier keeps one approval across rebuilds.
