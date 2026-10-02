@@ -160,20 +160,20 @@ func (a *App) readFeed() tea.Cmd {
 // --- The screen --------------------------------------------------------------------------------
 
 type screen struct {
-	v          *model.Session
-	sums       []view.Summary
-	sidebar    view.Sidebar
-	sidebarW   int // columns of the sidebar, border included; 0 when hidden
-	mainW      int
-	main       view.Rendered
-	attn       view.Line
-	items      []view.Item
-	current    string // the message under the cursor: the newest one while following
-	lastID     string // the newest message with a line in the main pane
-	following  bool
-	bodyH      int
-	mainBodyH  int
-	promptH    int
+	v         *model.Session
+	sums      []view.Summary
+	sidebar   view.Sidebar
+	sidebarW  int // columns of the sidebar, border included; 0 when hidden
+	mainW     int
+	main      view.Rendered
+	attn      view.Line
+	items     []view.Item
+	current   string // the message under the cursor: the newest one while following
+	lastID    string // the newest message with a line in the main pane
+	following bool
+	bodyH     int
+	mainBodyH int
+	promptH   int
 }
 
 func (a *App) options(width int) view.Options {
