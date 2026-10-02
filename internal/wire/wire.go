@@ -171,7 +171,6 @@ type PresenceRecord struct {
 	State    string   `json:"state"`
 	Note     string   `json:"note,omitempty"`
 	JoinedAt string   `json:"joined_at"`
-	Queued   int      `json:"queued"`
 	Waiting  *Waiting `json:"waiting,omitempty"`
 }
 
@@ -209,7 +208,7 @@ type Event struct {
 
 // Activity is what an agent did, on `coop.<sid>.evt.<machine>.<agent>`.
 type Activity struct {
-	Kind string `json:"kind"` // joined left state delivered wait_start wait_end
+	Kind string `json:"kind"` // joined left state wait_start wait_end
 	At   string `json:"at"`
 	// joined
 	Host   string `json:"host,omitempty"`
@@ -220,9 +219,6 @@ type Activity struct {
 	// state: working blocked done idle
 	State string `json:"state,omitempty"`
 	Note  string `json:"note,omitempty"`
-	// delivered
-	ID  string `json:"id,omitempty"`
-	Via string `json:"via,omitempty"` // push pull ask
 	// wait_start
 	From     string `json:"from,omitempty"` // a peer address or operator
 	ReplyTo  string `json:"reply_to,omitempty"`
@@ -379,8 +375,6 @@ func validActivity(a Activity) bool {
 		return oneOf(a.Reason, "disconnected", "kicked", "revoked", "closed")
 	case "state":
 		return oneOf(a.State, "working", "blocked", "done", "idle") && len([]rune(a.Note)) <= 500
-	case "delivered":
-		return IsID(a.ID) && oneOf(a.Via, "push", "pull", "ask")
 	case "wait_start":
 		return (a.From == "" || isWaitTarget(a.From)) && optionalID(a.ReplyTo) && a.TimeoutS >= 1 && a.TimeoutS <= 600
 	case "wait_end":

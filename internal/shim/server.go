@@ -353,9 +353,6 @@ func (s *shim) start(client *mcp.Implementation) {
 	s.inbox = newInbox(inboxOptions{
 		push:   s.o.Push,
 		onPush: s.pushItem,
-		onDelivered: func(id, via string) {
-			s.goRun(func() { s.report(activity{Kind: "delivered", ID: id, Via: via}) })
-		},
 	})
 	c, b := s.client, s.inbox
 	s.mu.Unlock()

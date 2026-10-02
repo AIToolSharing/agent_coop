@@ -502,11 +502,11 @@ func TestCallsFollowTheContract(t *testing.T) {
 
 	srv, calls = restHub(t, 204, "")
 	c = testClient(t, srv.URL, &recorder{})
-	if err := c.activity(ctx, activity{Kind: "delivered", ID: "5", Via: viaPush}); err != nil {
+	if err := c.activity(ctx, activity{Kind: "wait_end", Result: "timeout"}); err != nil {
 		t.Fatal(err)
 	}
 	got = calls()[0]
-	if want := map[string]any{"kind": "delivered", "agent": "a", "id": "5", "via": "push"}; got.path != "/v1/sessions/s/activity" || fmt.Sprint(got.body) != fmt.Sprint(want) {
+	if want := map[string]any{"kind": "wait_end", "agent": "a", "result": "timeout"}; got.path != "/v1/sessions/s/activity" || fmt.Sprint(got.body) != fmt.Sprint(want) {
 		t.Fatalf("activity call %+v", got)
 	}
 

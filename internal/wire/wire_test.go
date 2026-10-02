@@ -123,7 +123,7 @@ func event() *rapid.Generator[wire.Event] {
 			e.Kind = wire.EventActivity
 			e.From = address().Draw(t, "from").String()
 			a := wire.Activity{At: iso.Draw(t, "at")}
-			switch rapid.IntRange(0, 5).Draw(t, "akind") {
+			switch rapid.IntRange(0, 4).Draw(t, "akind") {
 			case 0:
 				a.Kind = "joined"
 				a.Host = token.Draw(t, "host")
@@ -139,10 +139,6 @@ func event() *rapid.Generator[wire.Event] {
 					a.Note = text.Draw(t, "note")
 				}
 			case 3:
-				a.Kind = "delivered"
-				a.ID = id.Draw(t, "id")
-				a.Via = rapid.SampledFrom([]string{"push", "pull", "ask"}).Draw(t, "via")
-			case 4:
 				a.Kind = "wait_start"
 				if rapid.Bool().Draw(t, "from?") {
 					if rapid.Bool().Draw(t, "op?") {
@@ -209,9 +205,9 @@ func TestDecodeMatchesTheTypeScriptWireFormat(t *testing.T) {
 			t.Errorf("%s %s\n got %+v\nwant %+v", c.subject, c.payload, got, c.want)
 		}
 	}
-	got, ok := wire.DecodeEvent("coop.build-42.evt.vps-2.bob", []byte(`{"kind":"delivered","id":"4","via":"pull","at":"2026-09-30T12:00:14.000Z"}`), 6)
-	if !ok || got.Kind != wire.EventActivity || got.From != "bob@vps-2" || got.Activity.Kind != "delivered" || got.Activity.ID != "4" || got.Activity.Via != "pull" {
-		t.Fatalf("%+v %v", got, ok)
+	// The delivery report left the protocol with v0.3.0; an old row of that kind is skipped.
+	if got, ok := wire.DecodeEvent("coop.build-42.evt.vps-2.bob", []byte(`{"kind":"delivered","id":"4","via":"pull","at":"2026-09-30T12:00:14.000Z"}`), 6); ok {
+		t.Fatalf("a delivered activity decoded: %+v", got)
 	}
 	for _, bad := range []struct{ subject, payload string }{
 		{"coop.build-42.msg.mac-1.alice", `{"to":"bob@vps-2","sent_at":"x"}`},
@@ -238,7 +234,7 @@ func TestAdminEventDecoding(t *testing.T) {
 	if err != nil || gone.Presence == nil || gone.Presence.Record != nil || gone.Presence.Key != "build-42.vps-2.bob" {
 		t.Fatalf("%+v %v", gone, err)
 	}
-	p, err := wire.ParseAdminEvent([]byte(`{"kind":"presence","key":"build-42.mac-3.carol","revision":10,"record":{"host":"mac-3","cwd":"/src/app","client":{"name":"claude-code","version":"2.1"},"state":"working","note":"users.ts","joined_at":"2026-09-30T12:00:00.000Z","queued":0,"waiting":{"on":"bob@vps-2","reply_to":"18","since":"2026-09-30T12:01:00.020Z"}}}`))
+	p, err := wire.ParseAdminEvent([]byte(`{"kind":"presence","key":"build-42.mac-3.carol","revision":10,"record":{"host":"mac-3","cwd":"/src/app","client":{"name":"claude-code","version":"2.1"},"state":"working","note":"users.ts","joined_at":"2026-09-30T12:00:00.000Z","waiting":{"on":"bob@vps-2","reply_to":"18","since":"2026-09-30T12:01:00.020Z"}}}`))
 	if err != nil || p.Presence.Record == nil || p.Presence.Record.Waiting == nil || p.Presence.Record.Waiting.On != "bob@vps-2" || p.Presence.Record.Client.Name != "claude-code" {
 		t.Fatalf("%+v %v", p, err)
 	}
@@ -255,7 +251,7 @@ func TestAdminEventDecoding(t *testing.T) {
 	}
 	// A record round trip keeps the JSON field names the hub uses.
 	var rec wire.PresenceRecord
-	raw := `{"host":"mac-1","cwd":"/x","client":{"name":"c","version":"1"},"state":"idle","joined_at":"2026-09-30T12:00:00.000Z","queued":2}`
+	raw := `{"host":"mac-1","cwd":"/x","client":{"name":"c","version":"1"},"state":"idle","joined_at":"2026-09-30T12:00:00.000Z"}`
 	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
 		t.Fatal(err)
 	}

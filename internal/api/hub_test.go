@@ -594,13 +594,12 @@ func (x *hubSuite) activityAndPresence(t *testing.T) {
 		if !slices.Equal(v.Peers, want) {
 			t.Fatalf("peers %+v, want %+v", v.Peers, want)
 		}
-		id := parse[sendResponse](t, jsonOf(x.mac1.send(sid, "alice", "bob", "answer", ""))).ID
+		wantStatus(t, 200)(x.mac1.send(sid, "alice", "bob", "answer", ""))
 		b.wait(t, isMsg)
-		x.vps2.activity(sid, map[string]any{"kind": "delivered", "agent": "bob", "id": id, "via": "ask"})
 		x.vps2.activity(sid, map[string]any{"kind": "wait_end", "agent": "bob", "result": "message"})
 		rec, ok := x.h.presence(sid + ".vps-2.bob")
-		if !ok || rec.State != "blocked" || rec.Queued != 0 {
-			t.Fatalf("presence %v %+v, want state blocked and queued 0", ok, rec)
+		if !ok || rec.State != "blocked" {
+			t.Fatalf("presence %v %+v, want state blocked", ok, rec)
 		}
 		if rec.Waiting != nil {
 			t.Fatalf("waiting %+v, want none", rec.Waiting)
@@ -611,7 +610,7 @@ func (x *hubSuite) activityAndPresence(t *testing.T) {
 				kinds = append(kinds, e.Activity.Kind)
 			}
 		}
-		for _, k := range []string{"joined", "state", "wait_start", "delivered", "wait_end"} {
+		for _, k := range []string{"joined", "state", "wait_start", "wait_end"} {
 			if !slices.Contains(kinds, k) {
 				t.Fatalf("activity kinds %v have no %s", kinds, k)
 			}

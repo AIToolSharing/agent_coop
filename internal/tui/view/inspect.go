@@ -65,7 +65,7 @@ func RenderAgent(v *model.Session, address string, o Options) Rendered {
 	if a.Left != nil {
 		add(kv("left", Clock(a.Left.At, o.loc())+" ("+a.Left.Reason+")", Style{}), "")
 	}
-	add(kv("messages", "sent "+itoa(int64(a.Sent))+", queued "+itoa(int64(a.Queued)), Style{}), "")
+	add(kv("messages", "sent "+itoa(int64(a.Sent)), Style{}), "")
 	add(Line{S("")}, "")
 	add(Line{Bold("TIMELINE")}, "")
 	for _, it := range v.Timeline {

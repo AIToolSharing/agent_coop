@@ -74,7 +74,7 @@ func frame(kind, id, data string) string {
 const (
 	sessionOpen = `{"kind":"session","session":"build-42","revision":1,"record":{"status":"open","created_at":"2026-09-30T11:59:00.000Z"}}`
 	sessionDocs = `{"kind":"session","session":"docs","revision":2,"record":{"status":"closed","created_at":"2026-09-30T11:50:00.000Z","closed_at":"2026-09-30T11:59:00.000Z"}}`
-	presenceBob = `{"kind":"presence","key":"build-42.vps-2.bob","revision":3,"record":{"host":"vps-2","cwd":"/srv","client":{"name":"codex","version":"0.9"},"state":"idle","joined_at":"2026-09-30T12:00:00.000Z","queued":0}}`
+	presenceBob = `{"kind":"presence","key":"build-42.vps-2.bob","revision":3,"record":{"host":"vps-2","cwd":"/srv","client":{"name":"codex","version":"0.9"},"state":"idle","joined_at":"2026-09-30T12:00:00.000Z"}}`
 	msg7        = `{"kind":"event","seq":7,"subject":"coop.build-42.msg.mac-1.alice","payload":"{\"to\":\"bob@vps-2\",\"text\":\"hi\",\"sent_at\":\"2026-09-30T12:00:20.000Z\"}"}`
 	msg9        = `{"kind":"event","seq":9,"subject":"coop.build-42.ops","payload":"{\"kind\":\"msg\",\"to\":\"all\",\"text\":\"carry on\",\"sent_at\":\"2026-09-30T12:00:30.000Z\"}"}`
 )

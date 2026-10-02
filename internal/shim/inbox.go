@@ -46,7 +46,8 @@ type inboxOptions struct {
 	push bool
 	// onPush pushes one item into the session. An error keeps the item in the queue.
 	onPush func(item) error
-	// onDelivered is called once per message, when it reaches the agent.
+	// onDelivered, when set, is called once per message when it reaches the agent, with the
+	// route it took (push, pull or ask). The tests observe the routing with it.
 	onDelivered func(id, via string)
 	// cap is the queue size; the oldest items go first when it is full. Zero means 1000.
 	cap int
@@ -139,7 +140,7 @@ func (b *inbox) accept(it item) {
 			delete(b.asks, m.ReplyTo)
 			a.c <- askResult{answer: m}
 			b.mu.Unlock()
-			b.o.onDelivered(m.ID, viaAsk)
+			b.delivered(viaAsk, it)
 			return
 		}
 	}
@@ -259,6 +260,9 @@ func (b *inbox) peerLeft(it item) {
 }
 
 func (b *inbox) delivered(via string, items ...item) {
+	if b.o.onDelivered == nil {
+		return
+	}
 	for _, it := range items {
 		if it.msg != nil {
 			b.o.onDelivered(it.msg.ID, via)

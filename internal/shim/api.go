@@ -79,14 +79,12 @@ type sendResponse struct {
 
 func (r sendResponse) valid() bool { return wire.IsID(r.ID) && isTo(r.To) && wire.IsTime(r.SentAt) }
 
-// activity is what an agent reports: state, delivered, wait_start or wait_end.
+// activity is what an agent reports: state, wait_start or wait_end.
 type activity struct {
 	Kind     string `json:"kind"`
 	Agent    string `json:"agent"`
 	State    string `json:"state,omitempty"`
 	Note     string `json:"note,omitempty"`
-	ID       string `json:"id,omitempty"`
-	Via      string `json:"via,omitempty"`
 	From     string `json:"from,omitempty"`
 	ReplyTo  string `json:"reply_to,omitempty"`
 	TimeoutS int    `json:"timeout_s,omitempty"`

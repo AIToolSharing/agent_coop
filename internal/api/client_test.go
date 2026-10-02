@@ -821,7 +821,7 @@ func (e *adminEvent) UnmarshalJSON(b []byte) error {
 	case "presence":
 		if err = checkRules(rule{raw.Revision >= 0, "revision"}); err == nil {
 			e.PresenceRecord, err = bucketRecord[wire.PresenceRecord](m["record"],
-				"host", "cwd", "client", "state", "joined_at", "queued")
+				"host", "cwd", "client", "state", "joined_at")
 		}
 	case "snapshot":
 		return checkRules(rule{raw.Bucket == "sessions" || raw.Bucket == "presence", "bucket"})

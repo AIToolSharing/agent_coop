@@ -96,7 +96,7 @@ func TestFixtureDerivesWhatTheTypeScriptModelDerived(t *testing.T) {
 	if !b.Online || b.State != "blocked" || b.Note != "waiting for CI" || b.Sent != 2 || b.Client != "codex 0.9" {
 		t.Fatalf("bob %+v", b)
 	}
-	if !c.Online || c.State != "working" || c.Sent != 3 || c.Waiting == nil || c.Waiting.On != "bob@vps-2" || c.Waiting.ReplyTo != "18" {
+	if !c.Online || c.State != "working" || c.Sent != 3 || c.Waiting == nil || c.Waiting.On != "bob@vps-2" || c.Waiting.ReplyTo != "14" {
 		t.Fatalf("carol %+v", c)
 	}
 	msgs := v.Messages()
@@ -104,23 +104,23 @@ func TestFixtureDerivesWhatTheTypeScriptModelDerived(t *testing.T) {
 	for _, m := range msgs {
 		ids = append(ids, m.ID)
 	}
-	if fmt.Sprint(ids) != "[4 7 11 14 16 17 18]" {
+	if fmt.Sprint(ids) != "[4 5 8 10 12 13 14]" {
 		t.Fatalf("messages %v", ids)
 	}
-	if m := v.Msgs["7"]; len(m.Replies) != 1 || m.Replies[0].ID != "11" {
-		t.Fatalf("replies of 7: %+v", m.Replies)
+	if m := v.Msgs["5"]; len(m.Replies) != 1 || m.Replies[0].ID != "8" {
+		t.Fatalf("replies of 5: %+v", m.Replies)
 	}
-	if m := v.Msgs["16"]; len(m.Replies) != 1 || m.Replies[0].ID != "17" {
-		t.Fatalf("replies of 16: %+v", m.Replies)
+	if m := v.Msgs["12"]; len(m.Replies) != 1 || m.Replies[0].ID != "13" {
+		t.Fatalf("replies of 12: %+v", m.Replies)
 	}
-	if !v.Msgs["14"].Redacted || v.Msgs["11"].Redacted {
+	if !v.Msgs["10"].Redacted || v.Msgs["8"].Redacted {
 		t.Fatal("redaction")
 	}
 	asks := v.OpenAsks()
-	if len(asks) != 1 || asks[0].ID != "18" || asks[0].From != "carol@mac-3" || asks[0].To != "bob@vps-2" || asks[0].Question.Text != "Can I change the users table?" {
+	if len(asks) != 1 || asks[0].ID != "14" || asks[0].From != "carol@mac-3" || asks[0].To != "bob@vps-2" || asks[0].Question.Text != "Can I change the users table?" {
 		t.Fatalf("open asks %+v", asks)
 	}
-	if fy := v.ForYou(); len(fy) != 1 || fy[0].ID != "17" {
+	if fy := v.ForYou(); len(fy) != 1 || fy[0].ID != "13" {
 		t.Fatalf("for you %+v", fy)
 	}
 	if len(v.Timeline) != 16 {
@@ -136,12 +136,12 @@ func TestFixtureDerivesWhatTheTypeScriptModelDerived(t *testing.T) {
 		"1 alice@mac-1 joined from mac-1 (claude-code 2.1)",
 		"2 bob@vps-2 joined from vps-2 (codex 0.9)",
 		"3 carol@mac-3 joined from mac-3 (claude-code 2.1)",
-		"8 alice@mac-1 waits for bob@vps-2 (ask #7)",
-		"10 bob@vps-2 is working: answering alice",
-		"13 alice@mac-1 wait ended: message",
-		"15 operator withdrew message #14",
-		"19 carol@mac-3 waits for bob@vps-2 (ask #18)",
-		"20 bob@vps-2 is blocked: waiting for CI",
+		"6 alice@mac-1 waits for bob@vps-2 (ask #5)",
+		"7 bob@vps-2 is working: answering alice",
+		"9 alice@mac-1 wait ended: message",
+		"11 operator withdrew message #10",
+		"15 carol@mac-3 waits for bob@vps-2 (ask #14)",
+		"16 bob@vps-2 is blocked: waiting for CI",
 	}
 	if fmt.Sprint(sys) != fmt.Sprint(want) {
 		t.Fatalf("system lines\n got %v\nwant %v", sys, want)

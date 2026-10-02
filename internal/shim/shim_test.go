@@ -439,9 +439,6 @@ func TestPushMessageReachesTheIdlePeer(t *testing.T) {
 	if len(a.pushes()) != 0 {
 		t.Fatal("the sender got its own message")
 	}
-	eventually(t, "the hub gets the delivery report", func() bool {
-		return slices.Contains(h.activities("s"), activity{Kind: "delivered", Agent: "bob@vps-2", ID: id, Via: viaPush})
-	})
 	// A reply carries reply_to in the meta.
 	reply := b.json("send", map[string]any{"to": "alice", "text": "hi alice", "reply_to": id})
 	eventually(t, "alice gets the reply", func() bool {
@@ -471,7 +468,6 @@ func TestPullWaitReturnsTheMessageThenInboxIsEmpty(t *testing.T) {
 	}
 	for _, want := range []activity{
 		{Kind: "wait_start", Agent: "bob@vps-2", TimeoutS: 500},
-		{Kind: "delivered", Agent: "bob@vps-2", ID: fmt.Sprint(sent["id"]), Via: viaPull},
 		{Kind: "wait_end", Agent: "bob@vps-2", Result: "message"},
 	} {
 		eventually(t, fmt.Sprintf("the hub gets %+v", want), func() bool { return slices.Contains(h.activities("s"), want) })
@@ -521,15 +517,9 @@ func TestAskReturnsTheAnswerAndTheAnswerIsNotPushed(t *testing.T) {
 	for _, want := range []activity{
 		{Kind: "wait_start", Agent: "alice@mac-1", From: "bob@vps-2", ReplyTo: question, TimeoutS: 500},
 		{Kind: "wait_end", Agent: "alice@mac-1", Result: "message"},
-		{Kind: "delivered", Agent: "bob@vps-2", ID: question, Via: viaPull},
 	} {
 		eventually(t, fmt.Sprintf("the hub gets %+v", want), func() bool { return slices.Contains(h.activities("s"), want) })
 	}
-	eventually(t, "alice reports the answer as delivered by ask", func() bool {
-		return slices.ContainsFunc(h.activities("s"), func(x activity) bool {
-			return x.Kind == "delivered" && x.Agent == "alice@mac-1" && x.Via == viaAsk
-		})
-	})
 }
 
 func TestAskEndsWithATimeout(t *testing.T) {
@@ -661,10 +651,6 @@ func TestInboxDrainsTheQueueAndReportsPulls(t *testing.T) {
 	})
 	if got := a.tool("inbox", nil).text; got != "{\n \"messages\": [],\n \"notices\": []\n}" {
 		t.Fatalf("a second inbox %q", got)
-	}
-	for _, id := range []any{m1["id"], m2["id"]} {
-		want := activity{Kind: "delivered", Agent: "alice@mac-1", ID: fmt.Sprint(id), Via: viaPull}
-		eventually(t, fmt.Sprintf("the hub gets %+v", want), func() bool { return slices.Contains(h.activities("s"), want) })
 	}
 }
 

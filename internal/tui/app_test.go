@@ -212,9 +212,9 @@ func TestReplyGoesToTheSenderInItsThread(t *testing.T) {
 	h := start(t, nil)
 	h.openSession()
 	h.keys("r")
-	contains(t, h.frame(), "reply to #18 from carol@mac-3 ›")
+	contains(t, h.frame(), "reply to #14 from carol@mac-3 ›")
 	h.keys("+ok", "enter")
-	if fmt.Sprint(h.op.calls) != "[send build-42 carol@mac-3 ok ↩18]" {
+	if fmt.Sprint(h.op.calls) != "[send build-42 carol@mac-3 ok ↩14]" {
 		t.Fatalf("calls %v", h.op.calls)
 	}
 }
@@ -232,11 +232,11 @@ func TestAWalksThroughWhatNeedsTheOperator(t *testing.T) {
 	h := start(t, nil)
 	h.openSession()
 	h.keys("a")
-	if h.status() != "for you: #17 from bob@vps-2" || h.app.msgID != "17" {
+	if h.status() != "for you: #13 from bob@vps-2" || h.app.msgID != "13" {
 		t.Fatalf("status %q selected %q", h.status(), h.app.msgID)
 	}
 	h.keys("a")
-	if h.status() != "carol@mac-3 waits for bob@vps-2 (ask #18)" || h.app.msgID != "18" {
+	if h.status() != "carol@mac-3 waits for bob@vps-2 (ask #14)" || h.app.msgID != "14" {
 		t.Fatalf("status %q selected %q", h.status(), h.app.msgID)
 	}
 	h.keys("a")
@@ -284,10 +284,10 @@ func TestCommandsCompleteAndKickAsksFirst(t *testing.T) {
 func TestWithdrawAsksFirst(t *testing.T) {
 	h := start(t, nil)
 	h.openSession()
-	h.keys(":", "+withdraw #14", "enter")
-	contains(t, h.frame(), "withdraw #14?")
+	h.keys(":", "+withdraw #10", "enter")
+	contains(t, h.frame(), "withdraw #10?")
 	h.keys("y")
-	if fmt.Sprint(h.op.calls) != "[redact build-42 14]" || h.status() != "withdrew #14" {
+	if fmt.Sprint(h.op.calls) != "[redact build-42 10]" || h.status() != "withdrew #10" {
 		t.Fatalf("calls %v status %q", h.op.calls, h.status())
 	}
 }
@@ -342,34 +342,34 @@ func TestClicksSelectAndOpen(t *testing.T) {
 	// Row 3 of the screen is the build-42 session row (title, SESSIONS, all traffic, build-42).
 	h.send(tea.MouseClickMsg{X: 2, Y: 3, Button: tea.MouseLeft})
 	contains(t, h.frame(), "coop · build-42 · transcript")
-	// Find the header line of message #16 in the main pane and click it twice.
+	// Find the header line of message #12 in the main pane and click it twice.
 	s := h.app.last
 	line := -1
 	for i, id := range s.main.IDs {
-		if id == "16" {
+		if id == "12" {
 			line = i
 		}
 	}
 	if line < 0 {
-		t.Fatal("no header for #16")
+		t.Fatal("no header for #12")
 	}
 	y := line - h.app.viewOffset(s) + 1
 	if s.attn != nil {
 		y++
 	}
 	h.send(tea.MouseClickMsg{X: s.sidebarW + 5, Y: y, Button: tea.MouseLeft})
-	if h.app.msgID != "16" {
+	if h.app.msgID != "12" {
 		t.Fatalf("selected %q", h.app.msgID)
 	}
 	h.send(tea.MouseClickMsg{X: s.sidebarW + 5, Y: y, Button: tea.MouseLeft})
-	contains(t, h.frame(), "message #16 · esc back", "REPLIES (1)")
+	contains(t, h.frame(), "message #12 · esc back", "REPLIES (1)")
 }
 
 func TestEnterOpensTheMessageDetails(t *testing.T) {
 	h := start(t, nil)
 	h.openSession()
 	h.keys("up", "up", "enter")
-	contains(t, h.frame(), "message #16 · esc back", "Please run the tests before you say done")
+	contains(t, h.frame(), "message #12 · esc back", "Please run the tests before you say done")
 	h.keys("esc")
 	contains(t, h.frame(), "coop · build-42 · transcript")
 }

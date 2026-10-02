@@ -4,3 +4,5 @@ dist/
 .schemathesis/
 .hypothesis/
 .claude/settings.local.json
+# rapid writes a failing case here on a property test failure; keep it out of the tree.
+testdata/rapid/

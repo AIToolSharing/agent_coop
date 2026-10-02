@@ -143,11 +143,10 @@ type SendResponse struct {
 	SentAt string `json:"sent_at"`
 }
 
-// ActivityRequest is what an agent reports: state, delivered, wait_start or wait_end.
+// ActivityRequest is what an agent reports: state, wait_start or wait_end.
 type ActivityRequest struct {
 	Kind, Agent   string
 	State, Note   string // state
-	ID, Via       string // delivered
 	From, ReplyTo string // wait_start
 	TimeoutS      int    // wait_start
 	Result        string // wait_end
@@ -311,9 +310,8 @@ type Conn struct {
 	state   string
 	note    string
 	waiting *wire.Waiting
-	// sent holds the ids of the messages written to the stream; acked those the shim
-	// reported delivered.
-	sent, acked map[string]bool
+	// sent holds the ids of the messages written to the stream, for redact notices.
+	sent map[string]bool
 	// status is the session status this connection was told last.
 	status string
 	// rev is the revision of the last presence record sent for this connection.
@@ -411,7 +409,7 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 		host: q.Host, cwd: q.Cwd, client: wire.Client{Name: q.ClientName, Version: q.ClientVersion},
 		joinedAt: h.now(), resumed: old != nil,
 		out:   make(chan item, 256),
-		state: "idle", sent: map[string]bool{}, acked: map[string]bool{},
+		state: "idle", sent: map[string]bool{},
 		status: row.Record.Status, reason: "disconnected", done: make(chan struct{}),
 	}
 	h.conns[key] = c
@@ -615,7 +613,7 @@ func (h *Hub) putPresenceLocked(c *Conn) {
 func (c *Conn) presence() wire.PresenceRecord {
 	r := wire.PresenceRecord{
 		Host: c.host, Cwd: c.cwd, Client: c.client, State: c.state, Note: c.note,
-		JoinedAt: c.joinedAt, Queued: len(c.sent) - len(c.acked),
+		JoinedAt: c.joinedAt,
 	}
 	if c.waiting != nil {
 		w := *c.waiting
@@ -675,11 +673,6 @@ func (h *Hub) Activity(machine, sid string, req ActivityRequest) error {
 	case "state":
 		c.state, c.note = req.State, req.Note
 		err = evt(&wire.Activity{Kind: "state", State: req.State, Note: req.Note}, false, &store.Known{State: req.State, Note: req.Note})
-	case "delivered":
-		if c.sent[req.ID] {
-			c.acked[req.ID] = true
-		}
-		err = evt(&wire.Activity{Kind: "delivered", ID: req.ID, Via: req.Via}, true, nil)
 	case "wait_start":
 		on := ""
 		switch {

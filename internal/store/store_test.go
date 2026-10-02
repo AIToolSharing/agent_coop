@@ -47,8 +47,6 @@ func evt(sid, from, kind string) wire.Event {
 		a.Reason = "disconnected"
 	case "state":
 		a.State = "working"
-	case "delivered":
-		a.ID, a.Via = "1", "push"
 	case "wait_start":
 		a.TimeoutS = 5
 	case "wait_end":
@@ -77,7 +75,7 @@ func genEvent(t *rapid.T) wire.Event {
 	case 2:
 		return wire.Event{Kind: wire.EventRedact, SID: sid, ID: "3", At: at}
 	}
-	kind := rapid.SampledFrom([]string{"joined", "left", "state", "delivered", "wait_start", "wait_end"}).Draw(t, "activity")
+	kind := rapid.SampledFrom([]string{"joined", "left", "state", "wait_start", "wait_end"}).Draw(t, "activity")
 	return evt(sid, addr("actor"), kind)
 }
 
@@ -173,7 +171,8 @@ func TestKnownFollowsTheAppends(t *testing.T) {
 	check("idle", "", 1)
 	must(s.Append(evt("s1", me, "state"), false, &store.Known{State: "working", Note: "x"}))
 	check("working", "x", 1)
-	must(s.Append(evt("s1", me, "delivered"), true, nil))
+	// A second seen event (a join of a new process) moves the seen sequence on.
+	must(s.Append(evt("s1", me, "joined"), true, nil))
 	check("working", "x", 3)
 	must(s.Append(evt("s1", me, "left"), true, &store.Known{State: "done", Note: ""}))
 	check("done", "", 4)

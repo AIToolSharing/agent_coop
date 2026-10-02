@@ -188,8 +188,6 @@ type activityBody struct {
 	Agent    optString    `json:"agent"`
 	State    optString    `json:"state"`
 	Note     optString    `json:"note"`
-	ID       optString    `json:"id"`
-	Via      optString    `json:"via"`
 	From     optString    `json:"from"`
 	ReplyTo  optString    `json:"reply_to"`
 	TimeoutS *json.Number `json:"timeout_s"`
@@ -206,7 +204,7 @@ func parseActivity(body []byte) (hub.ActivityRequest, error) {
 	}
 	r := hub.ActivityRequest{Kind: b.Kind.val, Agent: b.Agent.val}
 	set := map[string]bool{
-		"state": b.State.set, "note": b.Note.set, "id": b.ID.set, "via": b.Via.set,
+		"state": b.State.set, "note": b.Note.set,
 		"from": b.From.set, "reply_to": b.ReplyTo.set, "timeout_s": b.TimeoutS != nil, "result": b.Result.set,
 	}
 	// allow names the fields of the kind; any other set field fails.
@@ -230,14 +228,6 @@ func parseActivity(body []byte) (hub.ActivityRequest, error) {
 			return r, invalid("note: at most 500 characters")
 		}
 		r.State, r.Note = b.State.val, b.Note.val
-	case "delivered":
-		if err := allow("id", "via"); err != nil {
-			return r, err
-		}
-		if !wire.IsID(b.ID.val) || !oneOf(b.Via.val, "push", "pull", "ask") {
-			return r, invalid("delivered needs a message id and via push, pull or ask")
-		}
-		r.ID, r.Via = b.ID.val, b.Via.val
 	case "wait_start":
 		if err := allow("from", "reply_to", "timeout_s"); err != nil {
 			return r, err
@@ -265,7 +255,7 @@ func parseActivity(body []byte) (hub.ActivityRequest, error) {
 		}
 		r.Result = b.Result.val
 	default:
-		return r, invalid("kind: state, delivered, wait_start or wait_end")
+		return r, invalid("kind: state, wait_start or wait_end")
 	}
 	return r, nil
 }

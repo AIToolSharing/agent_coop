@@ -56,8 +56,8 @@ func TestOptionalFieldsAbsentOrSet(t *testing.T) {
 // strict objects.
 func TestActivityRefusesFieldsOfAnotherKind(t *testing.T) {
 	for _, body := range []string{
-		`{"kind":"state","agent":"a","state":"idle","via":"push"}`,
-		`{"kind":"delivered","agent":"a","id":"1","via":"push","note":"x"}`,
+		`{"kind":"state","agent":"a","state":"idle","from":"operator"}`,
+		`{"kind":"delivered","agent":"a","id":"1","via":"push"}`,
 		`{"kind":"wait_end","agent":"a","result":"timeout","timeout_s":5}`,
 		`{"kind":"wait_start","agent":"a","timeout_s":5,"result":"timeout"}`,
 	} {

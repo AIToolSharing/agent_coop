@@ -74,7 +74,7 @@ func TestTranscriptShowsWholeMessagesAndFoldsSystemLines(t *testing.T) {
 				ids = append(ids, id)
 			}
 		}
-		if fmt.Sprint(ids) != "[4 7 11 14 16 17 18]" {
+		if fmt.Sprint(ids) != "[4 5 8 10 12 13 14]" {
 			t.Errorf("width %d: ids %v", width, ids)
 		}
 	}
@@ -89,7 +89,7 @@ func TestTranscriptShowsWholeMessagesAndFoldsSystemLines(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	for _, want := range []string{
 		"12:00:10  carol@mac-3 → all", "#4",
-		"  ↩ #7 alice@mac-1: What is the shape of GET /users?",
+		"  ↩ #5 alice@mac-1: What is the shape of GET /users?",
 		"  [withdrawn]",
 		"12:00:50  operator → all",
 		"12:00:55  bob@vps-2 → operator  for you",
@@ -110,13 +110,13 @@ func TestTranscriptFilters(t *testing.T) {
 	o.Agent = "carol@mac-3"
 	var tr view.Transcript
 	ids := strings.Join(nonEmpty(tr.Render(v, o).IDs), " ")
-	if ids != "4 14 16 18" {
+	if ids != "4 10 12 14" {
 		t.Errorf("carol's messages: %s", ids)
 	}
 	o = opts(100)
 	o.Search = "users"
 	var tr2 view.Transcript
-	if ids := strings.Join(nonEmpty(tr2.Render(v, o).IDs), " "); ids != "4 7 18" {
+	if ids := strings.Join(nonEmpty(tr2.Render(v, o).IDs), " "); ids != "4 5 14" {
 		t.Errorf("search: %s", ids)
 	}
 	o = opts(100)
@@ -245,7 +245,7 @@ func TestAttention(t *testing.T) {
 	for _, it := range items {
 		kinds = append(kinds, it.Kind+":"+it.ID+it.Address)
 	}
-	if fmt.Sprint(kinds) != "[for_you:17 ask:18 blocked:bob@vps-2]" {
+	if fmt.Sprint(kinds) != "[for_you:13 ask:14 blocked:bob@vps-2]" {
 		t.Fatalf("items %v", kinds)
 	}
 	line := view.Plain(view.RenderAttention(items, modeltest.Now))
@@ -255,7 +255,7 @@ func TestAttention(t *testing.T) {
 	if view.RenderAttention(nil, modeltest.Now) != nil {
 		t.Error("nothing to say should give no line")
 	}
-	if d := view.Describe(items[1]); d != "carol@mac-3 waits for bob@vps-2 (ask #18)" {
+	if d := view.Describe(items[1]); d != "carol@mac-3 waits for bob@vps-2 (ask #14)" {
 		t.Errorf("describe %q", d)
 	}
 }
@@ -266,12 +266,12 @@ func TestThreadsShowWholeMessagesByDepth(t *testing.T) {
 	checkShape(t, r, 50)
 	lines := texts(r)
 	joined := strings.Join(lines, "\n")
-	for _, want := range []string{"OPEN ASKS (1)", "carol@mac-3 → bob@vps-2", "Can I change the users table?", "THREADS", "└─ #11 bob@vps-2 → alice@mac-1", "{ id: number, name: string, email: string }", "└─ #17 bob@vps-2 → operator"} {
+	for _, want := range []string{"OPEN ASKS (1)", "carol@mac-3 → bob@vps-2", "Can I change the users table?", "THREADS", "└─ #8 bob@vps-2 → alice@mac-1", "{ id: number, name: string, email: string }", "└─ #13 bob@vps-2 → operator"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in\n%s", want, joined)
 		}
 	}
-	if ids := strings.Join(nonEmpty(r.IDs), " "); ids != "18 4 7 11 14 16 17 18" {
+	if ids := strings.Join(nonEmpty(r.IDs), " "); ids != "14 4 5 8 10 12 13 14" {
 		t.Errorf("ids %s", ids)
 	}
 }
@@ -281,7 +281,7 @@ func TestAgentAndMessageDetails(t *testing.T) {
 	a := view.RenderAgent(v, "bob@vps-2", opts(70))
 	checkShape(t, a, 70)
 	joined := strings.Join(texts(a), "\n")
-	for _, want := range []string{"bob@vps-2  ● online", "state        blocked", "note         waiting for CI", "host         vps-2", "client       codex 0.9", "sent 2", "TIMELINE", "sent #11 → alice@mac-1", "got #4 ← carol@mac-3", "is blocked: waiting for CI"} {
+	for _, want := range []string{"bob@vps-2  ● online", "state        blocked", "note         waiting for CI", "host         vps-2", "client       codex 0.9", "sent 2", "TIMELINE", "sent #8 → alice@mac-1", "got #4 ← carol@mac-3", "is blocked: waiting for CI"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in\n%s", want, joined)
 		}
@@ -289,10 +289,10 @@ func TestAgentAndMessageDetails(t *testing.T) {
 	if strings.Contains(joined, "REACHED") || strings.Contains(joined, "reach time") {
 		t.Error("delivery data was dropped from the design")
 	}
-	m := view.RenderMessage(v, "16", opts(70))
+	m := view.RenderMessage(v, "12", opts(70))
 	checkShape(t, m, 70)
 	joined = strings.Join(texts(m), "\n")
-	for _, want := range []string{"#16", "from         operator", "to           all", "sent         2026-09-30 12:00:50 (4m ago)", "Please run the tests before you say done", "REPLIES (1)", "#17 bob@vps-2", "Will do; CI is running"} {
+	for _, want := range []string{"#12", "from         operator", "to           all", "sent         2026-09-30 12:00:50 (4m ago)", "Please run the tests before you say done", "REPLIES (1)", "#13 bob@vps-2", "Will do; CI is running"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in\n%s", want, joined)
 		}

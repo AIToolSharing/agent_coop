@@ -76,7 +76,6 @@ type Agent struct {
 	StateSince string
 	Note       string
 	Waiting    *Waiting
-	Queued     int
 	Sent       int
 	JoinedAt   string
 	Left       *Left
@@ -599,11 +598,11 @@ func (a *Agent) derive() {
 func (a *Agent) refresh() {
 	if a.live == nil {
 		a.Online = false
-		a.State, a.Note, a.StateSince, a.Queued, a.Waiting = a.dState, a.dNote, a.dSince, 0, a.dWaiting
+		a.State, a.Note, a.StateSince, a.Waiting = a.dState, a.dNote, a.dSince, a.dWaiting
 		return
 	}
 	a.Online = true
-	a.State, a.Note, a.StateSince, a.Queued = a.live.State, a.live.Note, a.dSince, a.live.Queued
+	a.State, a.Note, a.StateSince = a.live.State, a.live.Note, a.dSince
 	a.Waiting = nil
 	if w := a.live.Waiting; w != nil {
 		a.Waiting = &Waiting{On: w.On, ReplyTo: w.ReplyTo, Since: w.Since}
