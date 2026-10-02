@@ -7,7 +7,7 @@ PKG     := ./cmd/coop
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build release check test clean install
+.PHONY: build release check contract test clean install
 
 # install puts `coop` on the PATH as a link to the build, so `make build` updates it in place.
 BINDIR ?= $(HOME)/.local/bin
@@ -38,6 +38,11 @@ check:
 
 test:
 	go test ./...
+
+# contract runs Schemathesis (positive and negative data) against the hub's own /openapi.json.
+# It needs uvx and takes a few minutes. Run it after any change to the API or the document.
+contract:
+	COOP_CONTRACT=1 go test -count=1 -run TestContract -v ./internal/api/
 
 clean:
 	rm -rf dist

@@ -23,6 +23,10 @@ const usageText = `usage:
   coop setup                      register coop with Claude Code and install the skill
   coop doctor                     check the connection, the tokens, the session, the setup
   coop mcp                        the MCP server Claude Code starts (stdio)
+  coop serve [--listen <addr>] [--data <dir>] [--auto-create=false]
+                                  run the hub (the server)
+  coop admin token add [--operator] <name> | list | revoke <name>
+                                  manage tokens on the hub's host
   coop version
 `
 
@@ -50,6 +54,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdDoctor(args[1:], stdout, stderr)
 	case "mcp":
 		return cmdMCP(args[1:], stderr)
+	case "serve":
+		return cmdServe(args[1:], stderr)
+	case "admin":
+		return cmdAdmin(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, "coop", version)
 		return 0
