@@ -92,12 +92,20 @@ type App struct {
 	ta          textarea.Model
 	last        screen
 	quitting    bool
+	err         error
 }
+
+// Err is the error that ended the program, or nil.
+func (a *App) Err() error { return a.err }
 
 // Messages.
 type updatesMsg []model.Update
 type tickMsg time.Time
 type statusMsg string
+
+// FeedError says that the feed ended with an error the program cannot recover from, such as a
+// refused token. The program quits; Err gives the error after Run.
+type FeedError struct{ Err error }
 
 func New(o Options) *App {
 	if o.Now == nil {
@@ -320,6 +328,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusMsg:
 		a.status = string(m)
 		return a, nil
+	case FeedError:
+		a.err = m.Err
+		return a, tea.Quit
 	case tea.PasteMsg:
 		return a, a.paste(m.Content)
 	case tea.KeyPressMsg:
