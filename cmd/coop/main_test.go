@@ -233,3 +233,11 @@ func TestDoctorReportsEachStep(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPOptionsFollowTheConfiguration(t *testing.T) {
+	cfg := config.Config{URL: "http://hub:8090", Token: "mac.1", Session: "build-42", Agent: "alice", Push: true}
+	o := mcpOptions(cfg, nil)
+	if o.URL != cfg.URL || o.Token != cfg.Token || o.Session != "build-42" || o.Agent != "alice" || !o.Push || o.Transport != nil || o.ClientName != "" {
+		t.Fatalf("%+v", o)
+	}
+}

@@ -1,5 +1,6 @@
 // Command coop is the agent cooperation tool: the operator's TUI, the agent-side MCP server
 // (the shim), and the commands that set both up. One binary, no runtime to install.
+// `coop mcp` is what Claude Code starts; everything else is for the person.
 package main
 
 import (
@@ -48,11 +49,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "doctor":
 		return cmdDoctor(args[1:], stdout, stderr)
 	case "mcp":
-		if err := runSpike(args[1:]); err != nil {
-			fmt.Fprintln(stderr, "coop mcp:", err)
-			return 1
-		}
-		return 0
+		return cmdMCP(args[1:], stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, "coop", version)
 		return 0
