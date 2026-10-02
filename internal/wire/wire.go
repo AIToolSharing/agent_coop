@@ -1,6 +1,6 @@
 // Package wire holds the names, subjects, keys, records and events that the hub, the shim and
-// the TUI exchange. It mirrors packages/core/src/names.ts, schema.ts and api.ts; those files
-// and their tests stay the reference until the TypeScript tree goes.
+// the TUI exchange. It mirrors packages/core/src/names.ts, schema.ts and api.ts of the
+// TypeScript hub (in the history before v0.2.0).
 package wire
 
 import (

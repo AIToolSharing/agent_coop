@@ -1,7 +1,7 @@
 // Package config finds what the coop command needs: the hub address, the tokens, the session
 // and the agent name. It mirrors packages/core/src/envfile.ts, packages/mcp/src/config.ts and
-// the session command in packages/mcp/src/cli.ts. Those files and their tests stay the
-// reference until the TypeScript tree goes.
+// the session command in packages/mcp/src/cli.ts of the TypeScript client (in the history
+// before v0.1.0).
 package config
 
 import (

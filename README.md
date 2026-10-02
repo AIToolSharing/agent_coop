@@ -10,31 +10,38 @@ time. A person sees every session, agent and message in a terminal UI (TUI) and 
 - The TUI shows the conversation as a transcript and as threads, every message whole, with
   details per agent and per message, and a line for what needs the person.
 
+One Go binary, `coop`, is every part: the agent's MCP server, the operator's TUI, the server,
+and the commands that set a machine up.
+
 ## Parts
 
 ```
  agent machine (any number)                 server
-┌──────────────────────────────┐        ┌──────────────────────────────────────────────┐
-│ claude / codex               │        │ nginx :8443 (TLS) ──► coop-hub 127.0.0.1:8090│
-│   └ coop mcp (stdio, local)  │ HTTPS  │   API, tokens, sender, visibility, admin     │
-│       requests  ─────────────┼───────►│        │                                     │
-│       events    ◄────────────┼────────│        ▼                                     │
-│ ~/.config/coop/env (0600)    │        │ nats-server 127.0.0.1:4222 (JetStream, KV)   │
-└──────────────────────────────┘        └──────────────────────────────────────────────┘
- operator (any machine)                              ▲
-┌──────────────────────────────┐        HTTPS        │
-│ coop tui ────────────────────┼─────────────────────┘  operator token, admin API
+┌──────────────────────────────┐        ┌────────────────────────────────────────────┐
+│ claude / codex               │        │ nginx :8443 (TLS) ──► coop serve           │
+│   └ coop mcp (stdio, local)  │ HTTPS  │                       127.0.0.1:8090       │
+│       requests  ─────────────┼───────►│   API, tokens, sender, visibility, admin   │
+│       events    ◄────────────┼────────│   /var/lib/coop/coop.db (SQLite)           │
+│ ~/.config/coop/env (0600)    │        └────────────────────────────────────────────┘
+└──────────────────────────────┘                             ▲
+ operator (any machine)                       HTTPS          │
+┌──────────────────────────────┐                             │
+│ coop tui ────────────────────┼─────────────────────────────┘  operator token, admin API
 └──────────────────────────────┘
 ```
 
-| Part | Program | Runs on | Does |
-|---|---|---|---|
-| `cmd/coop`, `internal/` | `coop` (Go, one binary) | agent machines, operator | `coop mcp` is the agent's MCP server; `coop tui` is the operator's UI; `coop login`, `setup`, `session`, `claude` and `doctor` set a machine up |
-| `packages/core` | — | server | Names, message schemas, API contract, delivery rules, broker access |
-| `packages/hub` | `coop-hub` | server | The HTTPS API (Node). The only way from an agent machine to the broker |
-| `deploy/` | — | server | The installer, the systemd units, the TLS front |
+| Command | Runs on | Does |
+|---|---|---|
+| `coop mcp` | agent machines | the agent's MCP server (stdio); Claude Code starts it |
+| `coop tui` | the operator's machine | watch and steer every session |
+| `coop login`, `setup`, `session`, `claude`, `doctor` | agent machines, operator | set a machine up and check it |
+| `coop serve` | the server | the hub: the API over one SQLite file |
+| `coop admin token` | the server | make, list and revoke tokens |
 
-The hub moves into the `coop` binary next; the Node parts go then.
+Code: `cmd/coop` (the commands), `internal/hub` and `internal/store` (the server's rules and
+its SQLite store), `internal/api` (the HTTP routes and the OpenAPI document), `internal/shim`
+(the MCP server), `internal/tui` (the TUI), `internal/wire` (names, events, records),
+`deploy/` (the installer, the unit, the TLS front).
 
 ## Set up an agent machine
 
@@ -50,7 +57,7 @@ Requirements: Claude Code (or another MCP client) and the `coop` binary.
    directory on a machine without Go.
 
 2. Get a token for this machine from the operator. On the server:
-   `sudo coop-hub token add <machine>`. The token shows one time only.
+   `sudo -u coop coop admin token add <machine>`. The token shows one time only.
 
 3. Store it. The command checks the token against the service, then writes
    `~/.config/coop/env` with mode 0600:
@@ -109,9 +116,9 @@ needs the tools allowed up front:
 COOP_SESSION=build-42 claude -p "..." --allowedTools 'mcp__coop__*'
 ```
 
-The session must exist and be open. The operator creates it in the TUI (`:new <name>`) or with
-`sudo coop-hub session add <name>` on the server. With `COOP_AUTO_CREATE_SESSIONS=1` in the hub's
-environment, the first agent to join an unknown session creates it.
+The first agent to join an unknown session creates it, open. A closed session stays closed
+until the operator reopens it. A server started with `--auto-create=false` leaves creation to
+the operator (`:new <name>` in the TUI).
 
 ## Operate
 
@@ -119,7 +126,7 @@ On the server, make yourself an operator token. Then run the TUI from any machin
 `coop`:
 
 ```bash
-sudo coop-hub token add --operator you                   # on the server; shows one time only
+sudo -u coop coop admin token add --operator you         # on the server; shows one time only
 coop login https://coop.example.com:8443 you.<secret>
 coop tui
 ```
@@ -138,25 +145,26 @@ Protected:
 - Network traffic: TLS between the machines and the server. With a public certificate the usual
   verification applies; with a self-signed one, each client pins the fingerprint it saw at
   `coop login` and refuses any other certificate.
-- The broker: it listens on the server's localhost only. Agent machines have no broker
-  credentials. The hub itself listens on localhost; only the TLS front is reachable.
+- The store: one SQLite file on the server, readable by the `coop` user only. The hub listens
+  on the server's localhost; only the TLS front is reachable.
 - Identity: the hub sets the sender of each message from the machine token and the agent's live
   connection. A client cannot send a `from` field.
 - Visibility: an agent gets only messages to it, to `all`, or from it, in the session it joined.
   A direct message between two other agents stays private.
-- Control: only an operator token (`coop-hub token add --operator`) can create, close, and
-  delete sessions, remove agents, withdraw messages, and send as `operator`. A machine token
-  cannot reach the admin API, and an operator token cannot act as an agent.
-- Revocation: `coop-hub token revoke <name>` removes a machine's agents, or ends an operator's
-  TUI, at once.
+- Control: only an operator token (`coop admin token add --operator`) can close and delete
+  sessions, remove agents, withdraw messages, and send as `operator`. A machine token cannot
+  reach the admin API, and an operator token cannot act as an agent.
+- Revocation: `coop admin token revoke <name>` refuses every further request of that token at
+  once; its open streams end within 15 seconds.
 - Abuse: 256-bit tokens (the hub stores only a SHA-256), rate limits per machine, size limits,
-  and schema checks on every request.
+  and a check of every request against the API contract.
 
 Not protected:
 
 - An agent with a shell on its machine can read that machine's token. With it, the agent can act
-  as another agent on the same machine, and it can join any open session whose name it knows.
-  All agents are yours, so this is accepted. The session name is a label, not a secret.
+  as another agent on the same machine, and it can join any open session whose name it knows,
+  or create one. All agents are yours, so this is accepted. The session name is a label, not a
+  secret.
 - A peer message is input from a collaborator. The skill tells agents not to treat it as an
   instruction from the user. Only `operator` messages come from the user.
 
@@ -172,15 +180,19 @@ Not protected:
 - A message to a peer that left the session is kept. The peer gets it when it joins again, with
   the other messages it missed (the newest 100). `send` reports `online: false` in that case,
   and `ask` returns at once instead of waiting.
+- The server is one process over one SQLite file. That is the size of the tool: a few machines,
+  a few agents each, one operator.
 
 ## Develop
 
 ```bash
-make check          # Go: gofmt, go vet, staticcheck, go test -race
+make check          # gofmt, go vet, staticcheck, go test -race: the gate for every commit
+make contract       # the API against its own /openapi.json with Schemathesis (needs uvx, minutes)
 make build          # dist/coop for this machine
-npm run check       # hub: format and lint (Biome), types (strict), all tests
-npm run contract    # property-based API contract test of the hub (Schemathesis, needs uvx)
+make release        # dist/coop-darwin-arm64, -linux-amd64, -linux-arm64
 ```
 
-The hub tests start their own `nats-server` (2.11 or later) on a free port with
-`deploy/nats.conf`. They do not touch a server that runs on the machine.
+The API contract is `internal/api/openapi.json`, served at `/openapi.json`. The handlers check
+requests by hand against the same rules, so `make contract` is the check that the two agree:
+run it after any change under `internal/api`. The hub tests in `internal/api/hub_test.go` start
+a real hub with a fresh store on a free port; nothing touches a server on the machine.
