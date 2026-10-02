@@ -52,6 +52,14 @@ type fakeHub struct {
 	sessions map[string]*fakeSession
 	// query is the query of the last stream request.
 	query string
+	// viewStatus, when not zero, is the answer to every view call.
+	viewStatus int
+}
+
+func (h *fakeHub) failView(status int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.viewStatus = status
 }
 
 func (h *fakeHub) lastQuery() string {
@@ -280,6 +288,12 @@ func (h *fakeHub) view(w http.ResponseWriter, r *http.Request) {
 	}
 	s, ok := h.session(w, r)
 	if !ok {
+		return
+	}
+	if h.viewStatus != 0 {
+		status := h.viewStatus
+		h.mu.Unlock()
+		writeError(w, status, "unavailable", "internal error")
 		return
 	}
 	me := r.URL.Query().Get("agent") + "@" + machine

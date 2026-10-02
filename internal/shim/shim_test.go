@@ -694,6 +694,19 @@ func TestStatusListsPeersWithTheirState(t *testing.T) {
 	})
 }
 
+func TestStatusAnswersWhenTheViewFails(t *testing.T) {
+	h := newFakeHub(t)
+	h.createSession("s")
+	a := start(t, options(h, "mac-1", "s", "alice", false))
+	joined(t, a)
+	h.failView(503)
+	got := a.json("status", nil)
+	want := map[string]any{"joined": true, "session": "s", "me": "alice@mac-1", "unread": 0, "note": unreachable}
+	if !match(got, want) || len(got) != len(want) {
+		t.Fatalf("status %v", got)
+	}
+}
+
 func TestHistoryShowsWhatICanSee(t *testing.T) {
 	h := newFakeHub(t)
 	h.createSession("s")
