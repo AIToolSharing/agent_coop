@@ -106,11 +106,11 @@ var schemas = map[string]map[string]any{
 	"ask": objectSchema([]string{"to", "text"}, map[string]any{
 		"to":        stringSchema(`The peer to ask (like "bob" or "bob@laptop"), or "operator" for the user`),
 		"text":      textSchema("The question"),
-		"timeout_s": secondsSchema(300, "How long to wait for the answer"),
+		"timeout_s": secondsSchema(120, "How long to wait for the answer"),
 	}),
 	"wait": objectSchema(nil, map[string]any{
 		"from":      stringSchema(`Only wait for messages from this peer, or from "operator" (the user)`),
-		"timeout_s": secondsSchema(120, "How long to wait"),
+		"timeout_s": secondsSchema(60, "How long to wait"),
 	}),
 	"inbox": objectSchema(nil, map[string]any{}),
 	"history": objectSchema(nil, map[string]any{
