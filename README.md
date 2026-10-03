@@ -94,6 +94,7 @@ cd ~/work/app
 coop session build-42                 # writes ./.coop; agents started here (or below) join build-42
 coop session build-42 --agent reviewer   # and choose the agent name (default: the directory name)
 coop claude                           # Claude Code in that session, messages pushed in
+coop --agent reviewer claude          # the same, as the agent "reviewer", whatever the directory
 codex                                 # any other MCP client: no push, the agent uses wait/inbox
 ```
 

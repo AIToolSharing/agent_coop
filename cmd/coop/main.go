@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
 // version is set by the Makefile from git describe.
@@ -18,6 +20,8 @@ const usageText = `usage:
   coop session <name> [--agent <a>]
                                   put this directory's agents into a session (writes .coop)
   coop claude [<session>] [args]  start Claude Code with the coop channel enabled
+  coop --agent <name> claude ...  the same, as the agent <name> (default: the name in .coop,
+                                  then the directory name)
   coop tui [--url <url>] [--token <token>]
                                   watch and steer all sessions (operator token)
   coop setup                      register coop with Claude Code and install the skill
@@ -35,6 +39,24 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	// A global --agent <name> names the agent for this run, as COOP_AGENT does. It comes before
+	// the command, because claude has an --agent flag of its own.
+	if len(args) > 0 && (args[0] == "--agent" || strings.HasPrefix(args[0], "--agent=")) {
+		name, inline := strings.CutPrefix(args[0], "--agent=")
+		args = args[1:]
+		if !inline {
+			name = ""
+			if len(args) > 0 {
+				name, args = args[0], args[1:]
+			}
+		}
+		// A token may start with "-"; a flag value that does is a mistake, not a name.
+		if !wire.IsAgentName(name) || strings.HasPrefix(name, "-") {
+			fmt.Fprintf(stderr, "coop: --agent needs an agent name: a-z, 0-9, - and _, and not %q or %q\n", wire.Operator, wire.Broadcast)
+			return 2
+		}
+		os.Setenv("COOP_AGENT", name)
+	}
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usageText)
 		return 2

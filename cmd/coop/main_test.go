@@ -284,3 +284,25 @@ func TestLoginPinsASelfSignedHubAndDoctorUsesThePin(t *testing.T) {
 		t.Fatalf("env file after a plain login %v", got)
 	}
 }
+
+// `coop --agent <name> <command>` names the agent for the run, as COOP_AGENT does. The flag
+// comes before the command, because claude has an --agent flag of its own.
+func TestGlobalAgentFlagSetsTheAgentName(t *testing.T) {
+	for _, args := range [][]string{{"--agent", "reviewer", "version"}, {"--agent=reviewer", "version"}} {
+		t.Setenv("COOP_AGENT", "")
+		var out, errOut bytes.Buffer
+		if code := run(args, &out, &errOut); code != 0 || !strings.HasPrefix(out.String(), "coop ") {
+			t.Fatalf("%v: code %d, stdout %q, stderr %q", args, code, out.String(), errOut.String())
+		}
+		if got := os.Getenv("COOP_AGENT"); got != "reviewer" {
+			t.Fatalf("%v: COOP_AGENT %q", args, got)
+		}
+	}
+	for _, args := range [][]string{{"--agent"}, {"--agent", "Not A Name", "version"}, {"--agent=operator", "version"}, {"--agent", "reviewer"}} {
+		t.Setenv("COOP_AGENT", "")
+		var out, errOut bytes.Buffer
+		if code := run(args, &out, &errOut); code != 2 || errOut.Len() == 0 {
+			t.Fatalf("%v: code %d, stderr %q", args, code, errOut.String())
+		}
+	}
+}
