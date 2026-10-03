@@ -204,6 +204,34 @@ func extraTraffic(n int, seed int64) []model.Update {
 	return out
 }
 
+// Found in use: agents the operator removed stayed in the sidebar and in the session count
+// for ever, marked "removed".
+func TestRemovedAgentsLeaveTheSidebar(t *testing.T) {
+	s := store()
+	// bob goes offline, then the operator removes him.
+	s.Apply(model.Update{Presence: &wire.PresenceUpdate{Key: "build-42.vps-2.bob", Revision: 1000}})
+	s.Apply(model.Update{Kick: &wire.KickUpdate{Key: "build-42.kick.vps-2.bob", Revision: 1001, Record: &wire.KickRecord{At: modeltest.At(300)}}})
+	sums := view.Summaries(s, modeltest.Now)
+	for _, sum := range sums {
+		if sum.SID == "build-42" && (sum.Agents != 2 || sum.Online != 2) {
+			t.Fatalf("build-42 counts %d/%d, want 2/2", sum.Online, sum.Agents)
+		}
+	}
+	v := s.View("build-42")
+	sb := view.RenderSidebar(sums, v.Members(), view.Selection{SID: "build-42", Cursor: -1}, 40, modeltest.Now)
+	if joined := strings.Join(texts(sb.Rendered), "\n"); strings.Contains(joined, "bob@vps-2") || !strings.Contains(joined, "alice@mac-1") {
+		t.Fatalf("sidebar:\n%s", joined)
+	}
+	// The removed agent stays known, so that :allow finds it.
+	known := false
+	for _, a := range v.AgentList() {
+		known = known || (a.Address == "bob@vps-2" && a.Kicked)
+	}
+	if !known {
+		t.Fatal("AgentList lost the removed agent")
+	}
+}
+
 func TestSidebarListsSessionsThenAgents(t *testing.T) {
 	s := store()
 	sums := view.Summaries(s, modeltest.Now)

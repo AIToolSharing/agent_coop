@@ -507,6 +507,19 @@ func insertMsg(list []*Msg, m *Msg) []*Msg {
 	return list
 }
 
+// Members lists the agents that belong to the session now: every agent but those the operator
+// removed. A removed agent stays in AgentList, so that :allow and the history find it.
+func (v *Session) Members() []*Agent {
+	all := v.AgentList()
+	out := all[:0]
+	for _, a := range all {
+		if !a.Kicked || a.Online {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 // AgentList lists the agents in order of first appearance.
 func (v *Session) AgentList() []*Agent {
 	out := make([]*Agent, 0, len(v.Agents))

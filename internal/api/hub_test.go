@@ -793,6 +793,32 @@ func (x *hubSuite) adminAPI(t *testing.T) {
 		wantStatus(t, 404)(adm.kick("nosuch", "bob@vps-2"))
 	})
 
+	// Found in use: an agent the operator removed stayed a peer for the others, listed as away
+	// and accepted as a recipient, although it could not come back.
+	t.Run("a removed agent is no longer a peer; allow brings it back", func(t *testing.T) {
+		sid := x.session(t)
+		a := x.mac1.stream(sid, "alice")
+		defer a.close()
+		a.wait(t, nil)
+		b := x.vps2.stream(sid, "bob")
+		b.wait(t, nil)
+		b.close()
+		a.wait(t, eventIs("notice"))
+		away := []peer{{Name: "bob@vps-2", State: "idle", Online: false}}
+		if v := parse[sessionView](t, jsonOf(x.mac1.view(sid, "alice"))); !slices.Equal(v.Peers, away) {
+			t.Fatalf("peers before the kick %+v, want %+v", v.Peers, away)
+		}
+		wantStatus(t, 204)(adm.kick(sid, "bob@vps-2"))
+		if v := parse[sessionView](t, jsonOf(x.mac1.view(sid, "alice"))); len(v.Peers) != 0 {
+			t.Fatalf("peers after the kick %+v, want none", v.Peers)
+		}
+		wantStatus(t, 404)(x.mac1.send(sid, "alice", "bob", "hi", ""))
+		wantStatus(t, 204)(adm.unkick(sid, "bob@vps-2"))
+		if v := parse[sessionView](t, jsonOf(x.mac1.view(sid, "alice"))); !slices.Equal(v.Peers, away) {
+			t.Fatalf("peers after the allow %+v, want %+v", v.Peers, away)
+		}
+	})
+
 	t.Run("the operator sends, in a thread, and redacts", func(t *testing.T) {
 		sid := x.session(t)
 		a := x.mac1.stream(sid, "alice")

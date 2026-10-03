@@ -1169,16 +1169,27 @@ func (h *Hub) inSessionLocked(sid string) []*Conn {
 	return out
 }
 
-// awayLocked gives the agents that were in sid and have no live connection now.
+// awayLocked gives the agents that were in sid and have no live connection now. An agent the
+// operator removed is not one of them: it cannot come back, so it is no peer.
 func (h *Hub) awayLocked(sid string) ([]store.KnownRow, error) {
 	known, err := h.st.Known(sid)
 	if err != nil {
 		return nil, err
 	}
+	kicks, err := h.st.Kicks()
+	if err != nil {
+		return nil, err
+	}
+	removed := map[string]bool{}
+	for _, k := range kicks {
+		if k.SID == sid {
+			removed[k.Target] = true
+		}
+	}
 	var out []store.KnownRow
 	for _, k := range known {
 		a, ok := wire.ParseAddress(k.Agent)
-		if !ok {
+		if !ok || removed[k.Agent] {
 			continue
 		}
 		if _, live := h.conns[wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: a})]; !live {

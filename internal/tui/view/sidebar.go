@@ -24,7 +24,7 @@ func Summaries(s *model.Store, now time.Time) []Summary {
 	one := func(sid, status string) Summary {
 		v := s.View(sid)
 		sum := Summary{SID: sid, Status: status, OpenAsks: len(v.OpenAsks())}
-		for _, a := range v.AgentList() {
+		for _, a := range v.Members() {
 			sum.Agents++
 			if a.Online {
 				sum.Online++
