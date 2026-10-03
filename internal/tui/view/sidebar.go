@@ -21,9 +21,9 @@ type Summary struct {
 // RefusedFor is how long a removed agent that tried to join stays in the list.
 const RefusedFor = 5 * time.Minute
 
-// triedLately reports whether the hub refused a join of a within the last RefusedFor.
-func triedLately(a *model.Agent, now time.Time) bool {
-	t, ok := parseTime(a.RefusedAt)
+// lately reports whether the time iso is within the last RefusedFor.
+func lately(iso string, now time.Time) bool {
+	t, ok := parseTime(iso)
 	return ok && now.Sub(t) < RefusedFor
 }
 
@@ -35,7 +35,7 @@ func Listed(v *model.Session, now time.Time) []*model.Agent {
 	all := v.AgentList()
 	out := all[:0]
 	for _, a := range all {
-		if !a.Kicked || a.Online || triedLately(a, now) {
+		if !a.Kicked || a.Online || lately(a.RefusedAt, now) {
 			out = append(out, a)
 		}
 	}
@@ -101,13 +101,16 @@ type Selection struct {
 }
 
 // SidebarWidth is the narrowest width that shows every row whole, at most maxWidth.
-func SidebarWidth(sums []Summary, agents []*model.Agent, maxWidth int) int {
+func SidebarWidth(sums []Summary, agents []*model.Agent, maxWidth int, now time.Time) int {
 	longest := 14
 	for _, s := range sums {
 		longest = max(longest, Width(s.SID)+14)
 	}
 	for _, a := range agents {
 		longest = max(longest, Width(a.Address)+18)
+		if lately(a.DuplicateAt, now) {
+			longest = max(longest, 30) // "  ↳ duplicate refused 59m ago"
+		}
 	}
 	return min(max(maxWidth, 26), longest)
 }
@@ -166,7 +169,7 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 		if a.Kicked {
 			// Short, so that the name stays whole: the agent's details say the rest.
 			text := "removed"
-			if triedLately(a, now) {
+			if lately(a.RefusedAt, now) {
 				text = "refused " + Age(a.RefusedAt, now) + " ago"
 			}
 			state = Color(text, "red")
@@ -185,6 +188,11 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 			l = append(l, Color(" ⏳"+Age(a.Waiting.Since, now), "yellow"))
 		}
 		add(l, &Row{Address: a.Address})
+		if lately(a.DuplicateAt, now) {
+			// A second session asked for this name and the hub refused it. It has no row of
+			// its own: its address is this agent's.
+			add(Line{S("  "), Color("↳ duplicate refused "+Age(a.DuplicateAt, now)+" ago", "red")}, nil)
+		}
 	}
 	return sb
 }

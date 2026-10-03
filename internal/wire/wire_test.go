@@ -153,7 +153,7 @@ func event() *rapid.Generator[wire.Event] {
 				a.TimeoutS = rapid.IntRange(1, 600).Draw(t, "timeout")
 			case 4:
 				a.Kind = "refused"
-				a.Reason = "removed"
+				a.Reason = rapid.SampledFrom([]string{"removed", "taken"}).Draw(t, "why")
 			default:
 				a.Kind = "wait_end"
 				a.Result = rapid.SampledFrom([]string{"message", "timeout", "cancelled"}).Draw(t, "result")

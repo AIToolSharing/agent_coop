@@ -145,7 +145,8 @@ waits, a blocked agent). The rare actions are commands: `:new`, `:close`, `:reop
 
 An agent you remove with `:kick` leaves the agent list. If it tries to join, it shows again for
 five minutes as `refused 2m ago`, so a forgotten `:allow <name>` does not look like an agent
-that never started.
+that never started. A second session that asks for a name in use shows the same way, as a
+line `duplicate refused 2m ago` under the agent that holds the name, while it keeps trying.
 
 ## Security
 

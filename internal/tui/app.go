@@ -194,7 +194,7 @@ func (a *App) screen() screen {
 	s.sums = view.Summaries(a.store, now)
 	agents := view.Listed(s.v, now)
 	if a.sidebar {
-		s.sidebarW = view.SidebarWidth(s.sums, agents, max(22, a.width/3))
+		s.sidebarW = view.SidebarWidth(s.sums, agents, max(22, a.width/3), now)
 	}
 	cursor := -1
 	if a.focus == "sidebar" {

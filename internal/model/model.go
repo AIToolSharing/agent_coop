@@ -81,7 +81,10 @@ type Agent struct {
 	// RefusedAt is the time of the last join that the hub refused because the operator removed
 	// the agent; "" for none.
 	RefusedAt string
-	Left      *Left
+	// DuplicateAt is the time of the last join that the hub refused because this agent holds
+	// the name: a second session asked for it. "" for none, and after a later join.
+	DuplicateAt string
+	Left        *Left
 	// FirstSeq is the sequence of the agent's first event: the order agents are listed in.
 	FirstSeq int64
 
@@ -479,7 +482,11 @@ func (v *Session) applyEvent(e *wire.Event) {
 		case "wait_end":
 			sys("wait ended: " + x.Result)
 		case "refused":
-			sys("tried to join; it is removed (:allow lets it back)")
+			if x.Reason == "taken" {
+				sys("is in use: a second session tried to join with this name and waits (coop --agent <name> claude gives it its own)")
+			} else {
+				sys("tried to join; it is removed (:allow lets it back)")
+			}
 		}
 	}
 }
@@ -572,7 +579,7 @@ func (a *Agent) addEvent(seq int64, x *wire.Activity) {
 
 // derive replays the agent's events in sequence order, as the TS model did for all events.
 func (a *Agent) derive() {
-	a.Host, a.Cwd, a.Client, a.JoinedAt, a.RefusedAt = "", "", "", "", ""
+	a.Host, a.Cwd, a.Client, a.JoinedAt, a.RefusedAt, a.DuplicateAt = "", "", "", "", "", ""
 	a.Left = nil
 	a.dState, a.dSince, a.dNote, a.dWaiting = "unknown", "", "", nil
 	for _, ev := range a.evts {
@@ -582,6 +589,7 @@ func (a *Agent) derive() {
 			a.Host, a.Cwd, a.JoinedAt = x.Host, x.Cwd, x.At
 			a.Client = x.Client.Name + " " + x.Client.Version
 			a.Left = nil
+			a.DuplicateAt = ""
 			if a.dState == "left" || a.dState == "unknown" {
 				a.dState, a.dSince = "idle", x.At
 			}
@@ -595,7 +603,11 @@ func (a *Agent) derive() {
 		case "wait_end":
 			a.dWaiting = nil
 		case "refused":
-			a.RefusedAt = x.At
+			if x.Reason == "taken" {
+				a.DuplicateAt = x.At
+			} else {
+				a.RefusedAt = x.At
+			}
 		}
 	}
 	a.refresh()

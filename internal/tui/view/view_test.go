@@ -254,6 +254,53 @@ func TestRemovedAgentsLeaveTheSidebarUnlessTheyTriedToJoin(t *testing.T) {
 	}
 }
 
+// Asked for by the operator: a second session that asks for a name in use shows under the agent
+// that holds the name, for five minutes after its last try.
+func TestADuplicateSessionShowsUnderTheAgentThatHoldsTheName(t *testing.T) {
+	s := store()
+	now := modeltest.Now
+	sidebar := func(at time.Time) []string {
+		v := s.View("build-42")
+		return texts(view.RenderSidebar(view.Summaries(s, at), view.Listed(v, at), view.Selection{SID: "build-42", Cursor: -1}, 60, at).Rendered)
+	}
+	under := func(lines []string, name string) string {
+		for i, l := range lines {
+			if strings.Contains(l, name) && i+1 < len(lines) {
+				return strings.TrimSpace(lines[i+1])
+			}
+		}
+		return ""
+	}
+	if got := strings.Join(sidebar(now), "\n"); strings.Contains(got, "duplicate") {
+		t.Fatalf("a duplicate line before any try:\n%s", got)
+	}
+	iso := func(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z07:00") }
+	tried := now.Add(-2 * time.Minute)
+	s.Apply(model.Update{Event: &wire.Event{Kind: wire.EventActivity, Seq: 500, SID: "build-42", From: "alice@mac-1", Activity: &wire.Activity{Kind: "refused", Reason: "taken", At: iso(tried)}}})
+	lines := sidebar(now)
+	if got := under(lines, "alice@mac-1"); got != "↳ duplicate refused 2m ago" {
+		t.Fatalf("under alice: %q in\n%s", got, strings.Join(lines, "\n"))
+	}
+	for _, sum := range view.Summaries(s, now) {
+		if sum.SID == "build-42" && (sum.Online != 3 || sum.Agents != 3) {
+			t.Fatalf("counts %d/%d, want 3/3: a duplicate is no agent of its own", sum.Online, sum.Agents)
+		}
+	}
+	if details := strings.Join(texts(view.RenderAgent(s.View("build-42"), "alice@mac-1", opts(110))), "\n"); !strings.Contains(details, "is in use: a second session tried to join with this name") {
+		t.Fatalf("the agent's timeline has no line for the duplicate:\n%s", details)
+	}
+	// Five minutes after the last try the line goes.
+	if got := strings.Join(sidebar(now.Add(4*time.Minute)), "\n"); strings.Contains(got, "duplicate") {
+		t.Fatalf("six minutes after the try:\n%s", got)
+	}
+	// When a session joins under the name after the try (the waiting one got in), the line
+	// goes at once.
+	s.Apply(model.Update{Event: &wire.Event{Kind: wire.EventActivity, Seq: 501, SID: "build-42", From: "alice@mac-1", Activity: &wire.Activity{Kind: "joined", Host: "mac-1", Cwd: "/src/app", Client: wire.Client{Name: "claude-code", Version: "2.1"}, At: iso(tried.Add(time.Minute))}}})
+	if got := strings.Join(sidebar(now), "\n"); strings.Contains(got, "duplicate") {
+		t.Fatalf("after a join under the name:\n%s", got)
+	}
+}
+
 func TestSidebarListsSessionsThenAgents(t *testing.T) {
 	s := store()
 	sums := view.Summaries(s, modeltest.Now)
@@ -264,7 +311,7 @@ func TestSidebarListsSessionsThenAgents(t *testing.T) {
 		t.Fatalf("build-42 summary %+v", sums[1])
 	}
 	v := s.View("build-42")
-	width := view.SidebarWidth(sums, v.AgentList(), 36)
+	width := view.SidebarWidth(sums, v.AgentList(), 36, modeltest.Now)
 	sb := view.RenderSidebar(sums, v.AgentList(), view.Selection{SID: "build-42", Cursor: 4}, width-1, modeltest.Now)
 	checkShape(t, sb.Rendered, width-1)
 	lines := texts(sb.Rendered)

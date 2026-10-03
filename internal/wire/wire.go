@@ -214,8 +214,8 @@ type Activity struct {
 	Host   string `json:"host,omitempty"`
 	Cwd    string `json:"cwd,omitempty"`
 	Client Client `json:"client,omitzero"`
-	// left: disconnected kicked revoked closed. refused: removed (a join that the hub refused
-	// because the operator removed the agent).
+	// left: disconnected kicked revoked closed. refused (a join that the hub did not let in):
+	// removed (the operator removed the agent) or taken (another session holds the name).
 	Reason string `json:"reason,omitempty"`
 	// state: working blocked done idle
 	State string `json:"state,omitempty"`
@@ -381,7 +381,7 @@ func validActivity(a Activity) bool {
 	case "wait_end":
 		return oneOf(a.Result, "message", "timeout", "cancelled")
 	case "refused":
-		return a.Reason == "removed"
+		return oneOf(a.Reason, "removed", "taken")
 	}
 	return false
 }

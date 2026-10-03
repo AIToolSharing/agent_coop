@@ -143,6 +143,34 @@ func (x *hubSuite) joining(t *testing.T) {
 		}
 	})
 
+	// Asked for by the operator: a session that is refused because the name is in use must
+	// show, as a removed agent that tries to join does.
+	t.Run("a join refused for a name in use leaves a refused record; a repeat soon after leaves none", func(t *testing.T) {
+		sid := x.session(t)
+		a := x.mac1.stream(sid, "alice")
+		defer a.close()
+		a.wait(t, nil)
+		taken := func() int {
+			n := 0
+			for _, e := range x.h.events(sid) {
+				if e.Kind == wire.EventActivity && e.From == "alice@mac-1" && e.Activity != nil && e.Activity.Kind == "refused" && e.Activity.Reason == "taken" {
+					n++
+				}
+			}
+			return n
+		}
+		wantStatus(t, 409)(x.mac1.stream(sid, "alice").result())
+		if n := taken(); n != 1 {
+			t.Fatalf("%d refused records after the first try, want 1", n)
+		}
+		wantStatus(t, 409)(x.mac1.stream(sid, "alice").result())
+		if n := taken(); n != 1 {
+			t.Fatalf("%d refused records after a second try soon after, want 1", n)
+		}
+		// The agent that holds the name is not disturbed.
+		a.none(t, eventIs("notice"), 200*time.Millisecond)
+	})
+
 	t.Run("the same name on two machines is allowed", func(t *testing.T) {
 		sid := x.session(t)
 		a := x.mac1.stream(sid, "agent")
@@ -821,7 +849,7 @@ func (x *hubSuite) adminAPI(t *testing.T) {
 
 	// Asked for by the operator: a removed agent that tries to join must show. Without a record
 	// a forgotten :allow looks like an agent that never started.
-	t.Run("a removed agent that tries to join leaves one refused record per minute", func(t *testing.T) {
+	t.Run("a removed agent that tries to join leaves a refused record; a repeat soon after leaves none", func(t *testing.T) {
 		sid := x.session(t)
 		wantStatus(t, 204)(adm.kick(sid, "bob@vps-2"))
 		refused := func() int {
@@ -839,7 +867,7 @@ func (x *hubSuite) adminAPI(t *testing.T) {
 		}
 		wantStatus(t, 403)(x.vps2.stream(sid, "bob").result())
 		if n := refused(); n != 1 {
-			t.Fatalf("%d refused records after a second try in the same minute, want 1", n)
+			t.Fatalf("%d refused records after a second try soon after, want 1", n)
 		}
 	})
 
