@@ -244,51 +244,36 @@ func TestJoinSendsTheQueryAndTheCredential(t *testing.T) {
 	}
 }
 
-func TestTakenNameGetsASuffix(t *testing.T) {
+// A name that another session on the machine holds is not taken over, and the client takes no
+// numbered name. It says why it is blocked and tries again until the name is free.
+func TestATakenNameBlocksTheClientUntilTheNameIsFree(t *testing.T) {
+	var mu sync.Mutex
+	var names []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("agent") == "dev" {
+		mu.Lock()
+		names = append(names, r.URL.Query().Get("agent"))
+		n := len(names)
+		mu.Unlock()
+		if n <= 2 {
 			writeError(w, 409, "conflict", "name dev@m is taken")
 			return
 		}
 		openStream(w)
-		writeEvent(w, "joined", "", map[string]string{"me": r.URL.Query().Get("agent") + "@m", "session": "s"})
+		writeEvent(w, "joined", "", map[string]string{"me": "dev@m", "session": "s"})
 		<-r.Context().Done()
 	}))
 	defer srv.Close()
 	rec := &recorder{}
 	c := testClientAs(t, srv.URL, rec, "dev")
 	runUntil(t, c, rec, func() bool { s, _, _, _ := rec.snapshot(); return slices.Contains(s, linkJoined) })
-	if c.agent() != "dev-2" {
-		t.Fatalf("agent %q", c.agent())
-	}
-}
-
-func TestSuffixStopsAfterNine(t *testing.T) {
-	var mu sync.Mutex
-	var names []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		names = append(names, r.URL.Query().Get("agent"))
-		mu.Unlock()
-		writeError(w, 409, "conflict", "taken")
-	}))
-	defer srv.Close()
-	rec := &recorder{}
-	c := testClientAs(t, srv.URL, rec, strings.Repeat("x", 64))
-	runUntil(t, c, rec, func() bool { s, _, _, _ := rec.snapshot(); return slices.Contains(s, linkUnreachable) })
 	mu.Lock()
 	defer mu.Unlock()
-	want := []string{c.join.agent}
-	for i := 2; i <= 9; i++ {
-		want = append(want, fmt.Sprintf("%s-%d", strings.Repeat("x", 60), i))
+	states, _, _, sleeps := rec.snapshot()
+	if !slices.Equal(names, []string{"dev", "dev", "dev"}) || !slices.Equal(states, []string{linkTaken, linkTaken, linkJoined}) {
+		t.Fatalf("names %v, states %v", names, states)
 	}
-	if !slices.Equal(names[:9], want) {
-		t.Fatalf("names %v", names)
-	}
-	for _, n := range names[9:] {
-		if n != want[8] {
-			t.Fatalf("a tenth name %q", n)
-		}
+	if !slices.Equal(sleeps, []time.Duration{retryTaken, retryTaken}) {
+		t.Fatalf("waits %v, want two of %v", sleeps, retryTaken)
 	}
 }
 

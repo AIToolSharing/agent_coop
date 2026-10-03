@@ -98,6 +98,10 @@ coop --agent reviewer claude          # the same, as the agent "reviewer", whate
 codex                                 # any other MCP client: no push, the agent uses wait/inbox
 ```
 
+A name is held by one session per machine. A second session with the same name is not let in:
+its agent is told why, and it joins when the name is free. To run two agents in one directory,
+start one as `coop --agent <name> claude`.
+
 The environment wins over the file, so one-off runs need no file:
 
 ```bash

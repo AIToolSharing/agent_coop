@@ -9,13 +9,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -29,12 +27,14 @@ func (e agentError) Error() string { return string(e) }
 
 // Kinds of link: where the stream stands, for the status tool and for tool errors.
 const (
-	linkJoining     = "joining"
-	linkJoined      = "joined"
-	linkNoSession   = "no_session"
-	linkClosed      = "closed"
-	linkRemoved     = "removed"
-	linkRefused     = "refused"
+	linkJoining   = "joining"
+	linkJoined    = "joined"
+	linkNoSession = "no_session"
+	linkClosed    = "closed"
+	linkRemoved   = "removed"
+	linkRefused   = "refused"
+	// linkTaken: another session on this machine holds the agent's name.
+	linkTaken       = "taken"
 	linkUnreachable = "unreachable"
 )
 
@@ -63,6 +63,9 @@ type joinInfo struct {
 const (
 	// retryClosed is the wait before the next join when the session is closed or unknown.
 	retryClosed = 30 * time.Second
+	// retryTaken is the wait before the next join when another session holds the name. The
+	// hub drops a dead holder within about 25 s, so a restarted session gets its name soon.
+	retryTaken = 10 * time.Second
 	// maxBackoff limits the wait before the next join after a failure.
 	maxBackoff = 30 * time.Second
 	// defaultIdle is how long a stream may be silent. The hub pings every 15 s, so a stream
@@ -79,14 +82,10 @@ type hubClient struct {
 	idle time.Duration
 	// sleep waits for d. It gives false when ctx ended first.
 	sleep func(ctx context.Context, d time.Duration) bool
-
-	mu sync.Mutex
-	// name is the agent name that the stream holds. It gets a suffix when the name is taken.
-	name string
 }
 
 func newHubClient(base, token, session string, join joinInfo) *hubClient {
-	return &hubClient{base: base, token: token, session: session, join: join, idle: defaultIdle, sleep: sleep, name: join.agent}
+	return &hubClient{base: base, token: token, session: session, join: join, idle: defaultIdle, sleep: sleep}
 }
 
 func sleep(ctx context.Context, d time.Duration) bool {
@@ -101,11 +100,7 @@ func sleep(ctx context.Context, d time.Duration) bool {
 }
 
 // agent gives the agent name that the stream holds.
-func (c *hubClient) agent() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.name
-}
+func (c *hubClient) agent() string { return c.join.agent }
 
 func (c *hubClient) http() *http.Client {
 	if c.httpc != nil {
@@ -122,7 +117,6 @@ func (c *hubClient) path(p string) string {
 func (c *hubClient) run(ctx context.Context, h streamHandlers) {
 	lastID := ""
 	backoff := time.Second
-	suffix := 1
 	failed := func() bool {
 		h.state(link{kind: linkUnreachable})
 		ok := c.sleep(ctx, backoff)
@@ -147,11 +141,13 @@ func (c *hubClient) run(ctx context.Context, h streamHandlers) {
 			watchdog.Stop()
 			cancel()
 			switch {
-			case res.StatusCode == 409 && lastID == "" && suffix < 9:
-				suffix++
-				c.mu.Lock()
-				c.name = fmt.Sprintf("%s-%d", truncate(c.join.agent, 60), suffix)
-				c.mu.Unlock()
+			case res.StatusCode == 409:
+				// Another session on this machine holds the name. It keeps its place; this
+				// one says why it is out and joins when the name is free.
+				h.state(link{kind: linkTaken, me: c.join.agent})
+				if !c.sleep(ctx, retryTaken) {
+					return
+				}
 			case res.StatusCode == 401:
 				h.state(link{kind: linkRefused})
 				return
@@ -191,13 +187,6 @@ func (c *hubClient) run(ctx context.Context, h streamHandlers) {
 			return
 		}
 	}
-}
-
-func truncate(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
-	}
-	return s
 }
 
 func (c *hubClient) openStream(ctx context.Context, lastID string) (*http.Response, error) {

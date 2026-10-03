@@ -654,15 +654,24 @@ func TestInboxDrainsTheQueueAndReportsPulls(t *testing.T) {
 	}
 }
 
-func TestTakenNameGetsASuffixInTheSession(t *testing.T) {
+// A second session with a name that is in use is not let in and gets no numbered name. Its
+// agent is told why, and how the user gives it a name of its own. The first session keeps its
+// place.
+func TestASecondSessionWithATakenNameIsBlockedAndToldWhy(t *testing.T) {
 	h := newFakeHub(t)
 	h.createSession("s")
 	a := start(t, options(h, "mac-1", "s", "dev", false))
+	if me := fmt.Sprint(joined(t, a)["me"]); me != "dev@mac-1" {
+		t.Fatalf("the first session is %s", me)
+	}
 	b := start(t, options(h, "mac-1", "s", "dev", false))
-	names := []string{fmt.Sprint(joined(t, a)["me"]), fmt.Sprint(joined(t, b)["me"])}
-	slices.Sort(names)
-	if !slices.Equal(names, []string{"dev-2@mac-1", "dev@mac-1"}) {
-		t.Fatalf("names %v", names)
+	eventually(t, "the second session says that the name is in use", func() bool {
+		st := b.json("status", nil)
+		reason := fmt.Sprint(st["reason"])
+		return st["joined"] == false && strings.Contains(reason, `the name "dev" is in use`) && strings.Contains(reason, "coop --agent")
+	})
+	if st := a.json("status", nil); st["joined"] != true || st["me"] != "dev@mac-1" {
+		t.Fatalf("the first session lost its place: %v", st)
 	}
 }
 
