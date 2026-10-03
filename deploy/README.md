@@ -40,7 +40,7 @@ upgrade. It ends with the steps that are left: TLS and tokens.
 | Path | Holds |
 |---|---|
 | `/usr/local/bin/coop` | the binary (the same one the clients run) |
-| `/var/lib/coop/coop.db` | every event, session, kick and token (SQLite, WAL mode) |
+| `/var/lib/coop/coop.db` | every event, session, kick and token (SQLite, WAL mode; readable by `coop` only) |
 | `/etc/systemd/system/coop.service` | the service: `coop serve --listen 127.0.0.1:8090 --data /var/lib/coop` |
 | `/etc/coop/tls/` | the TLS certificate and key (step 3) |
 

@@ -8,6 +8,9 @@ User=coop
 Group=coop
 # /var/lib/coop: made by systemd, owned by coop, writable under ProtectSystem=strict.
 StateDirectory=coop
+# The store is for coop only. systemd's defaults (0755, umask 0022) let any local user read it.
+StateDirectoryMode=0750
+UMask=0077
 ExecStart=/usr/local/bin/coop serve --listen 127.0.0.1:8090 --data /var/lib/coop
 Restart=on-failure
 NoNewPrivileges=yes

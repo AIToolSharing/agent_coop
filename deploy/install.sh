@@ -37,6 +37,8 @@ install -m 755 "$bin" /usr/local/bin/coop
 
 step "data in /var/lib/coop"
 install -d -o coop -g coop -m 750 /var/lib/coop
+# A hub from before the unit set UMask=0077 left the database files readable by every user.
+find /var/lib/coop -maxdepth 1 -type f -name 'coop.db*' -exec chmod 600 {} +
 
 step "service"
 install -m 644 "$here/coop.service" "$unit_dir/coop.service"
