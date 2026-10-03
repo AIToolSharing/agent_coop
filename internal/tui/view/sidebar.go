@@ -18,13 +18,37 @@ type Summary struct {
 	PerMinute int
 }
 
+// RefusedFor is how long a removed agent that tried to join stays in the list.
+const RefusedFor = 5 * time.Minute
+
+// triedLately reports whether the hub refused a join of a within the last RefusedFor.
+func triedLately(a *model.Agent, now time.Time) bool {
+	t, ok := parseTime(a.RefusedAt)
+	return ok && now.Sub(t) < RefusedFor
+}
+
+// Listed gives the agents that the sidebar shows and the session count takes: every agent but
+// those the operator removed. A removed agent that tried to join lately is listed, so that the
+// operator sees that it waits for :allow. AgentList keeps every agent, for :allow and for the
+// history.
+func Listed(v *model.Session, now time.Time) []*model.Agent {
+	all := v.AgentList()
+	out := all[:0]
+	for _, a := range all {
+		if !a.Kicked || a.Online || triedLately(a, now) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 // Summaries gives the all-traffic row, then every session in name order.
 func Summaries(s *model.Store, now time.Time) []Summary {
 	minuteAgo := now.Add(-time.Minute).UTC().Format(time.RFC3339Nano)
 	one := func(sid, status string) Summary {
 		v := s.View(sid)
 		sum := Summary{SID: sid, Status: status, OpenAsks: len(v.OpenAsks())}
-		for _, a := range v.Members() {
+		for _, a := range Listed(v, now) {
 			sum.Agents++
 			if a.Online {
 				sum.Online++
@@ -140,7 +164,12 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 		here := len(sb.Rows) == sel.Cursor
 		state := Color(a.State, StateColor(a.State))
 		if a.Kicked {
-			state = Color("removed", "red")
+			// Short, so that the name stays whole: the agent's details say the rest.
+			text := "removed"
+			if triedLately(a, now) {
+				text = "refused " + Age(a.RefusedAt, now) + " ago"
+			}
+			state = Color(text, "red")
 		}
 		wait := 0
 		if a.Waiting != nil {

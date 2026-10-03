@@ -205,30 +205,52 @@ func extraTraffic(n int, seed int64) []model.Update {
 }
 
 // Found in use: agents the operator removed stayed in the sidebar and in the session count
-// for ever, marked "removed".
-func TestRemovedAgentsLeaveTheSidebar(t *testing.T) {
+// for ever, marked "removed". Asked for after it: a removed agent that tried to join in the
+// last five minutes is listed, so that the operator sees that it waits for :allow.
+func TestRemovedAgentsLeaveTheSidebarUnlessTheyTriedToJoin(t *testing.T) {
 	s := store()
 	// bob goes offline, then the operator removes him.
 	s.Apply(model.Update{Presence: &wire.PresenceUpdate{Key: "build-42.vps-2.bob", Revision: 1000}})
-	s.Apply(model.Update{Kick: &wire.KickUpdate{Key: "build-42.kick.vps-2.bob", Revision: 1001, Record: &wire.KickRecord{At: modeltest.At(300)}}})
-	sums := view.Summaries(s, modeltest.Now)
-	for _, sum := range sums {
-		if sum.SID == "build-42" && (sum.Agents != 2 || sum.Online != 2) {
-			t.Fatalf("build-42 counts %d/%d, want 2/2", sum.Online, sum.Agents)
-		}
+	s.Apply(model.Update{Kick: &wire.KickUpdate{Key: "build-42.kick.vps-2.bob", Revision: 1001, Record: &wire.KickRecord{At: modeltest.At(100)}}})
+	now := modeltest.Now
+	sidebar := func(at time.Time) string {
+		v := s.View("build-42")
+		sb := view.RenderSidebar(view.Summaries(s, at), view.Listed(v, at), view.Selection{SID: "build-42", Cursor: -1}, 60, at)
+		return strings.Join(texts(sb.Rendered), "\n")
 	}
-	v := s.View("build-42")
-	sb := view.RenderSidebar(sums, v.Members(), view.Selection{SID: "build-42", Cursor: -1}, 40, modeltest.Now)
-	if joined := strings.Join(texts(sb.Rendered), "\n"); strings.Contains(joined, "bob@vps-2") || !strings.Contains(joined, "alice@mac-1") {
-		t.Fatalf("sidebar:\n%s", joined)
+	counts := func(at time.Time) string {
+		for _, sum := range view.Summaries(s, at) {
+			if sum.SID == "build-42" {
+				return fmt.Sprintf("%d/%d", sum.Online, sum.Agents)
+			}
+		}
+		return "?"
+	}
+	if got := sidebar(now); strings.Contains(got, "bob@vps-2") || !strings.Contains(got, "alice@mac-1") || counts(now) != "2/2" {
+		t.Fatalf("after the removal: counts %s, sidebar:\n%s", counts(now), got)
 	}
 	// The removed agent stays known, so that :allow finds it.
 	known := false
-	for _, a := range v.AgentList() {
+	for _, a := range s.View("build-42").AgentList() {
 		known = known || (a.Address == "bob@vps-2" && a.Kicked)
 	}
 	if !known {
 		t.Fatal("AgentList lost the removed agent")
+	}
+	// bob tries to join two minutes before now: the hub refuses him and records it.
+	tried := now.Add(-2 * time.Minute).UTC().Format("2006-01-02T15:04:05.000Z07:00")
+	s.Apply(model.Update{Event: &wire.Event{Kind: wire.EventActivity, Seq: 500, SID: "build-42", From: "bob@vps-2", Activity: &wire.Activity{Kind: "refused", Reason: "removed", At: tried}}})
+	if got := sidebar(now); !strings.Contains(got, "bob@vps-2 refused 2m ago") || counts(now) != "2/3" {
+		t.Fatalf("after the refused join: counts %s, sidebar:\n%s", counts(now), got)
+	}
+	// The agent's details show the try as a line of its timeline.
+	if lines := strings.Join(texts(view.RenderAgent(s.View("build-42"), "bob@vps-2", opts(110))), "\n"); !strings.Contains(lines, "tried to join; it is removed (:allow lets it back)") {
+		t.Fatalf("the agent's timeline has no line for the refused join:\n%s", lines)
+	}
+	// Five minutes after the try the row goes again.
+	later := now.Add(4 * time.Minute)
+	if got := sidebar(later); strings.Contains(got, "bob@vps-2") || counts(later) != "2/2" {
+		t.Fatalf("six minutes after the try: counts %s, sidebar:\n%s", counts(later), got)
 	}
 }
 

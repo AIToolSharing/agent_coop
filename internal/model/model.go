@@ -78,7 +78,10 @@ type Agent struct {
 	Waiting    *Waiting
 	Sent       int
 	JoinedAt   string
-	Left       *Left
+	// RefusedAt is the time of the last join that the hub refused because the operator removed
+	// the agent; "" for none.
+	RefusedAt string
+	Left      *Left
 	// FirstSeq is the sequence of the agent's first event: the order agents are listed in.
 	FirstSeq int64
 
@@ -475,6 +478,8 @@ func (v *Session) applyEvent(e *wire.Event) {
 			}
 		case "wait_end":
 			sys("wait ended: " + x.Result)
+		case "refused":
+			sys("tried to join; it is removed (:allow lets it back)")
 		}
 	}
 }
@@ -505,19 +510,6 @@ func insertMsg(list []*Msg, m *Msg) []*Msg {
 	copy(list[i+1:], list[i:])
 	list[i] = m
 	return list
-}
-
-// Members lists the agents that belong to the session now: every agent but those the operator
-// removed. A removed agent stays in AgentList, so that :allow and the history find it.
-func (v *Session) Members() []*Agent {
-	all := v.AgentList()
-	out := all[:0]
-	for _, a := range all {
-		if !a.Kicked || a.Online {
-			out = append(out, a)
-		}
-	}
-	return out
 }
 
 // AgentList lists the agents in order of first appearance.
@@ -580,7 +572,7 @@ func (a *Agent) addEvent(seq int64, x *wire.Activity) {
 
 // derive replays the agent's events in sequence order, as the TS model did for all events.
 func (a *Agent) derive() {
-	a.Host, a.Cwd, a.Client, a.JoinedAt = "", "", "", ""
+	a.Host, a.Cwd, a.Client, a.JoinedAt, a.RefusedAt = "", "", "", "", ""
 	a.Left = nil
 	a.dState, a.dSince, a.dNote, a.dWaiting = "unknown", "", "", nil
 	for _, ev := range a.evts {
@@ -602,6 +594,8 @@ func (a *Agent) derive() {
 			a.dWaiting = &Waiting{On: x.From, ReplyTo: x.ReplyTo, Since: x.At}
 		case "wait_end":
 			a.dWaiting = nil
+		case "refused":
+			a.RefusedAt = x.At
 		}
 	}
 	a.refresh()

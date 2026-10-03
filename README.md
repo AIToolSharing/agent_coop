@@ -143,6 +143,10 @@ message in its thread, `a` goes to the next thing that needs you (a message for 
 waits, a blocked agent). The rare actions are commands: `:new`, `:close`, `:reopen`, `:delete`,
 `:kick`, `:allow`, `:withdraw`, `:filter`, `:sys`; `tab` completes them. `?` shows every key.
 
+An agent you remove with `:kick` leaves the agent list. If it tries to join, it shows again for
+five minutes as `refused 2m ago`, so a forgotten `:allow <name>` does not look like an agent
+that never started.
+
 ## Security
 
 Protected:

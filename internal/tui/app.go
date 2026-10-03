@@ -192,7 +192,7 @@ func (a *App) screen() screen {
 	s := screen{v: a.store.View(a.sid)}
 	now := a.now()
 	s.sums = view.Summaries(a.store, now)
-	agents := s.v.Members()
+	agents := view.Listed(s.v, now)
 	if a.sidebar {
 		s.sidebarW = view.SidebarWidth(s.sums, agents, max(22, a.width/3))
 	}

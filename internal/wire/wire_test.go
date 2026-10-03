@@ -123,7 +123,7 @@ func event() *rapid.Generator[wire.Event] {
 			e.Kind = wire.EventActivity
 			e.From = address().Draw(t, "from").String()
 			a := wire.Activity{At: iso.Draw(t, "at")}
-			switch rapid.IntRange(0, 4).Draw(t, "akind") {
+			switch rapid.IntRange(0, 5).Draw(t, "akind") {
 			case 0:
 				a.Kind = "joined"
 				a.Host = token.Draw(t, "host")
@@ -151,6 +151,9 @@ func event() *rapid.Generator[wire.Event] {
 					a.ReplyTo = id.Draw(t, "wreply")
 				}
 				a.TimeoutS = rapid.IntRange(1, 600).Draw(t, "timeout")
+			case 4:
+				a.Kind = "refused"
+				a.Reason = "removed"
 			default:
 				a.Kind = "wait_end"
 				a.Result = rapid.SampledFrom([]string{"message", "timeout", "cancelled"}).Draw(t, "result")

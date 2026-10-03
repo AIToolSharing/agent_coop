@@ -211,8 +211,10 @@ type Hub struct {
 	mu             sync.Mutex
 	conns          map[string]*Conn // live connections, by presence key
 	feeds          map[*feed]struct{}
-	closed         bool
-	wg             sync.WaitGroup
+	// refusedAt is when the hub last recorded a refused join of a removed agent, by presence key.
+	refusedAt map[string]time.Time
+	closed    bool
+	wg        sync.WaitGroup
 }
 
 // New makes a hub over st.
@@ -235,13 +237,14 @@ func New(st *store.Store, opt Options) *Hub {
 		Activity: pick(opt.Limits.Activity, DefaultLimits.Activity),
 	}
 	return &Hub{
-		st:    st,
-		opt:   opt,
-		join:  newLimiter(opt.Limits.Join, opt.Now),
-		msg:   newLimiter(opt.Limits.Msg, opt.Now),
-		act:   newLimiter(opt.Limits.Activity, opt.Now),
-		conns: map[string]*Conn{},
-		feeds: map[*feed]struct{}{},
+		st:        st,
+		opt:       opt,
+		join:      newLimiter(opt.Limits.Join, opt.Now),
+		msg:       newLimiter(opt.Limits.Msg, opt.Now),
+		act:       newLimiter(opt.Limits.Activity, opt.Now),
+		conns:     map[string]*Conn{},
+		feeds:     map[*feed]struct{}{},
+		refusedAt: map[string]time.Time{},
 	}
 }
 
@@ -383,6 +386,7 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 		return nil, storeErr(err)
 	}
 	if kicked {
+		h.refusedLocked(sid, me)
 		return nil, errf("forbidden", "removed from session")
 	}
 	end, err := h.st.LastSeq()
@@ -418,6 +422,21 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 	h.conns[key] = c
 	h.wg.Add(1)
 	return &Joined{Conn: c, StartSeq: startSeq, CatchUpUntil: end}, nil
+}
+
+// refusedLocked records that a removed agent tried to join, so that the operator sees it: a
+// forgotten :allow must not look like an agent that never started. One record per agent per
+// minute; a restart loop must not fill the log.
+func (h *Hub) refusedLocked(sid string, me wire.Address) {
+	key := wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: me})
+	now := h.opt.Now()
+	if last, ok := h.refusedAt[key]; ok && now.Sub(last) < time.Minute {
+		return
+	}
+	h.refusedAt[key] = now
+	_, _ = h.publishLocked(wire.Event{Kind: wire.EventActivity, SID: sid, From: me.String(), Activity: &wire.Activity{
+		Kind: "refused", Reason: "removed", At: h.now(),
+	}}, false, nil)
 }
 
 // Run delivers events to one connection until it closes, the client goes (ctx), or a write
