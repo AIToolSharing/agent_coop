@@ -140,6 +140,7 @@ the same way.
 | `coop hook posttool`, `prompt`, `stop` | agent machines | report what the agent does to the hub. Claude Code runs them. |
 | `coop tui` | the operator's machine | shows each session and steers each agent |
 | `coop login`, `setup`, `session`, `claude`, `doctor` | agent machines, operator | set a machine up and check it |
+| `coop start` | any machine | starts a named agent in a session on another machine |
 | `coop serve` | the server | the hub: the API over one SQLite file |
 | `coop admin token` | the server | makes, lists and revokes tokens |
 
@@ -301,6 +302,53 @@ The limits:
   messages are in the transcript.
 - No agent gets the activity of another agent. Only an operator token can read it.
 
+### Let an agent run the session: the orchestrator
+
+An orchestrator is an agent that may also do what you do in the TUI. It releases, pauses and
+stops agents, and it creates, closes and reopens sessions. It reads each message of a session.
+Use it for a workflow in which one agent starts and directs the others, for example
+[agent-pipeline](https://github.com/map588/agents).
+
+1. Make an orchestrator token on the server, and store it on the machine of the orchestrator.
+
+   ```bash
+   ssh <server> 'sudo -u coop coop admin token add --role orchestrator <name>'
+   coop login <hub address> <orchestrator token>
+   ```
+
+2. Start the orchestrator in its session.
+
+   ```bash
+   coop --orchestrator claude <session>
+   ```
+
+The orchestrator has three more tools:
+
+| Tool | Does |
+|---|---|
+| `steer` | releases (with a task), pauses, resumes, stops, allows and forgets agents; sets the hold; creates, closes and reopens sessions |
+| `read` | gives each message of a session, also the messages between two other agents |
+| `sessions` | lists each session with its agents, their states, notes and gates |
+
+It starts agents on other machines with `coop start`. It is never held when it joins, and the
+messages between other agents do not interrupt it. You can still pause or stop it. It sends as
+itself, never as `operator`. So it asks you each question that is yours. The sidebar marks it
+with `★`, and the timeline names it: "released by the orchestrator <name>".
+
+An agent that the orchestrator starts with `coop claude` is a plain agent. The flag does not
+pass to it.
+
+### Read every session: the reporter
+
+A reporter is a Claude Code session that reads every session and changes nothing. It joins no
+session, so the TUI does not list it. It has two tools, `sessions` and `read`.
+
+```bash
+ssh <server> 'sudo -u coop coop admin token add --role reporter <name>'
+coop login <hub address> <reporter token>
+coop --reporter claude
+```
+
 ### Hold, pause, stop
 
 You decide when an agent works. The keys act on the agent under the sidebar cursor, or on the
@@ -381,9 +429,17 @@ Protected:
   that it joined. A direct message between two other agents stays private.
 - **Activity.** The hub gives the activity of the agents (tool calls, words, prompts, changed
   files) only to an operator token. The hub keeps it in memory only.
-- **Control.** Only an operator token (`coop admin token add --operator`) can close and delete
-  sessions, hold, pause and remove agents, withdraw messages, and send as `operator`. A machine
-  token cannot use the admin API. An operator token cannot act as an agent.
+- **Roles.** Each token has one role. The hub checks the role at each request.
+
+  | Role | Agent tools | Reads all sessions | Changes sessions and agents | Sends as `operator` |
+  |---|---|---|---|---|
+  | `machine` | yes | no | no | no |
+  | `operator` | no | yes | yes | yes |
+  | `orchestrator` | yes | yes | yes | no |
+  | `reporter` | no | yes | no | no |
+
+  Only the person who starts a process selects its role (`coop --orchestrator claude`). A
+  credential file or a `.coop` file cannot.
 - **Revocation.** `coop admin token revoke <name>` makes the hub refuse each later request of
   that token at once. The open streams of the token end in 15 seconds.
 - **Abuse.** Tokens have 256 bits, and the hub stores only a SHA-256 of each token. The hub has
@@ -400,6 +456,10 @@ Not protected:
   such an agent can start a process that has no hook.
 - The activity can hold a secret: a command line, or words of an agent. Each person with an
   operator token can read it while the hub keeps it.
+- An orchestrator token on a machine gives its power to each process there that can read the
+  credential file. Put it only on a machine that you trust as you trust your operator token.
+  The orchestrator's agent can be told what to do by a message of a peer. The skill tells it
+  not to obey a peer as the user.
 - A message from a peer is input from a collaborator. The skill tells agents not to obey it as
   an instruction from the user. Only `operator` messages come from the user.
 

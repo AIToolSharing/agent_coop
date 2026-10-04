@@ -692,3 +692,19 @@ func TestActivityRendersTheLargestTraceFast(t *testing.T) {
 		t.Logf("%d items, %d lines: %s", n, len(r.Lines), took)
 	}
 }
+
+// The operator must see which agent may act for them.
+func TestAnOrchestratorHasAMark(t *testing.T) {
+	s := store()
+	s.Apply(model.Update{Presence: &wire.PresenceUpdate{Key: "build-42.mac-1.alice", Revision: 1000, Record: &wire.PresenceRecord{Host: "mac-1", Cwd: "/src/app", State: "working", JoinedAt: modeltest.At(0), Gated: true, Role: wire.RoleOrchestrator}}})
+	v := s.View("build-42")
+	sb := view.RenderSidebar(view.Summaries(s, modeltest.Now), view.Listed(v, modeltest.Now), view.Selection{SID: "build-42", Cursor: -1}, 40, modeltest.Now)
+	checkShape(t, sb.Rendered, 40)
+	got := strings.Join(texts(sb.Rendered), "\n")
+	if !strings.Contains(got, "● alice@mac-1★ working") || strings.Contains(got, "bob@vps-2★") {
+		t.Fatalf("sidebar:\n%s", got)
+	}
+	if d := strings.Join(texts(view.RenderAgent(v, "alice@mac-1", opts(90))), "\n"); !strings.Contains(d, "role         orchestrator") {
+		t.Fatalf("details:\n%s", d)
+	}
+}

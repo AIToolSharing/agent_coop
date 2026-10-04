@@ -33,6 +33,9 @@ func RenderAgent(v *model.Session, address string, o Options) Rendered {
 		presence = Color("  ● online", "green")
 	}
 	add(Line{Bold(a.Address), presence}, "")
+	if a.Orchestrator {
+		add(kv("role", "orchestrator: it may release, pause and stop agents and set up sessions for you", Style{Color: "cyan"}), "")
+	}
 	if a.Kicked {
 		add(kv("removed", "by the operator; it cannot join until you allow it back (:allow)", Style{Color: "red"}), "")
 	}

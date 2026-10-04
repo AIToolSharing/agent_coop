@@ -230,7 +230,13 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 		if a.Online {
 			icon, color = "● ", "green"
 		}
-		l := Line{Color(icon, color), Styled(strings.TrimRight(Cut(a.Address, nameW), " "), Style{Bold: true, Inverse: here}), S(" "), state}
+		mark := Seg{}
+		if a.Orchestrator {
+			// The agent that may act for the operator.
+			mark = Color("★", "cyan")
+			nameW = max(6, nameW-1)
+		}
+		l := Line{Color(icon, color), Styled(strings.TrimRight(Cut(a.Address, nameW), " "), Style{Bold: true, Inverse: here}), mark, S(" "), state}
 		if a.Waiting != nil {
 			l = append(l, Color(" ⏳"+Age(a.Waiting.Since, now), "yellow"))
 		}
