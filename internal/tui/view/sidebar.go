@@ -235,6 +235,10 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 			l = append(l, Color(" ⏳"+Age(a.Waiting.Since, now), "yellow"))
 		}
 		add(l, &Row{Address: a.Address})
+		if l := NowLine(a, now); l != nil {
+			// What the agent does at this moment. The line has no row of its own.
+			add(l, nil)
+		}
 		if lately(a.DuplicateAt, now) {
 			// A second session asked for this name and the hub refused it. It has no row of
 			// its own: its address is this agent's.

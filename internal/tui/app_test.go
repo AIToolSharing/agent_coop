@@ -199,6 +199,16 @@ func TestViews(t *testing.T) {
 	contains(t, h.frame(), "coop · build-42 · threads", "OPEN ASKS (1)")
 	h.keys("1")
 	contains(t, h.frame(), "coop · build-42 · transcript")
+	// The activity view follows the newest item, as the transcript does.
+	h.app.store.Apply(model.Update{Trace: &wire.TraceUpdate{Boot: 1, Key: "build-42.mac-1.alice", Items: []wire.TraceItem{
+		{N: 1, At: modeltest.At(290), Kind: wire.TraceToolStart, ID: "t1", Tool: "Bash", Text: "go test ./..."},
+	}}})
+	h.keys("3")
+	contains(t, h.frame(), "coop · build-42 · activity  follow ●", "▸ Bash: go test ./...", "1 transcript · 2 threads")
+	h.keys("space")
+	if strings.Contains(h.frame(), "follow ●") {
+		t.Fatalf("space should stop the follow mode in the activity view:\n%s", h.frame())
+	}
 }
 
 func TestComposeToAllToOneAgentAndWithAName(t *testing.T) {

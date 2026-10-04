@@ -66,8 +66,19 @@ func RenderAgent(v *model.Session, address string, o Options) Rendered {
 	add(kv("host", or(a.Host, "?"), Style{}), "")
 	add(kv("directory", or(a.Cwd, "?"), Style{}), "")
 	add(kv("client", or(a.Client, "?"), Style{}), "")
+	if a.Trace.Branch != "" {
+		add(kv("branch", a.Trace.Branch, Style{}), "")
+	}
 	if a.HerdrPane != "" {
 		add(kv("herdr", "pane "+a.HerdrPane+" (o goes to it)", Style{}), "")
+	}
+	if a.Online {
+		for _, it := range a.Trace.Running() {
+			add(kv("now", toolText(it)+" for "+Age(it.At, o.Now), Style{Color: "yellow"}), "")
+		}
+		if len(a.Trace.Items) == 0 && !a.Gated {
+			add(kv("activity", "none: this agent was not started with coop claude", Style{}), "")
+		}
 	}
 	joined := "?"
 	if a.JoinedAt != "" {
@@ -78,6 +89,7 @@ func RenderAgent(v *model.Session, address string, o Options) Rendered {
 		add(kv("left", Clock(a.Left.At, o.loc())+" ("+a.Left.Reason+")", Style{}), "")
 	}
 	add(kv("messages", "sent "+itoa(int64(a.Sent)), Style{}), "")
+	agentTrace(v, a, o, add)
 	add(Line{S("")}, "")
 	add(Line{Bold("TIMELINE")}, "")
 	for _, it := range v.Timeline {

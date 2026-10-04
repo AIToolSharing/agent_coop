@@ -142,6 +142,32 @@ func TestFeedResumesAndReconcilesAfterADrop(t *testing.T) {
 	}
 }
 
+// The trace has no event id, and each connection gets the whole trace again. The store must
+// hold each item one time, and the trace must not move the point that the feed resumes from.
+func TestFeedCarriesTheTraceAndDoesNotResumeFromIt(t *testing.T) {
+	trace := `{"kind":"trace","boot":5,"key":"build-42.vps-2.bob","branch":"main","items":[{"n":1,"at":"2026-09-30T12:00:01.000Z","kind":"tool_start","id":"t1","tool":"Bash","text":"go test ./..."}]}`
+	s := &sse{hold: make(chan struct{}), scripts: [][]string{
+		{frame("session", "", sessionOpen), frame("event", "7", msg7), frame("trace", "", trace)},
+		{frame("session", "", sessionOpen), frame("trace", "", trace), frame("event", "9", msg9), "hold"},
+	}}
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+	defer close(s.hold)
+	store, err := run(t, srv, "op.secret", time.Second, func(st *model.Store) bool {
+		return st.View("build-42").Msgs["9"] != nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob := store.View("build-42").Agents["bob@vps-2"]
+	if bob == nil || len(bob.Trace.Items) != 1 || bob.Trace.Items[0].Text != "go test ./..." || bob.Trace.Branch != "main" {
+		t.Fatalf("bob %+v, want one trace item and the branch", bob)
+	}
+	if got := s.requests[1].Header.Get("Last-Event-ID"); got != "7" {
+		t.Fatalf("Last-Event-ID %q, want 7", got)
+	}
+}
+
 func TestFeedReportsReconnectingBetweenConnections(t *testing.T) {
 	s := &sse{hold: make(chan struct{}), scripts: [][]string{{frame("session", "", sessionOpen)}, {"hold"}}}
 	srv := httptest.NewServer(s)

@@ -30,6 +30,7 @@ type Update struct {
 	Session  *wire.SessionUpdate
 	Kick     *wire.KickUpdate
 	Presence *wire.PresenceUpdate
+	Trace    *wire.TraceUpdate
 	Snapshot *Snapshot
 	Link     Link
 }
@@ -95,6 +96,8 @@ type Agent struct {
 	Gated bool
 	// HerdrPane is the Herdr pane that the agent runs in while it is online, or "".
 	HerdrPane string
+	// Trace is what the agent did at its terminal lately. Never nil.
+	Trace *Trace
 	// FirstSeq is the sequence of the agent's first event: the order agents are listed in.
 	FirstSeq int64
 
@@ -168,6 +171,10 @@ type Store struct {
 	events    map[int64]*wire.Event
 	views     map[string]*Session
 	all       *Session
+	// traces holds the trace of each agent, by presence key. boot names the run of the hub
+	// that the traces are of.
+	traces map[string]*Trace
+	boot   int64
 }
 
 func New() *Store {
@@ -179,6 +186,7 @@ func New() *Store {
 		revisions: map[string]int64{},
 		events:    map[int64]*wire.Event{},
 		views:     map[string]*Session{},
+		traces:    map[string]*Trace{},
 	}
 	s.all = newSession(s, AllSessions, true)
 	return s
@@ -237,6 +245,8 @@ func (s *Store) Apply(u Update) {
 		}
 	case u.Link != "":
 		s.Link = u.Link
+	case u.Trace != nil:
+		s.applyTrace(u.Trace)
 	case u.Snapshot != nil:
 		s.applySnapshot(u.Snapshot)
 	case u.Session != nil:
@@ -362,6 +372,11 @@ func (s *Store) admitToAll(sid string) {
 			s.all.agent(k.SID, k.Target.String(), math.MaxInt64).Kicked = true
 		}
 	}
+	for key := range s.traces {
+		if k, ok := wire.ParsePresenceKey(key); ok && k.SID == sid {
+			s.all.agent(k.SID, k.Agent.String(), math.MaxInt64)
+		}
+	}
 	s.all.Version++
 }
 
@@ -371,6 +386,11 @@ func (s *Store) deleteSession(sid string) {
 	for seq, e := range s.events {
 		if e.SID == sid {
 			delete(s.events, seq)
+		}
+	}
+	for key := range s.traces {
+		if k, ok := wire.ParsePresenceKey(key); ok && k.SID == sid {
+			delete(s.traces, key)
 		}
 	}
 	version := s.all.Version + 1
@@ -393,8 +413,9 @@ func (v *Session) agent(sid, address string, seq int64) *Agent {
 	key := v.agentKey(sid, address)
 	a := v.Agents[key]
 	if a == nil {
-		a = &Agent{Address: address, SID: sid, State: "unknown", dState: "unknown", Gate: wire.GateRun, FirstSeq: math.MaxInt64}
+		a = &Agent{Address: address, SID: sid, State: "unknown", dState: "unknown", Gate: wire.GateRun, FirstSeq: math.MaxInt64, Trace: &Trace{}}
 		if addr, ok := wire.ParseAddress(address); ok {
+			a.Trace = v.store.trace(wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: addr}))
 			kick := wire.BuildSessionsKey(wire.SessionsKey{Kind: "kick", SID: sid, Target: addr})
 			a.Kicked = v.store.Kicks[kick] != nil
 			if rec := v.store.Presence[wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: addr})]; rec != nil {

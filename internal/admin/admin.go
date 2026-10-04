@@ -201,6 +201,8 @@ func (c *Client) dispatch(data string, lastID *string, seen map[string]map[strin
 	case "presence":
 		seen["presence"][ev.Presence.Key] = true
 		return emit(model.Update{Presence: ev.Presence})
+	case "trace":
+		return emit(model.Update{Trace: ev.Trace})
 	case "snapshot":
 		snap := &model.Snapshot{Bucket: ev.Bucket, Seen: map[string]bool{}}
 		for k := range seen[ev.Bucket] {

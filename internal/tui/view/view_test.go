@@ -531,3 +531,160 @@ func TestWrapAndFit(t *testing.T) {
 		t.Error("clock")
 	}
 }
+
+// traced gives the fixture with a trace: Alice said what she does, ran the tests (the call
+// ended), changed two files and runs a build now; Bob changed one of the same files and one
+// of his calls failed; a person typed a prompt at Bob's terminal.
+func traced() *model.Store {
+	s := store()
+	key := func(a wire.Address) string {
+		return wire.BuildPresenceKey(wire.PresenceKey{SID: modeltest.SID, Agent: a})
+	}
+	words := "I will run the tests first, and then I will change the parser so that it reads the new header."
+	s.Apply(model.Update{Trace: &wire.TraceUpdate{Boot: 1, Key: key(modeltest.Alice), Branch: "fix-parser", Items: []wire.TraceItem{
+		{N: 1, At: modeltest.At(200), Kind: wire.TraceSay, ID: "u1", Text: words},
+		{N: 2, At: modeltest.At(201), Kind: wire.TraceToolStart, ID: "t1", Tool: "Bash", Text: "go test ./..."},
+		{N: 3, At: modeltest.At(215), Kind: wire.TraceToolEnd, ID: "t1", Tool: "Bash", Text: "go test ./...", MS: 14200},
+		{N: 6, At: modeltest.At(230), Kind: wire.TraceToolEnd, ID: "t2", Tool: "Edit", Text: "src/parser.go", MS: 40, File: "src/parser.go"},
+		{N: 7, At: modeltest.At(286), Kind: wire.TraceToolStart, ID: "t3", Tool: "Bash", Text: "make build"},
+	}, Files: []wire.TraceFile{{Path: "src/parser.go", Count: 2, At: modeltest.At(230)}, {Path: "README.md", Count: 1, At: modeltest.At(220)}}}})
+	s.Apply(model.Update{Trace: &wire.TraceUpdate{Boot: 1, Key: key(modeltest.Bob), Items: []wire.TraceItem{
+		{N: 4, At: modeltest.At(220), Kind: wire.TracePrompt, Text: "also fix the header"},
+		{N: 5, At: modeltest.At(225), Kind: wire.TraceToolStart, ID: "t1", Tool: "Edit", Text: "src/parser.go"},
+		{N: 8, At: modeltest.At(290), Kind: wire.TraceToolEnd, ID: "t1", Tool: "Edit", Text: "src/parser.go", MS: 65000, Failed: true},
+		{N: 9, At: modeltest.At(291), Kind: wire.TraceToolStart, ID: "t9", Tool: "Read", Text: "go.mod"},
+		{N: 10, At: modeltest.At(292), Kind: wire.TraceSay, Text: "Done.", Final: true},
+	}, Files: []wire.TraceFile{{Path: "src/parser.go", Count: 1, At: modeltest.At(100)}}}})
+	return s
+}
+
+// The operator's complaint: the TUI does not show what the agents do. The activity view
+// shows each tool call one time with its result, and the words of an agent whole.
+func TestActivityShowsToolCallsWithTheirResultAndWholeWords(t *testing.T) {
+	v := traced().View(modeltest.SID)
+	for _, width := range []int{110, 50} {
+		r := view.RenderActivity(v, opts(width))
+		checkShape(t, r, width)
+		lines := texts(r)
+		joined := strings.Join(lines, "\n")
+		all := normalize(lines)
+		for _, word := range strings.Fields("I will run the tests first, and then I will change the parser so that it reads the new header.") {
+			if !strings.Contains(all, word) {
+				t.Errorf("width %d: the word %q of the agent is not shown:\n%s", width, word, joined)
+			}
+		}
+		if n := strings.Count(joined, "go test ./..."); n != 1 {
+			t.Errorf("width %d: the tool call shows %d times, want 1:\n%s", width, n, joined)
+		}
+	}
+	lines := texts(view.RenderActivity(v, opts(110)))
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"12:03:21  alice@mac-1  ✓ Bash: go test ./... 14s",  // ended: how long it ran
+		"12:03:50  alice@mac-1  ✓ Edit: src/parser.go 0.0s", // an end with no start in the trace
+		"12:04:46  alice@mac-1  ▸ Bash: make build 14s …",   // runs now
+		"12:03:40  bob@vps-2    » also fix the header",      // a prompt of a person
+		"12:03:45  bob@vps-2    ✗ Edit: src/parser.go 1m5s", // failed
+		"12:04:51  bob@vps-2    · Read: go.mod no result",   // the turn ended with no result of the call
+		"12:04:52  bob@vps-2      Done.",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in\n%s", want, joined)
+		}
+	}
+	// Oldest first, in the order the hub got the items, over all agents.
+	if !(strings.Index(joined, "I will run") < strings.Index(joined, "also fix") && strings.Index(joined, "also fix") < strings.Index(joined, "make build")) {
+		t.Errorf("the items are not in the order of their numbers:\n%s", joined)
+	}
+
+	o := opts(110)
+	o.Agent = "bob@vps-2"
+	if joined := strings.Join(texts(view.RenderActivity(v, o)), "\n"); strings.Contains(joined, "alice") || !strings.Contains(joined, "also fix") {
+		t.Errorf("the agent filter should leave only bob:\n%s", joined)
+	}
+	o = opts(110)
+	o.Search = "MAKE"
+	if lines := texts(view.RenderActivity(v, o)); len(lines) != 1 || !strings.Contains(lines[0], "make build") {
+		t.Errorf("the search should leave one line: %q", lines)
+	}
+	if lines := texts(view.RenderActivity(store().View(modeltest.SID), opts(60))); len(lines) != 1 || !strings.Contains(lines[0], "no activity yet") {
+		t.Errorf("no trace needs a note: %q", lines)
+	}
+	// In the view of all sessions, the session comes with the name.
+	if joined := strings.Join(texts(view.RenderActivity(traced().View(model.AllSessions), opts(110))), "\n"); !strings.Contains(joined, "build-42/alice@mac-1") {
+		t.Errorf("the view of all sessions should name the session:\n%s", joined)
+	}
+}
+
+func TestTheSidebarShowsWhatAnAgentRunsNow(t *testing.T) {
+	s := traced()
+	v := s.View(modeltest.SID)
+	sb := view.RenderSidebar(view.Summaries(s, modeltest.Now), v.AgentList(), view.Selection{SID: modeltest.SID, Cursor: -1}, 40, modeltest.Now)
+	checkShape(t, sb.Rendered, 40)
+	lines := texts(sb.Rendered)
+	for i, l := range lines {
+		if strings.Contains(l, "● alice@mac-1") {
+			if !strings.Contains(lines[i+1], "▸ 14s Bash: make build") || sb.Rows[i+1] != nil {
+				t.Fatalf("the line under alice is %q with row %v, want her running call and no row", lines[i+1], sb.Rows[i+1])
+			}
+		}
+		// Bob's turn ended: his call with no result does not run.
+		if strings.Contains(l, "go.mod") {
+			t.Fatalf("the sidebar shows a call that does not run: %q", l)
+		}
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "make build") {
+		t.Fatalf("the sidebar does not show the running call:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+func TestAgentDetailsShowTheTrace(t *testing.T) {
+	v := traced().View(modeltest.SID)
+	r := view.RenderAgent(v, "alice@mac-1", opts(90))
+	checkShape(t, r, 90)
+	joined := strings.Join(texts(r), "\n")
+	for _, want := range []string{
+		"branch       fix-parser",
+		"now          Bash: make build for 14s",
+		"CHANGED FILES (2)",
+		"src/parser.go  ×2  1m ago  also bob@vps-2",
+		"README.md  ×1  1m ago",
+		"ACTIVITY",
+		"✓ Bash: go test ./... 14s",
+		"TIMELINE",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "README.md  ×1  1m ago  also") {
+		t.Errorf("only alice changed README.md:\n%s", joined)
+	}
+	// Carol has no trace and no gate hook: the details say why there is no activity.
+	if joined := strings.Join(texts(view.RenderAgent(v, "carol@mac-3", opts(90))), "\n"); !strings.Contains(joined, "activity     none: this agent was not started with coop claude") || strings.Contains(joined, "CHANGED FILES") {
+		t.Errorf("carol's details:\n%s", joined)
+	}
+}
+
+// A repaint draws the whole activity again. With the most trace that the model keeps for
+// ten agents, that must stay far below the time of one frame.
+func TestActivityRendersTheLargestTraceFast(t *testing.T) {
+	s := store()
+	var n int64
+	for a := range 10 {
+		u := wire.TraceUpdate{Boot: 1, Key: fmt.Sprintf("%s.mac-1.agent%d", modeltest.SID, a)}
+		for range model.TraceMax {
+			n++
+			u.Items = append(u.Items, wire.TraceItem{N: n, At: modeltest.At(float64(n) / 100), Kind: wire.TraceSay, Text: strings.Repeat("some words of the agent ", 8)})
+		}
+		s.Apply(model.Update{Trace: &u})
+	}
+	v := s.View(modeltest.SID)
+	start := time.Now()
+	r := view.RenderActivity(v, opts(100))
+	if took := time.Since(start); took > 500*time.Millisecond {
+		t.Fatalf("one render of %d items took %s", n, took)
+	} else {
+		t.Logf("%d items, %d lines: %s", n, len(r.Lines), took)
+	}
+}

@@ -51,6 +51,7 @@ type Options struct {
 const (
 	viewTranscript = "transcript"
 	viewThreads    = "threads"
+	viewActivity   = "activity"
 	wheelLines     = 3
 	actionTimeout  = 10 * time.Second
 )
@@ -233,6 +234,8 @@ func (a *App) screen() screen {
 		s.main = view.RenderAgent(s.v, a.overlay.id, o)
 	case a.view == viewThreads:
 		s.main = view.RenderThreads(s.v, o)
+	case a.view == viewActivity:
+		s.main = view.RenderActivity(s.v, o)
 	default:
 		t := a.transcripts[a.sid]
 		if t == nil {
@@ -244,7 +247,7 @@ func (a *App) screen() screen {
 	if a.overlay == nil {
 		s.lastID = nextID(s.main.IDs, len(s.main.IDs), -1)
 	}
-	s.following = a.follow && a.view == viewTranscript && a.overlay == nil
+	s.following = a.follow && a.view != viewThreads && a.overlay == nil
 	if s.following {
 		s.current = s.lastID
 	} else {
@@ -480,7 +483,7 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	case isKey(k, tea.KeyEnd):
-		if a.overlay == nil && a.view == viewTranscript {
+		if a.overlay == nil && a.view != viewThreads {
 			a.follow, a.scroll = true, -1
 			return nil
 		}
@@ -499,6 +502,8 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 		a.view, a.scroll = viewTranscript, -1
 	case "2":
 		a.view, a.scroll = viewThreads, -1
+	case "3":
+		a.view, a.scroll = viewActivity, -1
 	case " ":
 		a.follow, a.scroll = !a.follow, -1
 		if a.follow {
@@ -691,7 +696,7 @@ func (a *App) scrollTo(line int) {
 func (a *App) scrollBy(s screen, delta int, live bool) tea.Cmd {
 	maxOff := max(0, len(s.main.Lines)-s.mainBodyH)
 	next := min(maxOff, max(0, a.viewOffset(s)+delta))
-	canFollow := a.overlay == nil && a.view == viewTranscript
+	canFollow := a.overlay == nil && a.view != viewThreads
 	if live && canFollow && next >= maxOff && delta > 0 {
 		a.follow, a.scroll = true, -1
 		return nil
@@ -1041,7 +1046,10 @@ func (a *App) hint() string {
 	if a.focus == "sidebar" {
 		return "↑↓ move · enter open · on an agent: g release · p pause/resume · x stop · P pause all · H hold · tab main · ? help"
 	}
-	return "↑↓ enter esc · m message · r reply · a attention · / search · : command · tab sidebar · ? help · q quit"
+	if a.view == viewActivity {
+		return "1 transcript · 2 threads · ↑↓ scroll · space follow · / search · :filter <agent> · tab sidebar · ? help · q quit"
+	}
+	return "↑↓ enter esc · 3 activity · m message · r reply · a attention · / search · : command · tab sidebar · ? help · q quit"
 }
 
 func (a *App) promptLines(s screen) []string {

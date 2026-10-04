@@ -59,6 +59,9 @@ func snapshot(s *model.Store) string {
 			if a.Gated {
 				l += " gated"
 			}
+			if tr := a.Trace; len(tr.Items) > 0 || len(tr.Files) > 0 || tr.Branch != "" {
+				l += fmt.Sprintf(" trace:%s:%v:%v:%v", tr.Branch, tr.Items, tr.FileList(), tr.Running())
+			}
 			fmt.Fprintf(&b, " agent %s/%s online=%v kicked=%v state=%s since=%s note=%q sent=%d joined=%s host=%s client=%q%s%s\n",
 				a.SID, a.Address, a.Online, a.Kicked, a.State, a.StateSince, a.Note, a.Sent, a.JoinedAt, a.Host, a.Client, w, l)
 		}
@@ -392,5 +395,144 @@ func TestReshapedCountsChangesToWhatWasAlreadyShown(t *testing.T) {
 	s.Apply(model.Update{Event: &wire.Event{Kind: wire.EventRedact, Seq: 8, SID: sid, ID: "6", At: at(4)}})
 	if v.Reshaped != 3 {
 		t.Fatalf("a withdrawal reshaped: %d", v.Reshaped)
+	}
+}
+
+// traceRun is the trace updates that one run of a hub sends for Alice and Bob: one update for
+// each report, and now and then the whole trace of an agent, as a feed gets it when it
+// connects. It also gives what the model must hold after all of them.
+func traceRun(rt *rapid.T, boot int64, label string) (updates []model.Update, want map[wire.Address]*model.Trace) {
+	type log struct {
+		items  []wire.TraceItem
+		files  map[string]wire.TraceFile
+		branch string
+	}
+	logs := map[wire.Address]*log{alice: {files: map[string]wire.TraceFile{}}, bob: {files: map[string]wire.TraceFile{}}}
+	var n int64
+	kinds := []string{wire.TraceToolStart, wire.TraceToolEnd, wire.TraceSay, wire.TracePrompt}
+	for range rapid.IntRange(0, 40).Draw(rt, label+" reports") {
+		who := rapid.SampledFrom([]wire.Address{alice, bob}).Draw(rt, label+" agent")
+		l := logs[who]
+		u := wire.TraceUpdate{Boot: boot, Key: wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: who})}
+		if b := rapid.SampledFrom([]string{"", "main", "fix"}).Draw(rt, label+" branch"); b != "" {
+			l.branch = b
+		}
+		u.Branch = l.branch
+		for range rapid.IntRange(1, 20).Draw(rt, label+" items") {
+			n++
+			it := wire.TraceItem{
+				N: n, At: at(float64(n)), Kind: rapid.SampledFrom(kinds).Draw(rt, label+" kind"),
+				ID:    "t" + fmt.Sprint(rapid.IntRange(1, 6).Draw(rt, label+" id")),
+				Final: rapid.Bool().Draw(rt, label+" final"),
+			}
+			l.items = append(l.items, it)
+			u.Items = append(u.Items, it)
+			if it.Kind == wire.TraceToolEnd {
+				path := rapid.SampledFrom([]string{"a.go", "b.go", "c.go"}).Draw(rt, label+" file")
+				f := wire.TraceFile{Path: path, Count: l.files[path].Count + 1, At: it.At}
+				l.files[path] = f
+				u.Files = append(u.Files, f)
+			}
+		}
+		updates = append(updates, model.Update{Trace: &u})
+		if rapid.IntRange(0, 4).Draw(rt, label+" dump") == 0 {
+			dump := wire.TraceUpdate{Boot: boot, Key: u.Key, Branch: l.branch, Items: l.items[max(0, len(l.items)-model.TraceMax):]}
+			for _, f := range l.files {
+				dump.Files = append(dump.Files, f)
+			}
+			updates = append(updates, model.Update{Trace: &dump})
+		}
+	}
+	want = map[wire.Address]*model.Trace{}
+	for who, l := range logs {
+		want[who] = &model.Trace{Items: l.items[max(0, len(l.items)-model.TraceMax):], Files: l.files, Branch: l.branch}
+	}
+	return updates, want
+}
+
+func traceText(t *model.Trace) string {
+	return fmt.Sprintf("%s:%v:%v", t.Branch, t.Items, t.FileList())
+}
+
+// The trace comes over the same feed as the rest, so the same rule holds: the order of
+// arrival does not matter, and a fact that arrives two times counts one time. After a hub
+// starts again, only the trace of its new run counts.
+func TestTheTraceDoesNotDependOnTheOrderOfArrival(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		old, _ := traceRun(rt, 1000, "old")
+		updates, want := traceRun(rt, 2000, "new")
+		if len(updates) == 0 {
+			// With no update of the new run, the old run is the newest one.
+			return
+		}
+		all := append(append(fixture(), old...), updates...)
+		for _, i := range rapid.SliceOfN(rapid.IntRange(0, len(all)-1), 0, 10).Draw(rt, "repeats") {
+			all = append(all, all[i])
+		}
+		s := load(rapid.Permutation(all).Draw(rt, "order"))
+		for _, view := range []string{sid, model.AllSessions} {
+			for who, tr := range want {
+				key := who.String()
+				if view == model.AllSessions {
+					key = sid + "/" + key
+				}
+				a := s.View(view).Agents[key]
+				if a == nil {
+					rt.Fatalf("view %s has no agent %s", view, key)
+				}
+				if got, want := traceText(a.Trace), traceText(tr); got != want {
+					rt.Fatalf("view %s, %s:\n got %s\nwant %s", view, who, got, want)
+				}
+			}
+		}
+	})
+}
+
+func TestRunningToolCallsAreTheOnesWithNoEnd(t *testing.T) {
+	item := func(n int64, kind, id string, final bool) wire.TraceItem {
+		return wire.TraceItem{N: n, Kind: kind, ID: id, Final: final}
+	}
+	ids := func(tr *model.Trace) string {
+		var out []string
+		for _, it := range tr.Running() {
+			out = append(out, it.ID)
+		}
+		return strings.Join(out, " ")
+	}
+	tr := &model.Trace{Items: []wire.TraceItem{
+		item(1, wire.TraceToolStart, "a", false),
+		item(2, wire.TraceToolStart, "b", false),
+		item(3, wire.TraceSay, "", false),
+		item(4, wire.TraceToolEnd, "a", false),
+		item(5, wire.TraceToolStart, "c", false),
+	}}
+	if got := ids(tr); got != "b c" {
+		t.Fatalf("running %q, want b c", got)
+	}
+	// The person at the terminal stopped the turn: the calls report no end. The next prompt,
+	// or the words that end the turn, end them.
+	for _, last := range []wire.TraceItem{item(6, wire.TracePrompt, "", false), item(6, wire.TraceSay, "", true)} {
+		stopped := &model.Trace{Items: append(slices.Clone(tr.Items), last)}
+		if got := ids(stopped); got != "" {
+			t.Fatalf("running %q after %s, want none", got, last.Kind)
+		}
+	}
+}
+
+func TestDeletingASessionRemovesItsTrace(t *testing.T) {
+	s := load(fixture())
+	key := wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: alice})
+	s.Apply(model.Update{Trace: &wire.TraceUpdate{Boot: 1, Key: key, Items: []wire.TraceItem{{N: 1, Kind: wire.TraceSay, Text: "hi"}}}})
+	if n := len(s.View(sid).Agents[alice.String()].Trace.Items); n != 1 {
+		t.Fatalf("%d trace items, want 1", n)
+	}
+	if acts := s.View(model.AllSessions).Activity(); len(acts) != 1 || acts[0].Agent.Address != alice.String() {
+		t.Fatalf("activity of the all view %+v, want the one item of alice", acts)
+	}
+	s.Apply(model.Update{Session: &wire.SessionUpdate{SID: sid, Record: nil}})
+	s.Apply(model.Update{Session: &wire.SessionUpdate{SID: sid, Revision: 0, Record: &wire.SessionRecord{Status: "open", CreatedAt: at(500)}}})
+	s.Apply(model.Update{Presence: &wire.PresenceUpdate{Key: key, Record: &wire.PresenceRecord{Host: "mac-1", State: "idle", JoinedAt: at(501)}}})
+	if n := len(s.View(sid).Agents[alice.String()].Trace.Items); n != 0 {
+		t.Fatalf("%d trace items in a session with the name of a deleted one, want 0", n)
 	}
 }
