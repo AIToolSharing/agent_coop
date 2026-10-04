@@ -137,6 +137,26 @@ func TestFocusOnThisMachineAndOnASavedMachine(t *testing.T) {
 	}
 }
 
+// Found in use: on a machine that Herdr reaches over SSH, herdr is in ~/.local/bin, which is
+// not on the PATH of a pane's shell. The shim must still find it.
+func TestBinaryFallsBackToTheLocalInstall(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // no herdr on the PATH
+	there := func(string) bool { return true }
+	gone := func(string) bool { return false }
+	if got := herdr.Binary(map[string]string{"HERDR_BIN_PATH": "/opt/herdr", "HOME": "/home/agent"}, there); got != "/opt/herdr" {
+		t.Errorf("with HERDR_BIN_PATH: %q", got)
+	}
+	if got := herdr.Binary(map[string]string{"HOME": "/home/agent"}, there); got != "/home/agent/.local/bin/herdr" {
+		t.Errorf("not on the PATH, installed in the home directory: %q", got)
+	}
+	if got := herdr.Binary(map[string]string{"HOME": "/home/agent"}, gone); got != "herdr" {
+		t.Errorf("not installed: %q", got)
+	}
+	if got := herdr.Binary(map[string]string{}, there); got != "herdr" {
+		t.Errorf("no home directory: %q", got)
+	}
+}
+
 func TestIsPaneID(t *testing.T) {
 	for id, want := range map[string]bool{
 		"w1:p1": true, "w12:p340": true, "a.b_c-d": true,
