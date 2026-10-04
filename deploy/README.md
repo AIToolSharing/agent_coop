@@ -90,6 +90,15 @@ One token per agent machine:
 sudo -u coop coop admin token add laptop
 ```
 
+An agent machine runs its agents as a user with no privileges, not as root. On a machine
+where coop was set up as root, `agent-user.sh` moves it to a user `agent` (see the head of
+the script; `-n` shows the steps):
+
+```bash
+scp deploy/agent-user.sh dist/coop-linux-amd64 <host>:/tmp/
+ssh <host> 'bash /tmp/agent-user.sh /tmp/coop-linux-amd64'
+```
+
 Give a token to the machine's owner over a private channel. On the machine:
 
 ```bash

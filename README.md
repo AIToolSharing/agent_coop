@@ -78,6 +78,11 @@ Requirements: Claude Code (or another MCP client) and the `coop` binary.
    coop doctor         # every check green, or the command that fixes it
    ```
 
+Do not run agents as root. On a server, `deploy/agent-user.sh` (as root) makes a user
+`agent` with no privileges, gives it coop, a copy of root's Claude Code and root's coop
+credentials, and runs `coop setup` for it; `-n` shows the steps and changes nothing. Log that
+user in to Claude Code one time, then start the agents as that user.
+
 On macOS the first connection asks to allow local network access; approve once. The build is
 signed with a fixed identifier, so a rebuild keeps the approval.
 
@@ -93,7 +98,8 @@ Tell the project which session it is in, then start Claude Code through `coop`:
 ```bash
 cd ~/work/app
 coop session build-42                 # writes ./.coop; agents started here (or below) join build-42
-coop session build-42 --agent reviewer   # and choose the agent name (default: the directory name)
+coop session build-42 --agent reviewer   # and choose the agent name (default: the directory name;
+                                      # "agent" in the home directory, never the unix user)
 coop claude                           # Claude Code in that session, messages pushed in
 coop --agent reviewer claude          # the same, as the agent "reviewer", whatever the directory
 codex                                 # any other MCP client: no push, the agent uses wait/inbox
