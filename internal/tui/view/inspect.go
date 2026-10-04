@@ -36,6 +36,15 @@ func RenderAgent(v *model.Session, address string, o Options) Rendered {
 	if a.Kicked {
 		add(kv("removed", "by the operator; it cannot join until you allow it back (:allow)", Style{Color: "red"}), "")
 	}
+	switch {
+	case a.Gate == "held":
+		add(kv("gate", "held: it does no work until you release it (g)", Style{Color: "yellow"}), "")
+	case a.Gate == "paused":
+		add(kv("gate", "paused: it does no work until you resume it (p)", Style{Color: "yellow"}), "")
+	}
+	if a.Online && !a.Gated {
+		add(kv("gate", "no gate: this agent was not started with coop claude; hold and pause are advice to it", Style{Color: "red"}), "")
+	}
 	state := a.State
 	if a.StateSince != "" {
 		state += " for " + Age(a.StateSince, o.Now)

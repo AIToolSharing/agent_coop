@@ -101,7 +101,7 @@ func query(q url.Values, keys ...string) (map[string]string, error) {
 // --- Agent routes ----------------------------------------------------------------------------
 
 func parseStreamQuery(q url.Values) (hub.StreamQuery, error) {
-	m, err := query(q, "agent", "instance", "host", "cwd", "client_name", "client_version")
+	m, err := query(q, "agent", "instance", "host", "cwd", "client_name", "client_version", "gated")
 	if err != nil {
 		return hub.StreamQuery{}, err
 	}
@@ -118,6 +118,12 @@ func parseStreamQuery(q url.Values) (hub.StreamQuery, error) {
 		return s, invalid("instance: not a UUID")
 	case runes(s.Host) > 256, runes(s.Cwd) > 4096, runes(s.ClientName) > 64, runes(s.ClientVersion) > 64:
 		return s, invalid("a query value is too long")
+	}
+	if gated, ok := m["gated"]; ok {
+		if !oneOf(gated, "0", "1") {
+			return s, invalid("gated: 0 or 1")
+		}
+		s.Gated = gated == "1"
 	}
 	return s, nil
 }
@@ -153,6 +159,20 @@ func parseHistoryQuery(q url.Values) (hub.HistoryQuery, error) {
 		h.Limit = n
 	}
 	return h, nil
+}
+
+// parseAgentBody reads a body that holds only the agent name.
+func parseAgentBody(body []byte) (string, error) {
+	var b struct {
+		Agent string `json:"agent"`
+	}
+	if err := decodeStrict(body, &b); err != nil {
+		return "", err
+	}
+	if !wire.IsAgentName(b.Agent) {
+		return "", invalid("agent: not a valid agent name")
+	}
+	return b.Agent, nil
 }
 
 type sendBody struct {
@@ -293,6 +313,41 @@ func parseTarget(body []byte) (wire.Address, error) {
 		return a, invalid("target: not an address agent@machine")
 	}
 	return a, nil
+}
+
+// parseGate reads a gate change. No target means every agent of the session.
+func parseGate(body []byte) (target *wire.Address, gate string, err error) {
+	var b struct {
+		Target optString `json:"target"`
+		Gate   string    `json:"gate"`
+	}
+	if err := decodeStrict(body, &b); err != nil {
+		return nil, "", err
+	}
+	if !wire.IsGate(b.Gate) {
+		return nil, "", invalid("gate: run, held or paused")
+	}
+	if b.Target.set {
+		a, ok := wire.ParseAddress(b.Target.val)
+		if !ok {
+			return nil, "", invalid("target: not an address agent@machine")
+		}
+		target = &a
+	}
+	return target, b.Gate, nil
+}
+
+func parseHold(body []byte) (bool, error) {
+	var b struct {
+		Hold *bool `json:"hold"`
+	}
+	if err := decodeStrict(body, &b); err != nil {
+		return false, err
+	}
+	if b.Hold == nil {
+		return false, invalid("hold: true or false")
+	}
+	return *b.Hold, nil
 }
 
 func parseRedact(body []byte) (string, error) {

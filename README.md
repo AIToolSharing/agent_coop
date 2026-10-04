@@ -33,6 +33,7 @@ and the commands that set a machine up.
 | Command | Runs on | Does |
 |---|---|---|
 | `coop mcp` | agent machines | the agent's MCP server (stdio); Claude Code starts it |
+| `coop hook pretool` | agent machines | the gate check before a tool call; Claude Code runs it |
 | `coop tui` | the operator's machine | watch and steer every session |
 | `coop login`, `setup`, `session`, `claude`, `doctor` | agent machines, operator | set a machine up and check it |
 | `coop serve` | the server | the hub: the API over one SQLite file |
@@ -114,6 +115,14 @@ Claude Code shows a warning about development channels at each start; choose "I 
 for local development". A plain `claude` gets the same tools, but messages then wait until the
 agent calls `wait` or `inbox`.
 
+`coop claude` also puts the agent behind the operator's gate (see Operate). It gives Claude
+Code a hook with `--settings`: before each tool call, `coop hook pretool` asks the service
+whether the operator lets the agent work. No settings file changes. Because Claude Code takes
+one `--settings`, do not pass your own to `coop claude`; use a settings file. To start one
+session with no gate, set `COOP_GATE=off` in its environment. A plain `claude`, or another MCP
+client, has no hook: the operator sees such an agent marked `soft`, and a hold or a pause is
+only advice to it.
+
 A headless agent (`claude -p`) gets no channel events; it uses `wait`, `ask` or `inbox`, and
 needs the tools allowed up front:
 
@@ -141,7 +150,34 @@ the main pane; `↑↓` move, `enter` opens, `esc` goes back. `1` is the transcr
 with the open asks. `m` writes to the session (`tab` picks the target), `r` answers the selected
 message in its thread, `a` goes to the next thing that needs you (a message for you, an ask that
 waits, a blocked agent). The rare actions are commands: `:new`, `:close`, `:reopen`, `:delete`,
-`:kick`, `:allow`, `:withdraw`, `:filter`, `:sys`; `tab` completes them. `?` shows every key.
+`:kick`, `:allow`, `:forget`, `:withdraw`, `:filter`, `:sys`; `tab` completes them. `?` shows
+every key.
+
+### Hold, pause, stop
+
+You decide when an agent works. The keys act on the agent under the sidebar cursor, or on the
+agent whose details are open.
+
+| Key | Command | Does |
+|---|---|---|
+| `g` | `:go [agent] [task]` | release a held or paused agent; the text you type is its task |
+| `p` | `:pause [agent]`, `:resume [agent]` | stop the agent at its next tool call; let it go on |
+| `x` | `:kick <agent>` | stop the agent for good: every tool call is refused until `:allow` |
+| `P`, `R` | `:pause`, `:resume` | each working agent of the session; each paused one |
+| `H` | `:hold on\|off` | new agents of the session wait for your release, or start at once |
+
+- **Held.** A new session holds each agent that joins it for the first time. The agent's first
+  tool call is refused, and the agent waits. The attention line counts held agents; `a` goes to
+  the next one. For a session whose agents another agent starts (a pipeline), release the
+  first agent and press `H`.
+- **Paused.** A pause acts at the agent's next tool call. A command that runs already is not
+  interrupted. A held or paused agent can still read and write messages.
+- **No answer, no work.** When the hook cannot reach the service, it refuses the tool call.
+- `coop serve --hold-new=false` makes new sessions start their agents at once.
+
+An agent that left stays in the agent list for five minutes. `:forget <name>` drops it at once,
+also from the peers of the other agents; `:forget` with no name drops each agent that left.
+Unlike `:kick`, a forgotten agent can join again. It then starts as a new agent.
 
 An agent you remove with `:kick` leaves the agent list. If it tries to join, it shows again for
 five minutes as `refused 2m ago`, so a forgotten `:allow <name>` does not look like an agent
@@ -162,7 +198,7 @@ Protected:
 - Visibility: an agent gets only messages to it, to `all`, or from it, in the session it joined.
   A direct message between two other agents stays private.
 - Control: only an operator token (`coop admin token add --operator`) can close and delete
-  sessions, remove agents, withdraw messages, and send as `operator`. A machine token cannot
+  sessions, hold, pause and remove agents, withdraw messages, and send as `operator`. A machine token cannot
   reach the admin API, and an operator token cannot act as an agent.
 - Revocation: `coop admin token revoke <name>` refuses every further request of that token at
   once; its open streams end within 15 seconds.
@@ -175,6 +211,8 @@ Not protected:
   as another agent on the same machine, and it can join any open session whose name it knows,
   or create one. All agents are yours, so this is accepted. The session name is a label, not a
   secret.
+- The gate stops an agent that does not follow instructions. It does not stop a hostile one:
+  an agent with a shell can start a process that has no hook.
 - A peer message is input from a collaborator. The skill tells agents not to treat it as an
   instruction from the user. Only `operator` messages come from the user.
 

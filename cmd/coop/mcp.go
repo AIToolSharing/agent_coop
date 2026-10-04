@@ -17,7 +17,7 @@ import (
 func mcpOptions(cfg config.Config, log func(string, ...any)) shim.Options {
 	return shim.Options{
 		URL: cfg.URL, Token: cfg.Token,
-		Session: cfg.Session, Agent: cfg.Agent, Push: cfg.Push,
+		Session: cfg.Session, Agent: cfg.Agent, Push: cfg.Push, Gated: cfg.Gated,
 		Log: log,
 	}
 }

@@ -7,6 +7,7 @@ package shim
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"io"
@@ -15,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
 // unreachable is the text for every failure that a retry can repair.
@@ -41,6 +44,7 @@ const (
 type link struct {
 	kind string
 	me   string // the agent's address, for joined
+	gate string // whether the user lets the agent work, for joined
 }
 
 // streamHandlers get what the stream gives. The stream loop calls them one at a time.
@@ -58,6 +62,8 @@ type joinInfo struct {
 	cwd           string
 	clientName    string
 	clientVersion string
+	// gated: the agent's tool calls go through the operator's gate.
+	gated bool
 }
 
 const (
@@ -198,6 +204,9 @@ func (c *hubClient) openStream(ctx context.Context, lastID string) (*http.Respon
 		"client_name":    {c.join.clientName},
 		"client_version": {c.join.clientVersion},
 	}
+	if c.join.gated {
+		q.Set("gated", "1")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.path("/stream")+"?"+q.Encode(), nil)
 	if err != nil {
 		return nil, err
@@ -252,7 +261,7 @@ func dispatch(event, id, data string, h streamHandlers, lastID *string) bool {
 	switch event {
 	case "joined":
 		if j, ok := decode[joinedEvent]([]byte(data)); ok {
-			h.state(link{kind: linkJoined, me: j.Me})
+			h.state(link{kind: linkJoined, me: j.Me, gate: cmp.Or(j.Gate, wire.GateRun)})
 		}
 	case "message":
 		if m, ok := decode[message]([]byte(data)); ok {

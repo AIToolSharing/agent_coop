@@ -105,6 +105,11 @@ func (a api) activity(sid string, body map[string]any) (int, []byte) {
 	return a.req(http.MethodPost, "/v1/sessions/"+sid+"/activity", body)
 }
 
+// gate asks whether the operator lets the agent work.
+func (a api) gate(sid, agent string) (int, []byte) {
+	return a.req(http.MethodPost, "/v1/sessions/"+sid+"/gate", map[string]any{"agent": agent})
+}
+
 func (a api) view(sid, agent string) (int, []byte) {
 	return a.req(http.MethodGet, "/v1/sessions/"+sid+"?agent="+agent, nil)
 }
@@ -393,6 +398,23 @@ func (a admin) unkick(sid, target string) (int, []byte) {
 	return a.req(http.MethodPost, "/sessions/"+sid+"/unkick", map[string]any{"target": target})
 }
 
+// gate sets the gate of one agent, or of every agent of the session when target is "".
+func (a admin) gate(sid, target, gate string) (int, []byte) {
+	body := map[string]any{"gate": gate}
+	if target != "" {
+		body["target"] = target
+	}
+	return a.req(http.MethodPost, "/sessions/"+sid+"/gate", body)
+}
+
+func (a admin) hold(sid string, hold bool) (int, []byte) {
+	return a.req(http.MethodPost, "/sessions/"+sid+"/hold", map[string]any{"hold": hold})
+}
+
+func (a admin) forget(sid, target string) (int, []byte) {
+	return a.req(http.MethodPost, "/sessions/"+sid+"/forget", map[string]any{"target": target})
+}
+
 func (a admin) redact(sid, id string) (int, []byte) {
 	return a.req(http.MethodPost, "/sessions/"+sid+"/redact", map[string]any{"id": id})
 }
@@ -679,14 +701,15 @@ func (h *historyResponse) UnmarshalJSON(b []byte) error {
 type joinedEvent struct {
 	Me      string `json:"me"`
 	Session string `json:"session"`
+	Gate    string `json:"gate"`
 }
 
 func (j *joinedEvent) UnmarshalJSON(b []byte) error {
 	type plain joinedEvent
-	if err := strictDecode(b, (*plain)(j), "me", "session"); err != nil {
+	if err := strictDecode(b, (*plain)(j), "me", "session", "gate"); err != nil {
 		return err
 	}
-	return checkRules(rule{isAddress(j.Me), "me"}, rule{wire.IsToken(j.Session), "session"})
+	return checkRules(rule{isAddress(j.Me), "me"}, rule{wire.IsToken(j.Session), "session"}, rule{wire.IsGate(j.Gate), "gate"})
 }
 
 // noticeEvent is NoticeEvent, the data of SSE event `notice`.
@@ -703,7 +726,7 @@ func (n *noticeEvent) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	return checkRules(
-		rule{slices.Contains([]string{"kicked", "closed", "reopened", "redacted", "peer_left"}, n.Kind), "kind"},
+		rule{slices.Contains([]string{"kicked", "closed", "reopened", "redacted", "peer_left", "held", "paused", "released"}, n.Kind), "kind"},
 		rule{n.ID == "" || wire.IsID(n.ID), "id"},
 		rule{n.Peer == "" || isAddress(n.Peer), "peer"},
 		rule{wire.IsTime(n.At), "at"},

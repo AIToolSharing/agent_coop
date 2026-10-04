@@ -834,6 +834,55 @@ func TestOperatorMessageArrivesFromOperator(t *testing.T) {
 	})
 }
 
+// The operator holds, pauses and releases an agent. The agent must know its gate from status,
+// and must be told each change with what to do, also while it sits in wait.
+func TestTheGateShowsInStatusAndArrivesAsANotice(t *testing.T) {
+	h := newFakeHub(t)
+	h.createSession("s")
+	h.mu.Lock()
+	h.sessions["s"].gate = "held"
+	h.mu.Unlock()
+	b := start(t, options(h, "vps-2", "s", "bob", true))
+	s := joined(t, b)
+	if s["gate"] != "held" || !strings.Contains(fmt.Sprint(s["gate_note"]), "holds you") {
+		t.Fatalf("status of a held agent: %v", s)
+	}
+	if q := h.lastQuery(); strings.Contains(q, "gated") {
+		t.Fatalf("an agent that was not started with the gate says gated: %s", q)
+	}
+	h.gate("s", "bob@vps-2", noticeReleased)
+	eventually(t, "bob gets the released notice", func() bool {
+		return slices.ContainsFunc(b.pushes(), func(p push) bool { return p.Meta["notice"] == noticeReleased })
+	})
+	if p := b.pushes()[0]; p.Content != "The user released you. You may work now." {
+		t.Fatalf("push %+v", p)
+	}
+	if s := b.json("status", nil); s["gate"] != "run" || s["gate_note"] != nil {
+		t.Fatalf("status after the release: %v", s)
+	}
+	h.gate("s", "bob@vps-2", noticePaused)
+	eventually(t, "status says paused", func() bool { return b.json("status", nil)["gate"] == "paused" })
+	if note := fmt.Sprint(b.json("status", nil)["gate_note"]); !strings.Contains(note, "paused you") || !strings.Contains(note, "`wait`") {
+		t.Fatalf("gate note %q", note)
+	}
+}
+
+// An agent that `coop claude` started tells the service that its tool calls go through the
+// gate. A service of an earlier version sends no gate with the join: that counts as run.
+func TestAGatedAgentSaysSoAndAJoinWithNoGateCountsAsRun(t *testing.T) {
+	h := newFakeHub(t)
+	h.createSession("s")
+	o := options(h, "vps-2", "s", "bob", false)
+	o.Gated = true
+	b := start(t, o)
+	if s := joined(t, b); s["gate"] != "run" {
+		t.Fatalf("status %v", s)
+	}
+	if q := h.lastQuery(); !strings.Contains(q, "gated=1") {
+		t.Fatalf("join query %s", q)
+	}
+}
+
 // --- opacity ---------------------------------------------------------------------------------
 
 // Every test checks its agents' texts at the end (see start). This test makes sure that the
@@ -847,7 +896,7 @@ func TestNothingAnAgentSeesNamesHowTheServiceWorks(t *testing.T) {
 			t.Fatalf("the description of %s names the service", name)
 		}
 	}
-	for _, kind := range []string{noticeKicked, noticeClosed, noticeReopened, noticeRedacted, noticePeerLeft} {
+	for _, kind := range []string{noticeKicked, noticeClosed, noticeReopened, noticeRedacted, noticePeerLeft, noticeHeld, noticePaused, noticeReleased} {
 		if text := noticeText(notice{Kind: kind, ID: "1", Peer: "a@m"}); text == "" || forbiddenRE.MatchString(text) {
 			t.Fatalf("notice %s: %q", kind, text)
 		}

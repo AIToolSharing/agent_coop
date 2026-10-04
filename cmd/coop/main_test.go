@@ -125,13 +125,24 @@ func TestSessionWritesTheProjectFile(t *testing.T) {
 }
 
 func TestClaudeCommandLine(t *testing.T) {
-	session, argv := claudeCommand([]string{"build-42", "--model", "opus"}, map[string]string{})
-	if session != "build-42" || strings.Join(argv, " ") != "claude --dangerously-load-development-channels server:coop --model opus" {
-		t.Fatalf("%q %v", session, argv)
+	session, argv, err := claudeCommand([]string{"build-42", "--model", "opus"}, map[string]string{}, "")
+	if err != nil || session != "build-42" || strings.Join(argv, " ") != "claude --dangerously-load-development-channels server:coop --model opus" {
+		t.Fatalf("%q %v %v", session, argv, err)
 	}
-	session, argv = claudeCommand([]string{"-p", "hi"}, map[string]string{"COOP_CHANNEL": "plugin:coop@coop"})
-	if session != "" || strings.Join(argv, " ") != "claude --dangerously-load-development-channels plugin:coop@coop -p hi" {
-		t.Fatalf("%q %v", session, argv)
+	session, argv, err = claudeCommand([]string{"-p", "hi"}, map[string]string{"COOP_CHANNEL": "plugin:coop@coop"}, "")
+	if err != nil || session != "" || strings.Join(argv, " ") != "claude --dangerously-load-development-channels plugin:coop@coop -p hi" {
+		t.Fatalf("%q %v %v", session, argv, err)
+	}
+	// The settings with the gate hook come before the user's arguments.
+	_, argv, err = claudeCommand([]string{"-p", "hi"}, map[string]string{}, `{"hooks":{}}`)
+	if err != nil || strings.Join(argv, " ") != `claude --dangerously-load-development-channels server:coop --settings {"hooks":{}} -p hi` {
+		t.Fatalf("%v %v", argv, err)
+	}
+	// Claude Code takes one --settings: a second one is refused, not dropped.
+	for _, args := range [][]string{{"--settings", "x.json"}, {"-p", "hi", "--settings=x.json"}} {
+		if _, _, err := claudeCommand(args, map[string]string{}, `{"hooks":{}}`); err == nil || !strings.Contains(err.Error(), "--settings") {
+			t.Fatalf("%v: error %v", args, err)
+		}
 	}
 }
 

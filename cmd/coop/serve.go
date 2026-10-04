@@ -58,6 +58,7 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 	listen := fs.String("listen", "127.0.0.1:8090", "the address to listen on (plain HTTP; put TLS in front)")
 	data := fs.String("data", defaultDataDir(), "the directory of the database")
 	auto := fs.Bool("auto-create", true, "let the first agent that joins an unknown session create it")
+	hold := fs.Bool("hold-new", true, "a new session holds each agent that joins it for the first time, until the operator releases it")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -77,7 +78,7 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 		return 1
 	}
 	logf := func(format string, a ...any) { fmt.Fprintf(stderr, "coop serve: "+format+"\n", a...) }
-	h := coophub.New(st, coophub.Options{AutoCreate: *auto})
+	h := coophub.New(st, coophub.Options{AutoCreate: *auto, HoldNew: *hold})
 	srv := &http.Server{
 		Handler:           api.New(h, logf),
 		ReadHeaderTimeout: 10 * time.Second,

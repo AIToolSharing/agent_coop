@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/AIToolSharing/agent_coop/internal/channel"
+	"github.com/AIToolSharing/agent_coop/internal/gate"
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -36,6 +37,8 @@ type Options struct {
 	Agent string
 	// Push advertises the channel capability and pushes incoming items into the session.
 	Push bool
+	// Gated says that the agent's tool calls go through the operator's gate (`coop claude`).
+	Gated bool
 	// Host and Cwd go to the hub with the join. Empty means os.Hostname and os.Getwd.
 	Host, Cwd string
 	// ClientName and ClientVersion go to the hub with the join. Empty means the values that
@@ -184,6 +187,10 @@ func noticeText(n notice) string {
 		return "The user reopened the shared session."
 	case noticeRedacted:
 		return fmt.Sprintf("The user withdrew message %s. Disregard what it said.", n.ID)
+	case noticeHeld, noticePaused:
+		return gate.Text(n.Kind)
+	case noticeReleased:
+		return gate.Released
 	}
 	who := n.Peer
 	if who == "" {
@@ -334,6 +341,7 @@ func (s *shim) start(client *mcp.Implementation) {
 	join := joinInfo{
 		agent: s.o.Agent, instance: newInstance(), host: s.o.Host, cwd: s.o.Cwd,
 		clientName: s.o.ClientName, clientVersion: s.o.ClientVersion,
+		gated: s.o.Gated,
 	}
 	if join.host == "" {
 		join.host, _ = os.Hostname()
@@ -362,7 +370,10 @@ func (s *shim) start(client *mcp.Implementation) {
 		c.run(s.ctx, streamHandlers{
 			state:   s.setLink,
 			message: func(m message) { b.accept(item{msg: &m}) },
-			notice:  func(n notice) { b.accept(item{notice: &n}) },
+			notice: func(n notice) {
+				s.setGate(n.Kind)
+				b.accept(item{notice: &n})
+			},
 		})
 	})
 }
@@ -371,6 +382,18 @@ func (s *shim) setLink(l link) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.link = l
+}
+
+// setGate records the gate that a notice gives; a notice of another kind changes nothing.
+func (s *shim) setGate(noticeKind string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch noticeKind {
+	case noticeHeld, noticePaused:
+		s.link.gate = noticeKind
+	case noticeReleased:
+		s.link.gate = wire.GateRun
+	}
 }
 
 // newInstance gives a random UUID (version 4) for the join.
@@ -502,7 +525,10 @@ func (s *shim) status(ctx context.Context) (any, error) {
 		Me          string `json:"me"`
 		Peers       []peer `json:"peers"`
 		Unread      int    `json:"unread"`
-	}{true, v.Session, v.Status == "open", v.Me, v.Peers, inbox.unread()}, nil
+		// Gate is run, held or paused. GateNote says what to do when it is not run.
+		Gate     string `json:"gate"`
+		GateNote string `json:"gate_note,omitempty"`
+	}{true, v.Session, v.Status == "open", v.Me, v.Peers, inbox.unread(), l.gate, gate.Text(l.gate)}, nil
 }
 
 func (s *shim) send(ctx context.Context, in sendIn) (any, error) {

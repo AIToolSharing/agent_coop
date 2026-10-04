@@ -58,6 +58,7 @@ func New(h *hub.Hub, log func(format string, args ...any)) *Server {
 	s.add("POST", "/v1/sessions/{sid}/messages", s.machine(s.send))
 	s.add("GET", "/v1/sessions/{sid}/messages", s.machine(s.history))
 	s.add("POST", "/v1/sessions/{sid}/activity", s.machine(s.activity))
+	s.add("POST", "/v1/sessions/{sid}/gate", s.machine(s.gate))
 	s.add("GET", "/v1/sessions/{sid}", s.machine(s.view))
 	s.add("GET", "/v1/admin/sessions", s.operator(s.adminSessions))
 	s.add("POST", "/v1/admin/sessions", s.operator(s.adminCreate))
@@ -66,6 +67,9 @@ func New(h *hub.Hub, log func(format string, args ...any)) *Server {
 	s.add("DELETE", "/v1/admin/sessions/{sid}", s.operator(s.adminDelete))
 	s.add("POST", "/v1/admin/sessions/{sid}/kick", s.operator(s.adminKick))
 	s.add("POST", "/v1/admin/sessions/{sid}/unkick", s.operator(s.adminUnkick))
+	s.add("POST", "/v1/admin/sessions/{sid}/forget", s.operator(s.adminForget))
+	s.add("POST", "/v1/admin/sessions/{sid}/gate", s.operator(s.adminGate))
+	s.add("POST", "/v1/admin/sessions/{sid}/hold", s.operator(s.adminHold))
 	s.add("POST", "/v1/admin/sessions/{sid}/redact", s.operator(s.adminRedact))
 	s.add("POST", "/v1/admin/sessions/{sid}/messages", s.operator(s.adminSend))
 	s.add("GET", "/v1/admin/stream", s.operator(s.adminStream))
@@ -344,6 +348,24 @@ func (s *Server) activity(w http.ResponseWriter, r *http.Request, owner hub.Owne
 	w.WriteHeader(204)
 }
 
+func (s *Server) gate(w http.ResponseWriter, r *http.Request, owner hub.Owner, sid string) {
+	b, ok := body(w, r)
+	if !ok {
+		return
+	}
+	agent, err := parseAgentBody(b)
+	if err != nil {
+		writeHubError(w, err)
+		return
+	}
+	gate, err := s.hub.Gate(owner.Name, sid, agent)
+	if err != nil {
+		writeHubError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]string{"gate": gate})
+}
+
 func (s *Server) view(w http.ResponseWriter, r *http.Request, owner hub.Owner, sid string) {
 	agent, err := parseAgentQuery(r.URL.Query())
 	if err != nil {
@@ -445,6 +467,45 @@ func (s *Server) adminUnkick(w http.ResponseWriter, r *http.Request, _ hub.Owner
 		return
 	}
 	s.done(w, s.hub.Unkick(sid, target))
+}
+
+func (s *Server) adminForget(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
+	b, ok := body(w, r)
+	if !ok {
+		return
+	}
+	target, err := parseTarget(b)
+	if err != nil {
+		writeHubError(w, err)
+		return
+	}
+	s.done(w, s.hub.Forget(sid, target))
+}
+
+func (s *Server) adminGate(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
+	b, ok := body(w, r)
+	if !ok {
+		return
+	}
+	target, gate, err := parseGate(b)
+	if err != nil {
+		writeHubError(w, err)
+		return
+	}
+	s.done(w, s.hub.SetGate(sid, target, gate))
+}
+
+func (s *Server) adminHold(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
+	b, ok := body(w, r)
+	if !ok {
+		return
+	}
+	hold, err := parseHold(b)
+	if err != nil {
+		writeHubError(w, err)
+		return
+	}
+	s.done(w, s.hub.SetHold(sid, hold))
 }
 
 func (s *Server) adminRedact(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {

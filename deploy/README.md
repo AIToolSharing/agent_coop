@@ -51,6 +51,11 @@ To keep the Node hub's rule that only the operator creates sessions, add
 `--auto-create=false` to `ExecStart` in the unit (`systemctl edit coop`). By default the first
 agent that joins an unknown session creates it.
 
+A new session holds each agent that joins it for the first time, until the operator releases
+it in the TUI. `--hold-new=false` makes new sessions start their agents at once. The setting
+of one session changes in the TUI (`H`). After an upgrade from a version before the gate,
+each existing session holds new agents; agents that the hub knows already may work.
+
 ## 3. TLS
 
 ```bash

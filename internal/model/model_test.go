@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -48,6 +49,15 @@ func snapshot(s *model.Store) string {
 			l := ""
 			if a.Left != nil {
 				l = " left:" + a.Left.Reason
+			}
+			if a.Forgotten {
+				l += " forgotten"
+			}
+			if a.Gate != "run" {
+				l += " gate:" + a.Gate
+			}
+			if a.Gated {
+				l += " gated"
 			}
 			fmt.Fprintf(&b, " agent %s/%s online=%v kicked=%v state=%s since=%s note=%q sent=%d joined=%s host=%s client=%q%s%s\n",
 				a.SID, a.Address, a.Online, a.Kicked, a.State, a.StateSince, a.Note, a.Sent, a.JoinedAt, a.Host, a.Client, w, l)
@@ -164,6 +174,114 @@ func TestTheOrderOfArrivalDoesNotMatter(t *testing.T) {
 			rt.Fatalf("snapshot differs\n got:\n%s\nwant:\n%s", got, want)
 		}
 	})
+}
+
+// forgetBob gives the fixture, then: Bob leaves and the operator forgets him. With rejoin, Bob
+// then joins again.
+func forgetBob(rejoin bool) []model.Update {
+	// Bob has no presence record: he is not in the session. The fixture's presence records
+	// have no revision, so a removal could not follow them in each order of arrival.
+	updates := slices.DeleteFunc(fixture(), func(u model.Update) bool {
+		return u.Presence != nil && u.Presence.Key == "build-42.vps-2.bob"
+	})
+	act := func(seq int64, a wire.Activity) {
+		updates = append(updates, model.Update{Event: &wire.Event{Kind: wire.EventActivity, Seq: seq, SID: sid, From: bob.String(), Activity: &a}})
+	}
+	act(500, wire.Activity{Kind: "left", Reason: "disconnected", At: at(80)})
+	act(501, wire.Activity{Kind: "forgotten", At: at(90)})
+	if rejoin {
+		act(502, wire.Activity{Kind: "joined", Host: "vps-2", Cwd: "/srv/api", Client: wire.Client{Name: "codex", Version: "0.9"}, At: at(100)})
+	}
+	return updates
+}
+
+func bobOf(s *model.Store) *model.Agent {
+	return s.View(sid).Agents[bob.String()]
+}
+
+// An agent is forgotten from the forgotten record until its next join, in each order of
+// arrival of the facts.
+func TestAnAgentIsForgottenUntilItJoinsAgain(t *testing.T) {
+	if b := bobOf(load(forgetBob(false))); !b.Forgotten || b.Online {
+		t.Fatalf("after the forgotten record: forgotten=%v online=%v", b.Forgotten, b.Online)
+	}
+	if b := bobOf(load(forgetBob(true))); b.Forgotten || b.Left != nil || b.State != "idle" {
+		t.Fatalf("after the new join: forgotten=%v left=%v state=%s", b.Forgotten, b.Left, b.State)
+	}
+	if b := bobOf(load(fixture())); b.Forgotten {
+		t.Fatal("forgotten with no forgotten record")
+	}
+	for _, rejoin := range []bool{false, true} {
+		want := snapshot(load(forgetBob(rejoin)))
+		if !strings.Contains(want, "sys bob@vps-2 forgotten by the operator") {
+			t.Fatalf("no timeline line for the forgotten record:\n%s", want)
+		}
+		rapid.Check(t, func(rt *rapid.T) {
+			perm := rapid.Permutation(forgetBob(rejoin)).Draw(rt, "order")
+			if got := snapshot(load(perm)); got != want {
+				rt.Fatalf("rejoin=%v: snapshot differs\n got:\n%s\nwant:\n%s", rejoin, got, want)
+			}
+		})
+	}
+}
+
+// The gate of an agent is what its last gate record says, in each order of arrival. A
+// forgotten agent has no gate: the hub gives it a new one at its next join.
+func TestTheGateOfAnAgentIsItsLastGateRecord(t *testing.T) {
+	gates := func(records ...string) []model.Update {
+		updates := fixture()
+		for i, g := range records {
+			a := wire.Activity{Kind: "gate", Gate: g, At: at(float64(80 + i))}
+			if g == "forgotten" {
+				a = wire.Activity{Kind: "forgotten", At: at(float64(80 + i))}
+			}
+			updates = append(updates, model.Update{Event: &wire.Event{Kind: wire.EventActivity, Seq: int64(500 + i), SID: sid, From: bob.String(), Activity: &a}})
+		}
+		return updates
+	}
+	for _, c := range []struct {
+		records []string
+		want    string
+	}{
+		{nil, "run"},
+		{[]string{"held"}, "held"},
+		{[]string{"held", "run"}, "run"},
+		{[]string{"held", "run", "paused"}, "paused"},
+		{[]string{"held", "forgotten"}, "run"},
+		{[]string{"paused", "forgotten", "held"}, "held"},
+	} {
+		if got := bobOf(load(gates(c.records...))).Gate; got != c.want {
+			t.Fatalf("records %v: gate %q, want %q", c.records, got, c.want)
+		}
+	}
+	want := snapshot(load(gates("held", "run", "paused")))
+	if !strings.Contains(want, "gate:paused") || !strings.Contains(want, "sys bob@vps-2 is held until the operator releases it") ||
+		!strings.Contains(want, "sys bob@vps-2 released by the operator") || !strings.Contains(want, "sys bob@vps-2 paused by the operator") {
+		t.Fatalf("the snapshot lacks the gate or its timeline lines:\n%s", want)
+	}
+	rapid.Check(t, func(rt *rapid.T) {
+		perm := rapid.Permutation(gates("held", "run", "paused")).Draw(rt, "order")
+		if got := snapshot(load(perm)); got != want {
+			rt.Fatalf("snapshot differs\n got:\n%s\nwant:\n%s", got, want)
+		}
+	})
+}
+
+// An agent is gated while it is online and its presence record says so.
+func TestGatedComesFromThePresenceRecord(t *testing.T) {
+	s := load(fixture())
+	if bobOf(s).Gated {
+		t.Fatal("gated with a presence record that does not say so")
+	}
+	rec := wire.PresenceRecord{Host: "vps-2", Cwd: "/srv/api", State: "idle", JoinedAt: at(2), Gated: true}
+	s.Apply(model.Update{Presence: &wire.PresenceUpdate{Key: "build-42.vps-2.bob", Revision: 1000, Record: &rec}})
+	if !bobOf(s).Gated {
+		t.Fatal("not gated with a presence record that says so")
+	}
+	s.Apply(model.Update{Presence: &wire.PresenceUpdate{Key: "build-42.vps-2.bob", Revision: 1001}})
+	if b := bobOf(s); b.Gated || b.Online {
+		t.Fatalf("offline: gated=%v online=%v", b.Gated, b.Online)
+	}
 }
 
 func TestApplyingTheSameFactsAgainChangesNothing(t *testing.T) {

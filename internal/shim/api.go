@@ -35,6 +35,10 @@ const (
 	noticeReopened = "reopened"
 	noticeRedacted = "redacted"
 	noticePeerLeft = "peer_left"
+	// The operator's gate: held and paused stop the agent's work, released lets it go on.
+	noticeHeld     = "held"
+	noticePaused   = "paused"
+	noticeReleased = "released"
 )
 
 // notice is something the agent must know that is not a message.
@@ -48,7 +52,7 @@ type notice struct {
 }
 
 func (n notice) valid() bool {
-	kinds := []string{noticeKicked, noticeClosed, noticeReopened, noticeRedacted, noticePeerLeft}
+	kinds := []string{noticeKicked, noticeClosed, noticeReopened, noticeRedacted, noticePeerLeft, noticeHeld, noticePaused, noticeReleased}
 	return slices.Contains(kinds, n.Kind) && optionalID(n.ID) && (n.Peer == "" || isAddress(n.Peer)) &&
 		wire.IsTime(n.At)
 }
@@ -57,9 +61,14 @@ func (n notice) valid() bool {
 type joinedEvent struct {
 	Me      string `json:"me"`
 	Session string `json:"session"`
+	// Gate is whether the user lets the agent work: run, held or paused. A service of an
+	// earlier version gives none; that counts as run.
+	Gate string `json:"gate"`
 }
 
-func (j joinedEvent) valid() bool { return isAddress(j.Me) && wire.IsToken(j.Session) }
+func (j joinedEvent) valid() bool {
+	return isAddress(j.Me) && wire.IsToken(j.Session) && (j.Gate == "" || wire.IsGate(j.Gate))
+}
 
 type sendRequest struct {
 	Agent   string `json:"agent"`

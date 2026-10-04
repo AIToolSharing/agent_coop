@@ -41,6 +41,18 @@ func (f *fakeOp) Unkick(_ context.Context, s, t string) error {
 	f.calls = append(f.calls, "unkick "+s+" "+t)
 	return nil
 }
+func (f *fakeOp) Forget(_ context.Context, s, t string) error {
+	f.calls = append(f.calls, "forget "+s+" "+t)
+	return nil
+}
+func (f *fakeOp) SetGate(_ context.Context, s, t, g string) error {
+	f.calls = append(f.calls, "gate "+s+" "+t+" "+g)
+	return nil
+}
+func (f *fakeOp) SetHold(_ context.Context, s string, hold bool) error {
+	f.calls = append(f.calls, fmt.Sprintf("hold %s %v", s, hold))
+	return nil
+}
 func (f *fakeOp) Redact(_ context.Context, s, id string) (bool, error) {
 	f.calls = append(f.calls, "redact "+s+" "+id)
 	return true, nil
@@ -281,6 +293,184 @@ func TestCommandsCompleteAndKickAsksFirst(t *testing.T) {
 	}
 }
 
+// storeWhereBobLeft gives the fixture after Bob left.
+func storeWhereBobLeft() *model.Store {
+	s := model.New()
+	for _, u := range modeltest.Fixture() {
+		s.Apply(u)
+	}
+	s.Apply(model.Update{Presence: &wire.PresenceUpdate{Key: "build-42.vps-2.bob", Revision: 1000}})
+	s.Apply(model.Update{Event: &wire.Event{Kind: wire.EventActivity, Seq: 500, SID: "build-42", From: "bob@vps-2", Activity: &wire.Activity{Kind: "left", Reason: "disconnected", At: modeltest.At(80)}}})
+	return s
+}
+
+func TestForgetTakesAnAgentThatLeft(t *testing.T) {
+	h := start(t, storeWhereBobLeft())
+	h.openSession()
+	// An agent in the session cannot be forgotten.
+	h.keys(":", "+forget alice", "enter")
+	if len(h.op.calls) != 0 || h.status() != "alice@mac-1 is in the session; :kick removes it" {
+		t.Fatalf("calls %v status %q", h.op.calls, h.status())
+	}
+	h.keys(":", "+fo", "tab")
+	contains(t, h.frame(), ":forget ▏")
+	h.keys("+bo", "tab")
+	contains(t, h.frame(), ":forget bob@vps-2▏")
+	h.keys("enter")
+	if fmt.Sprint(h.op.calls) != "[forget build-42 bob@vps-2]" || h.status() != "forgot bob@vps-2" {
+		t.Fatalf("calls %v status %q", h.op.calls, h.status())
+	}
+}
+
+func TestForgetWithoutANameTakesEachAgentThatLeftAndAsksFirst(t *testing.T) {
+	h := start(t, storeWhereBobLeft())
+	h.openSession()
+	h.keys(":", "+forget", "enter")
+	contains(t, h.frame(), "forget 1 agents that left build-42?")
+	h.keys("n")
+	if len(h.op.calls) != 0 {
+		t.Fatalf("calls %v", h.op.calls)
+	}
+	h.keys(":", "+forget", "enter", "y")
+	if fmt.Sprint(h.op.calls) != "[forget build-42 bob@vps-2]" {
+		t.Fatalf("calls %v", h.op.calls)
+	}
+	// With every agent in the session there is nothing to forget.
+	h2 := start(t, nil)
+	h2.openSession()
+	h2.keys(":", "+forget", "enter")
+	if len(h2.op.calls) != 0 || h2.status() != "no agent that left in build-42" {
+		t.Fatalf("calls %v status %q", h2.op.calls, h2.status())
+	}
+}
+
+// storeWithGates gives the fixture where Bob is held (he joined a session that holds new
+// agents) and Carol is paused. Alice works. Bob and Carol were started with the gate.
+func storeWithGates() *model.Store {
+	s := model.New()
+	for _, u := range modeltest.Fixture() {
+		s.Apply(u)
+	}
+	gate := func(seq int64, from, g string) {
+		s.Apply(model.Update{Event: &wire.Event{Kind: wire.EventActivity, Seq: seq, SID: "build-42", From: from, Activity: &wire.Activity{Kind: "gate", Gate: g, At: modeltest.At(80)}}})
+	}
+	gate(500, "bob@vps-2", "held")
+	gate(501, "carol@mac-3", "paused")
+	for i, key := range []string{"build-42.vps-2.bob", "build-42.mac-3.carol"} {
+		s.Apply(model.Update{Presence: &wire.PresenceUpdate{Key: key, Revision: int64(800 + i), Record: &wire.PresenceRecord{
+			Host: "h", Cwd: "/src/app", Client: wire.Client{Name: "claude-code", Version: "2.1"}, State: "idle", JoinedAt: modeltest.At(0), Gated: true,
+		}}})
+	}
+	s.Apply(model.Update{Session: &wire.SessionUpdate{SID: "build-42", Revision: 900, Record: &wire.SessionRecord{Status: "open", CreatedAt: modeltest.At(-60), Hold: true}}})
+	return s
+}
+
+// The operator's complaint: no control surface. The gate keys act on the agent under the
+// sidebar cursor: g releases with an optional task, p pauses or resumes, x stops.
+func TestGateKeysSteerTheSelectedAgent(t *testing.T) {
+	h := start(t, storeWithGates())
+	h.openSession()
+	contains(t, h.frame(), "bob@vps-2 held", "carol@mac-3 paused", "new agents are held (H)", "1 held")
+	// With no agent selected the keys do nothing to an agent.
+	h.keys("g", "p", "x")
+	if len(h.op.calls) != 0 {
+		t.Fatalf("calls with no agent selected: %v", h.op.calls)
+	}
+	// tab puts the cursor on the session row; the rows below are docs, alice, bob, carol.
+	h.keys("tab", "down", "down")
+	contains(t, h.frame(), "g release · p pause/resume · x stop")
+	// alice works: g has nothing to release, p pauses her.
+	h.keys("g")
+	if h.status() != "alice@mac-1 is not held" {
+		t.Fatalf("status %q", h.status())
+	}
+	h.keys("p")
+	// bob is held: p does not release him, g does, with a task.
+	h.keys("down", "p")
+	if h.status() != "bob@vps-2 is held; g releases it" {
+		t.Fatalf("status %q", h.status())
+	}
+	h.keys("g")
+	contains(t, h.frame(), "release bob@vps-2 · task (enter: none) ›")
+	h.keys("+fix the parser", "enter")
+	if h.status() != "released bob@vps-2 with its task" {
+		t.Fatalf("status %q", h.status())
+	}
+	// carol is paused: p resumes her; x asks before it removes her.
+	h.keys("down", "p", "x")
+	contains(t, h.frame(), "remove carol@mac-3 from build-42?")
+	h.keys("y")
+	want := "[gate build-42 alice@mac-1 paused" +
+		" send build-42 bob@vps-2 fix the parser gate build-42 bob@vps-2 run" +
+		" gate build-42 carol@mac-3 run kick build-42 carol@mac-3]"
+	if fmt.Sprint(h.op.calls) != want {
+		t.Fatalf("calls\n got %v\nwant %s", h.op.calls, want)
+	}
+}
+
+func TestReleaseWithNoTaskAndFromTheDetails(t *testing.T) {
+	h := start(t, storeWithGates())
+	h.openSession()
+	h.keys("tab", "down", "down", "down", "enter")
+	contains(t, h.frame(), "agent bob@vps-2", "held: it does no work until you release it (g)")
+	h.keys("g", "enter")
+	if fmt.Sprint(h.op.calls) != "[gate build-42 bob@vps-2 run]" || h.status() != "released bob@vps-2" {
+		t.Fatalf("calls %v status %q", h.op.calls, h.status())
+	}
+}
+
+func TestSessionKeysAndCommandsSetGatesAndHold(t *testing.T) {
+	h := start(t, storeWithGates())
+	h.openSession()
+	// P pauses each agent that works (alice), R resumes each paused one (carol): a held
+	// agent (bob) stays held in both cases.
+	h.keys("P")
+	h.keys("R")
+	// H turns the hold of the session off; the command turns it on.
+	h.keys("H")
+	h.keys(":", "+hold on", "enter")
+	// :go with no name releases each held agent; with a name and words, the words are the task.
+	h.keys(":", "+go", "enter")
+	h.keys(":", "+go carol check the tests", "enter")
+	want := "[gate build-42 alice@mac-1 paused" +
+		" gate build-42 carol@mac-3 run" +
+		" hold build-42 false hold build-42 true" +
+		" gate build-42 bob@vps-2 run" +
+		" send build-42 carol@mac-3 check the tests gate build-42 carol@mac-3 run]"
+	if fmt.Sprint(h.op.calls) != want {
+		t.Fatalf("calls\n got %v\nwant %s", h.op.calls, want)
+	}
+	h.keys(":", "+pause alice now", "enter")
+	if h.status() != "usage: :pause [agent]" {
+		t.Fatalf("status %q", h.status())
+	}
+	h.keys(":", "+resume alice", "enter")
+	if h.status() != "alice@mac-1 is run already" {
+		t.Fatalf("status %q", h.status())
+	}
+	h.keys(":", "+hold maybe", "enter")
+	if h.status() != "usage: :hold on|off" {
+		t.Fatalf("status %q", h.status())
+	}
+}
+
+// The next thing that needs the operator includes an agent that waits for its release.
+func TestAttentionGoesToAHeldAgent(t *testing.T) {
+	h := start(t, storeWithGates())
+	h.openSession()
+	for range 6 {
+		h.keys("a")
+		if strings.Contains(h.frame(), "agent bob@vps-2") {
+			if h.status() != "bob@vps-2 is held: g releases it" {
+				t.Fatalf("status %q", h.status())
+			}
+			return
+		}
+		h.keys("esc")
+	}
+	t.Fatalf("a never opened the held agent:\n%s", h.frame())
+}
+
 func TestWithdrawAsksFirst(t *testing.T) {
 	h := start(t, nil)
 	h.openSession()
@@ -295,7 +485,10 @@ func TestWithdrawAsksFirst(t *testing.T) {
 func TestHelpAndFiltersAndSidebarToggle(t *testing.T) {
 	h := start(t, nil)
 	h.keys("?")
-	contains(t, h.frame(), "coop · help · esc back", "MOVE", ":withdraw [#id]")
+	contains(t, h.frame(), "coop · help · esc back", "MOVE", "STEER")
+	// The help is longer than the screen: it scrolls.
+	h.keys("pgdn")
+	contains(t, h.frame(), ":withdraw [#id]", ":go [agent] [task]", ":hold on|off")
 	h.keys("esc")
 	contains(t, h.frame(), "coop · all sessions · transcript")
 	h.keys("[")

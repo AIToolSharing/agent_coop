@@ -35,7 +35,9 @@ type fakeAgent struct {
 }
 
 type fakeSession struct {
-	open   bool
+	open bool
+	// gate is the gate that the joined event gives; "" gives none, as an earlier service.
+	gate   string
 	agents map[string]*fakeAgent // by address
 	kicked map[string]bool
 	msgs   []message
@@ -164,7 +166,7 @@ func (h *fakeHub) stream(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 
 	openStream(w)
-	writeEvent(w, "joined", "", joinedEvent{Me: addr, Session: r.PathValue("sid")})
+	writeEvent(w, "joined", "", joinedEvent{Me: addr, Session: r.PathValue("sid"), Gate: s.gate})
 	tick := time.NewTicker(h.ping)
 	defer tick.Stop()
 	defer h.left(s, a, out)
@@ -377,6 +379,14 @@ func (h *fakeHub) setOpen(sid string, open bool) {
 		kind = noticeReopened
 	}
 	s.emit(sseOut{event: "notice", data: notice{Kind: kind, At: now()}}, func(*fakeAgent) bool { return true })
+}
+
+// gate tells one agent its new gate, as the operator's change does.
+func (h *fakeHub) gate(sid, addr, kind string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ev := sseOut{event: "notice", id: h.nextID(), data: notice{Kind: kind, At: now()}}
+	h.sessions[sid].emit(ev, func(a *fakeAgent) bool { return a.addr == addr })
 }
 
 func (h *fakeHub) redact(sid, id string) {

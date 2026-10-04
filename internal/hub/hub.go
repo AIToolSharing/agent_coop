@@ -85,6 +85,9 @@ type Options struct {
 	// AutoCreate lets the first join of an unknown session create it, open. A closed session
 	// stays closed.
 	AutoCreate bool
+	// HoldNew is the hold setting of a session that the hub makes: an agent that joins such a
+	// session for the first time is held until the operator releases it.
+	HoldNew bool
 	// Ping is the interval of the SSE ping, and of the check of each live connection's token
 	// and session. Zero means 15 s.
 	Ping time.Duration
@@ -110,6 +113,8 @@ type StreamQuery struct {
 	Instance                  string
 	Host, Cwd                 string
 	ClientName, ClientVersion string
+	// Gated is true when the agent's tool calls go through the gate (started by `coop claude`).
+	Gated bool
 }
 
 // Message is a message as an agent gets it.
@@ -124,7 +129,7 @@ type Message struct {
 
 // Notice is something the agent must know that is not a message.
 type Notice struct {
-	Kind string `json:"kind"` // kicked closed reopened redacted peer_left
+	Kind string `json:"kind"` // kicked closed reopened redacted peer_left held paused released
 	ID   string `json:"id,omitempty"`
 	Peer string `json:"peer,omitempty"`
 	At   string `json:"at"`
@@ -316,6 +321,11 @@ type Conn struct {
 	state   string
 	note    string
 	waiting *wire.Waiting
+	// gate is whether the operator lets the agent work: run, held or paused.
+	gate  string
+	gated bool
+	// quiet is the sequence of a gate record that the agent gets no notice of, or 0.
+	quiet int64
 	// sent holds the ids of the messages written to the stream, for redact notices.
 	sent map[string]bool
 	// status is the session status this connection was told last.
@@ -364,6 +374,8 @@ type Joined struct {
 	// CatchUpUntil is the last sequence that existed at the join; events up to it come from
 	// the store, later ones from the connection.
 	CatchUpUntil int64
+	// hold: this is the agent's first join, and the session holds new agents.
+	hold bool
 }
 
 // Join checks a join and reserves the name. A Joined must be followed by Run.
@@ -393,16 +405,20 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 	if err != nil {
 		return nil, storeErr(err)
 	}
+	known, isKnown, err := h.st.KnownAgent(sid, me.String())
+	if err != nil {
+		return nil, storeErr(err)
+	}
 	startSeq := end + 1
 	if wire.IsID(lastEventID) {
 		n, _ := strconv.ParseInt(lastEventID, 10, 64)
 		startSeq = n + 1
-	} else if k, ok, err := h.st.KnownAgent(sid, me.String()); err != nil {
-		return nil, storeErr(err)
-	} else if ok {
+	} else if isKnown {
 		// A new process of an agent the hub knows gets what the agent missed.
-		startSeq = k.SeenSeq + 1
+		startSeq = known.SeenSeq + 1
 	}
+	// An agent that the hub does not know starts held when the session holds new agents.
+	gate := gateOf(gateInput{Known: isKnown, Gate: known.Gate, Hold: row.Record.Hold})
 	key := wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: me})
 	old := h.conns[key]
 	if old != nil && old.instance != q.Instance {
@@ -418,11 +434,12 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 		joinedAt: h.now(), resumed: old != nil,
 		out:   make(chan item, 256),
 		state: "idle", sent: map[string]bool{},
+		gate: gate, gated: q.Gated,
 		status: row.Record.Status, reason: "disconnected", done: make(chan struct{}),
 	}
 	h.conns[key] = c
 	h.wg.Add(1)
-	return &Joined{Conn: c, StartSeq: startSeq, CatchUpUntil: end}, nil
+	return &Joined{Conn: c, StartSeq: startSeq, CatchUpUntil: end, hold: !isKnown && gate == wire.GateHeld}, nil
 }
 
 // refusedEvery is the least time between two records of a refused join of one agent. It is a
@@ -452,20 +469,25 @@ func (h *Hub) Run(ctx context.Context, j *Joined, sink Sink) {
 	defer h.wg.Done()
 	defer h.leave(c)
 	me := c.me.String()
+	h.mu.Lock()
 	if !c.resumed {
-		h.mu.Lock()
 		_, err := h.publishLocked(wire.Event{Kind: wire.EventActivity, SID: c.sid, From: me, Activity: &wire.Activity{
 			Kind: "joined", Host: c.host, Cwd: c.cwd, Client: c.client, At: c.joinedAt,
 		}}, true, nil)
-		h.mu.Unlock()
+		if err == nil && j.hold {
+			// The first join in a session that holds new agents: record the hold. The agent
+			// gets no notice of it: the joined event tells it the gate.
+			c.quiet, err = h.recordGateLocked(c.sid, me, wire.GateHeld)
+		}
 		if err != nil {
+			h.mu.Unlock()
 			return
 		}
 	}
-	h.mu.Lock()
 	h.putPresenceLocked(c)
+	gate := c.gate
 	h.mu.Unlock()
-	if sink.Write("joined", map[string]string{"me": me, "session": c.sid}, "") != nil {
+	if sink.Write("joined", map[string]string{"me": me, "session": c.sid, "gate": gate}, "") != nil {
 		return
 	}
 	if j.StartSeq <= j.CatchUpUntil {
@@ -524,7 +546,11 @@ func (h *Hub) deliver(c *Conn, it item, sink Sink) bool {
 	me := c.me.String()
 	h.mu.Lock()
 	wasSent := c.sent[e.ID]
+	quiet := c.quiet
 	h.mu.Unlock()
+	if e.Seq == quiet {
+		return true
+	}
 	switch deliveryFor(e, me, func(string) bool { return wasSent }) {
 	case "message":
 		m := toMessage(e)
@@ -542,6 +568,9 @@ func (h *Hub) deliver(c *Conn, it item, sink Sink) bool {
 		case wire.EventRedact:
 			return write("notice", Notice{Kind: "redacted", ID: e.ID, At: e.At}, id)
 		case wire.EventActivity:
+			if e.Activity.Kind == "gate" {
+				return write("notice", Notice{Kind: gateNotice(e.Activity.Gate), At: e.Activity.At}, id)
+			}
 			return write("notice", Notice{Kind: "peer_left", Peer: e.From, At: e.Activity.At}, id)
 		}
 	}
@@ -641,7 +670,7 @@ func (h *Hub) putPresenceLocked(c *Conn) {
 func (c *Conn) presence() wire.PresenceRecord {
 	r := wire.PresenceRecord{
 		Host: c.host, Cwd: c.cwd, Client: c.client, State: c.state, Note: c.note,
-		JoinedAt: c.joinedAt,
+		JoinedAt: c.joinedAt, Gated: c.gated,
 	}
 	if c.waiting != nil {
 		w := *c.waiting
@@ -830,7 +859,7 @@ func (h *Hub) ListSessions() ([]wire.SessionInfo, error) {
 func (h *Hub) CreateSession(sid, title string) (wire.SessionInfo, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	row, err := h.st.CreateSession(sid, title, h.now())
+	row, err := h.st.CreateSession(sid, title, h.now(), h.opt.HoldNew)
 	if errors.Is(err, store.ErrExists) {
 		return wire.SessionInfo{}, errf("conflict", "session %s exists", sid)
 	}
@@ -915,6 +944,168 @@ func (h *Hub) Unkick(sid string, target wire.Address) error {
 		return storeErr(err)
 	}
 	h.feedAll("kick", kickOut{Kind: "kick", Key: kickKey(sid, target.String()), Revision: rev}, "")
+	return nil
+}
+
+// Forget drops an agent that left from the session: it is no peer of the other agents, and
+// the operator's lists do not show it. Unlike Kick, the agent may join again; it then starts
+// as a new agent, with no replay of what it missed. An agent that is in the session cannot be
+// forgotten. An agent that the hub does not know is not an error.
+func (h *Hub) Forget(sid string, target wire.Address) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.requireSessionLocked(sid); err != nil {
+		return err
+	}
+	if _, live := h.conns[wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: target})]; live {
+		return errf("conflict", "%s is in the session; only an agent that left can be forgotten", target)
+	}
+	known, err := h.st.Forget(sid, target.String())
+	if err != nil || !known {
+		return storeErr(err)
+	}
+	_, err = h.publishLocked(wire.Event{Kind: wire.EventActivity, SID: sid, From: target.String(), Activity: &wire.Activity{
+		Kind: "forgotten", At: h.now(),
+	}}, false, nil)
+	return storeErr(err)
+}
+
+// --- The gate: whether the operator lets an agent work -------------------------------------------
+
+// GateRemoved is the answer of Gate for an agent that the operator removed.
+const GateRemoved = "removed"
+
+// gateInput is what the gate of an agent depends on.
+type gateInput struct {
+	Kicked bool   // the operator removed the agent
+	Known  bool   // the agent joined the session before
+	Gate   string // the gate of a known agent
+	Hold   bool   // the session holds an agent that joins for the first time
+}
+
+// gateOf gives the gate of an agent: removed, or run, held or paused. An agent that did not
+// join yet is held when the session holds new agents. Thus a tool call that comes before the
+// join does not get through.
+func gateOf(in gateInput) string {
+	switch {
+	case in.Kicked:
+		return GateRemoved
+	case in.Known:
+		return in.Gate
+	case in.Hold:
+		return wire.GateHeld
+	}
+	return wire.GateRun
+}
+
+// gateNotice is the kind of the notice that tells an agent its new gate.
+func gateNotice(gate string) string {
+	if gate == wire.GateRun {
+		return "released"
+	}
+	return gate
+}
+
+// Gate answers an agent's question before a tool call: may I work? The answer is run, held,
+// paused or removed. The agent does not have to be in the session: a session that does not
+// exist yet holds new agents when the hub does.
+func (h *Hub) Gate(machine, sid, agent string) (string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.act.take(machine) {
+		return "", errf("rate_limited", "too many updates")
+	}
+	me := wire.Address{Agent: agent, Machine: machine}.String()
+	in := gateInput{Hold: h.opt.HoldNew}
+	var err error
+	if in.Kicked, err = h.st.Kicked(sid, me); err != nil {
+		return "", storeErr(err)
+	}
+	if row, ok, err := h.st.Session(sid); err != nil {
+		return "", storeErr(err)
+	} else if ok {
+		in.Hold = row.Record.Hold
+	}
+	k, known, err := h.st.KnownAgent(sid, me)
+	if err != nil {
+		return "", storeErr(err)
+	}
+	in.Known, in.Gate = known, k.Gate
+	return gateOf(in), nil
+}
+
+// recordGateLocked stores the gate of a known agent and appends the record of the change. The
+// agent, when it is in the session, gets the record as a notice.
+func (h *Hub) recordGateLocked(sid, agent, gate string) (seq int64, err error) {
+	if _, err := h.st.SetGate(sid, agent, gate); err != nil {
+		return 0, storeErr(err)
+	}
+	seq, err = h.publishLocked(wire.Event{Kind: wire.EventActivity, SID: sid, From: agent, Activity: &wire.Activity{
+		Kind: "gate", Gate: gate, At: h.now(),
+	}}, false, nil)
+	return seq, storeErr(err)
+}
+
+// SetGate sets the gate of one agent of a session, or of each agent that is not removed when
+// target is nil: run lets it work, paused and held stop its tool calls. An agent that has that
+// gate already gets no record.
+func (h *Hub) SetGate(sid string, target *wire.Address, gate string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.requireSessionLocked(sid); err != nil {
+		return err
+	}
+	var rows []store.KnownRow
+	if target != nil {
+		k, ok, err := h.st.KnownAgent(sid, target.String())
+		if err != nil {
+			return storeErr(err)
+		}
+		if !ok {
+			return errf("not_found", "no agent %s in session %s", target, sid)
+		}
+		rows = []store.KnownRow{k}
+	} else {
+		known, err := h.st.Known(sid)
+		if err != nil {
+			return storeErr(err)
+		}
+		for _, k := range known {
+			if kicked, err := h.st.Kicked(sid, k.Agent); err != nil {
+				return storeErr(err)
+			} else if !kicked {
+				rows = append(rows, k)
+			}
+		}
+	}
+	for _, k := range rows {
+		if k.Gate == gate {
+			continue
+		}
+		if a, ok := wire.ParseAddress(k.Agent); ok {
+			if c := h.conns[wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: a})]; c != nil {
+				c.gate = gate
+			}
+		}
+		if _, err := h.recordGateLocked(sid, k.Agent, gate); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SetHold sets whether a session holds an agent that joins it for the first time.
+func (h *Hub) SetHold(sid string, hold bool) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	row, err := h.st.SetHold(sid, hold)
+	if errors.Is(err, store.ErrNotFound) {
+		return errf("not_found", "no session %s", sid)
+	}
+	if err != nil {
+		return storeErr(err)
+	}
+	h.feedSession(row)
 	return nil
 }
 
@@ -1165,7 +1356,7 @@ func (h *Hub) requireOpenLocked(sid string, create bool) (store.SessionRow, erro
 		return row, storeErr(err)
 	}
 	if !ok && create {
-		row, err = h.st.CreateSession(sid, "", h.now())
+		row, err = h.st.CreateSession(sid, "", h.now(), h.opt.HoldNew)
 		if err != nil && !errors.Is(err, store.ErrExists) {
 			return row, storeErr(err)
 		}
@@ -1316,8 +1507,8 @@ func (h *Hub) peerLocked(sid, input string, me *wire.Address, allowUnknown bool)
 // --- Delivery rules (packages/core/src/deliver.ts) ---------------------------------------------
 
 // deliveryFor says what the hub pushes to me for one event: "message" for a message from
-// someone else to all or to me; "notice" for my own kick, the redact of a message I got, or a
-// peer's leave; "" for nothing.
+// someone else to all or to me; "notice" for my own kick, the redact of a message I got, a
+// peer's leave, or a change of my own gate; "" for nothing.
 func deliveryFor(e *wire.Event, me string, wasSent func(string) bool) string {
 	switch e.Kind {
 	case wire.EventMsg:
@@ -1333,7 +1524,10 @@ func deliveryFor(e *wire.Event, me string, wasSent func(string) bool) string {
 			return "notice"
 		}
 	case wire.EventActivity:
-		if e.Activity != nil && e.Activity.Kind == "left" && e.From != me {
+		if e.Activity == nil {
+			return ""
+		}
+		if e.Activity.Kind == "left" && e.From != me || e.Activity.Kind == "gate" && e.From == me {
 			return "notice"
 		}
 	}

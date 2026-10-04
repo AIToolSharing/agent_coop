@@ -304,6 +304,26 @@ func (c *Client) Unkick(ctx context.Context, sid, target string) error {
 	return c.do(ctx, http.MethodPost, sessionPath(sid)+"/unkick", map[string]string{"target": target})
 }
 
+// SetGate sets whether an agent may work: run, held or paused. An empty target means every
+// agent of the session.
+func (c *Client) SetGate(ctx context.Context, sid, target, gate string) error {
+	body := map[string]string{"gate": gate}
+	if target != "" {
+		body["target"] = target
+	}
+	return c.do(ctx, http.MethodPost, sessionPath(sid)+"/gate", body)
+}
+
+// SetHold sets whether a session holds an agent that joins it for the first time.
+func (c *Client) SetHold(ctx context.Context, sid string, hold bool) error {
+	return c.do(ctx, http.MethodPost, sessionPath(sid)+"/hold", map[string]bool{"hold": hold})
+}
+
+// Forget drops an agent that left from a session's lists. The agent may join again.
+func (c *Client) Forget(ctx context.Context, sid, target string) error {
+	return c.do(ctx, http.MethodPost, sessionPath(sid)+"/forget", map[string]string{"target": target})
+}
+
 // Redact withdraws a message. It gives false when id is not a message of this session.
 func (c *Client) Redact(ctx context.Context, sid, id string) (bool, error) {
 	err := c.do(ctx, http.MethodPost, sessionPath(sid)+"/redact", map[string]string{"id": id})

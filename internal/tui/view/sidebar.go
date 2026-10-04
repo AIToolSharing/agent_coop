@@ -21,21 +21,35 @@ type Summary struct {
 // RefusedFor is how long a removed agent that tried to join stays in the list.
 const RefusedFor = 5 * time.Minute
 
+// LeftFor is how long an agent that left stays in the list.
+const LeftFor = 5 * time.Minute
+
 // lately reports whether the time iso is within the last RefusedFor.
 func lately(iso string, now time.Time) bool {
 	t, ok := parseTime(iso)
 	return ok && now.Sub(t) < RefusedFor
 }
 
+// gone reports whether the agent left LeftFor ago or earlier.
+func gone(a *model.Agent, now time.Time) bool {
+	if a.Left == nil {
+		return false
+	}
+	t, ok := parseTime(a.Left.At)
+	return ok && now.Sub(t) >= LeftFor
+}
+
 // Listed gives the agents that the sidebar shows and the session count takes: every agent but
-// those the operator removed. A removed agent that tried to join lately is listed, so that the
-// operator sees that it waits for :allow. AgentList keeps every agent, for :allow and for the
-// history.
+// those the operator removed or forgot, and those that left LeftFor ago or earlier. A short
+// run, such as a headless agent that did its task, must not fill the list for good. A removed
+// agent that tried to join lately is listed, so that the operator sees that it waits for
+// :allow. AgentList keeps every agent, for :allow, for :forget and for the history.
 func Listed(v *model.Session, now time.Time) []*model.Agent {
 	all := v.AgentList()
 	out := all[:0]
 	for _, a := range all {
-		if !a.Kicked || a.Online || lately(a.RefusedAt, now) {
+		hidden := a.Kicked || a.Forgotten || gone(a, now)
+		if !hidden || a.Online || lately(a.RefusedAt, now) {
 			out = append(out, a)
 		}
 	}
@@ -82,6 +96,20 @@ func mustTime(iso string) time.Time {
 	return t
 }
 
+// gateText is what the agent list shows in place of the state for an agent that the operator
+// does not let work: held or paused. An agent with no gate hook gets the gate only as advice:
+// the text then says "soft". "" for an agent that may work.
+func gateText(a *model.Agent) string {
+	if a.Gate != "held" && a.Gate != "paused" {
+		return ""
+	}
+	if a.Online && !a.Gated {
+		// Short, so that the name stays whole: the agent's details say the rest.
+		return a.Gate + " (soft)"
+	}
+	return a.Gate
+}
+
 // Row says what a sidebar line stands for: a session or an agent. Headers have no row.
 type Row struct {
 	SID     string
@@ -98,6 +126,8 @@ type Sidebar struct {
 type Selection struct {
 	SID    string
 	Cursor int // -1 when the sidebar has no focus
+	// Hold is the hold setting of the shown session: new agents wait for a release.
+	Hold bool
 }
 
 // SidebarWidth is the narrowest width that shows every row whole, at most maxWidth.
@@ -108,6 +138,14 @@ func SidebarWidth(sums []Summary, agents []*model.Agent, maxWidth int, now time.
 	}
 	for _, a := range agents {
 		longest = max(longest, Width(a.Address)+18)
+		if g := gateText(a); g != "" {
+			// icon, name, space, gate, and the wait mark when the agent waits.
+			wait := 0
+			if a.Waiting != nil {
+				wait = 6
+			}
+			longest = max(longest, 2+Width(a.Address)+1+Width(g)+wait+1)
+		}
 		if lately(a.DuplicateAt, now) {
 			longest = max(longest, 30) // "  ↳ duplicate refused 59m ago"
 		}
@@ -160,12 +198,21 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 	}
 	add(Line{S("")}, nil)
 	add(Line{Styled("AGENTS · "+sel.SID, Style{Bold: true, Dim: true})}, nil)
+	if sel.Hold {
+		add(Line{Dim("  new agents are held (H)")}, nil)
+	} else {
+		add(Line{Dim("  new agents start at once (H)")}, nil)
+	}
 	if len(agents) == 0 {
 		add(Line{Dim("  none yet")}, nil)
 	}
 	for _, a := range agents {
 		here := len(sb.Rows) == sel.Cursor
 		state := Color(a.State, StateColor(a.State))
+		if g := gateText(a); g != "" {
+			// The gate matters more than the state the agent gave itself: it does no work.
+			state = Color(g, "yellow")
+		}
 		if a.Kicked {
 			// Short, so that the name stays whole: the agent's details say the rest.
 			text := "removed"

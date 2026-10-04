@@ -25,6 +25,10 @@ type Operator interface {
 	DeleteSession(ctx context.Context, sid string) error
 	Kick(ctx context.Context, sid, target string) error
 	Unkick(ctx context.Context, sid, target string) error
+	Forget(ctx context.Context, sid, target string) error
+	// SetGate sets whether an agent may work: run, held or paused.
+	SetGate(ctx context.Context, sid, target, gate string) error
+	SetHold(ctx context.Context, sid string, hold bool) error
 	Redact(ctx context.Context, sid, id string) (bool, error)
 	Send(ctx context.Context, sid, to, text, replyTo string) (string, error)
 }
@@ -57,9 +61,12 @@ type mode struct {
 	kind  string // normal compose command search confirm
 	to    string // compose: all or an address
 	reply *reply
-	value string // command and search
-	text  string // confirm
-	run   func() tea.Cmd
+	// release: the composer holds the task for an agent that the operator releases; enter
+	// with no text releases it with no task.
+	release bool
+	value   string // command and search
+	text    string // confirm
+	run     func() tea.Cmd
 }
 
 // App is the tea.Model. All state lives here; Update reads and writes it in one goroutine.
@@ -200,7 +207,11 @@ func (a *App) screen() screen {
 	if a.focus == "sidebar" {
 		cursor = a.cursor
 	}
-	s.sidebar = view.RenderSidebar(s.sums, agents, view.Selection{SID: a.sid, Cursor: cursor}, max(1, s.sidebarW-1), now)
+	hold := false
+	if rec := a.store.Sessions[a.sid]; rec != nil {
+		hold = rec.Hold
+	}
+	s.sidebar = view.RenderSidebar(s.sums, agents, view.Selection{SID: a.sid, Cursor: cursor, Hold: hold}, max(1, s.sidebarW-1), now)
 	s.mainW = max(20, a.width-s.sidebarW)
 	s.items = view.Attention(s.v, now)
 	s.attn = view.RenderAttention(s.items, now)
@@ -469,6 +480,9 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 	case isKey(k, tea.KeyEnter):
 		return a.openCurrent(s)
 	}
+	if cmd, ok := a.gateKey(k.Text, s); ok {
+		return cmd
+	}
 	if a.overlay != nil {
 		return nil
 	}
@@ -505,6 +519,69 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 		a.compose(m.From, &reply{id: m.ID, to: m.From})
 	}
 	return nil
+}
+
+// selectedAgent is the agent that the gate keys act on: the one whose details are open, or
+// the one under the sidebar cursor. Nil when neither is the case.
+func (a *App) selectedAgent(s screen) *model.Agent {
+	address := ""
+	switch {
+	case a.overlay != nil && a.overlay.kind == "agent":
+		address = a.overlay.id
+	case a.overlay == nil && a.focus == "sidebar":
+		if i := a.cursorOf(s); i >= 0 && i < len(s.sidebar.Rows) && s.sidebar.Rows[i] != nil {
+			address = s.sidebar.Rows[i].Address
+		}
+	}
+	if address == "" {
+		return nil
+	}
+	return s.v.Agents[address]
+}
+
+// gateKey handles the keys that steer agents: g release, p pause or resume, x stop, for the
+// selected agent; P pause or resume and H hold, for the shown session. ok is false for
+// another key, and for an agent key with no agent selected.
+func (a *App) gateKey(key string, s screen) (cmd tea.Cmd, ok bool) {
+	session := a.sid
+	if session == model.AllSessions || a.overlay != nil && a.overlay.kind != "agent" {
+		return nil, false
+	}
+	switch key {
+	case "P":
+		return a.command("pause", s), true
+	case "R":
+		return a.command("resume", s), true
+	case "H":
+		if rec := a.store.Sessions[session]; rec != nil && rec.Hold {
+			return a.command("hold off", s), true
+		}
+		return a.command("hold on", s), true
+	}
+	ag := a.selectedAgent(s)
+	if ag == nil {
+		return nil, false
+	}
+	switch key {
+	case "g":
+		if ag.Gate == wire.GateRun {
+			return a.setStatus(ag.Address + " is not held"), true
+		}
+		a.compose(ag.Address, nil)
+		a.mode.release = true
+		return nil, true
+	case "p":
+		if ag.Gate == wire.GatePaused {
+			return a.command("resume "+ag.Address, s), true
+		}
+		if ag.Gate == wire.GateHeld {
+			return a.setStatus(ag.Address + " is held; g releases it"), true
+		}
+		return a.command("pause "+ag.Address, s), true
+	case "x":
+		return a.command("kick "+ag.Address, s), true
+	}
+	return nil, false
 }
 
 func (a *App) compose(to string, r *reply) {
@@ -545,7 +622,7 @@ func (a *App) inputKey(k tea.KeyPressMsg, s screen) tea.Cmd {
 			m.value = Complete(m.value, s.v.AgentList())
 			return nil
 		}
-		if m.kind == "compose" && m.reply == nil {
+		if m.kind == "compose" && m.reply == nil && !m.release {
 			targets := []string{wire.Broadcast}
 			for _, ag := range s.v.AgentList() {
 				targets = append(targets, ag.Address)
@@ -674,7 +751,7 @@ func (a *App) nextAttention(s screen) tea.Cmd {
 	item := s.items[a.attn%len(s.items)]
 	a.attn++
 	a.status = view.Describe(item)
-	if item.Kind == "blocked" {
+	if item.Kind == "blocked" || item.Kind == "held" {
 		a.agentAddr = item.Address
 		a.overlay = &overlay{kind: "agent", id: item.Address}
 		a.scroll = -1
@@ -770,10 +847,35 @@ func (a *App) act(f func(ctx context.Context) (string, error)) tea.Cmd {
 	}
 }
 
+// release lets a held or paused agent work. With a task, the agent gets the task first, as a
+// message from the operator, so that it has it when its wait ends.
+func (a *App) release(session, address, task string) tea.Cmd {
+	if len([]rune(task)) > wire.MaxText {
+		return a.setStatus("too long (max 8000)")
+	}
+	return a.act(func(ctx context.Context) (string, error) {
+		if task != "" {
+			if _, err := a.op.Send(ctx, session, address, task, ""); err != nil {
+				return "", err
+			}
+		}
+		if err := a.op.SetGate(ctx, session, address, wire.GateRun); err != nil {
+			return "", err
+		}
+		if task != "" {
+			return "released " + address + " with its task", nil
+		}
+		return "released " + address, nil
+	})
+}
+
 // submit sends what the composer holds.
 func (a *App) submit(m mode, s screen) tea.Cmd {
 	session := a.sid
 	value := strings.TrimSpace(a.ta.Value())
+	if m.release && session != model.AllSessions {
+		return a.release(session, m.to, value)
+	}
 	if session == model.AllSessions || value == "" {
 		return nil
 	}
@@ -887,6 +989,9 @@ func (a *App) title(s screen) string {
 func (a *App) hint() string {
 	switch a.mode.kind {
 	case "compose":
+		if a.mode.release {
+			return "enter release · alt+enter new line · esc cancel"
+		}
 		return "enter send · alt+enter new line · tab target · esc cancel"
 	case "command":
 		return "enter run · tab complete · esc cancel"
@@ -895,11 +1000,14 @@ func (a *App) hint() string {
 	case "confirm":
 		return "y yes · n no"
 	}
+	if a.overlay != nil && a.overlay.kind == "agent" {
+		return "g release · p pause/resume · x stop · esc back · ↑↓ scroll · ? help · q quit"
+	}
 	if a.overlay != nil {
 		return "esc back · ↑↓ scroll · ? help · q quit"
 	}
 	if a.focus == "sidebar" {
-		return "↑↓ move · enter open · [ hide · tab main pane · : command · ? help · q quit"
+		return "↑↓ move · enter open · on an agent: g release · p pause/resume · x stop · P pause all · H hold · tab main · ? help"
 	}
 	return "↑↓ enter esc · m message · r reply · a attention · / search · : command · tab sidebar · ? help · q quit"
 }
@@ -908,6 +1016,9 @@ func (a *App) promptLines(s screen) []string {
 	switch a.mode.kind {
 	case "compose":
 		label := "to " + a.mode.to + " (tab: next) › "
+		if a.mode.release {
+			label = "release " + a.mode.to + " · task (enter: none) › "
+		}
 		if a.mode.reply != nil {
 			label = "reply to #" + a.mode.reply.id + " from " + a.mode.reply.to + " › "
 		}
