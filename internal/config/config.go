@@ -32,7 +32,8 @@ type Config struct {
 // not set. COOP_SESSION and COOP_AGENT then come from the nearest .coop file (FindProjectFile)
 // from cwd, or else from CLAUDE_PROJECT_DIR in env. COOP_URL, COOP_TOKEN, COOP_OPERATOR_TOKEN,
 // COOP_CERT_SHA256 and COOP_PUSH then come from the credential file. A .coop file cannot set an address or a
-// token, because a repository can hold one. The default agent name always comes from cwd.
+// token, because a repository can hold one. The default agent name always comes from cwd; in
+// the home directory (HOME in env) it is "agent".
 //
 // Load calls warn for a credential file that other users can read, for an invalid session
 // name (Load then uses no session) and for an invalid agent name (Load then uses
@@ -66,7 +67,7 @@ func Load(env map[string]string, file string, warn func(string), cwd string) Con
 		warn(fmt.Sprintf("%s %q is not a valid session name; ignoring it", where("COOP_SESSION"), session))
 		session = ""
 	}
-	fallback := DefaultAgentName(cwd)
+	fallback := DefaultAgentName(cwd, cmp.Or(env["HOME"], env["USERPROFILE"]))
 	agent := cmp.Or(pick("COOP_AGENT", fromProject), fallback)
 	if !wire.IsAgentName(agent) {
 		warn(fmt.Sprintf("%s %q is not a valid agent name; using %q", where("COOP_AGENT"), agent, fallback))
@@ -118,7 +119,14 @@ var notInAgentName = regexp.MustCompile(`[^a-z0-9_-]+`)
 // The name is in lower case, each run of other characters becomes one "-", and no "-" stays
 // at the start or the end. The name is then cut to 64 characters, so it can end with "-".
 // When the result is empty or reserved, the name is "agent".
-func DefaultAgentName(cwd string) string {
+//
+// home is the home directory of the user, or "". An agent that starts there is "agent": the
+// name of that directory is the name of the unix user, which says nothing about the agent
+// (found in use: an agent named "root").
+func DefaultAgentName(cwd, home string) string {
+	if home != "" && filepath.Clean(cwd) == filepath.Clean(home) {
+		return "agent"
+	}
 	name := notInAgentName.ReplaceAllString(strings.ToLower(filepath.Base(cwd)), "-")
 	name = strings.Trim(name, "-")
 	// All characters are ASCII now, so a byte cut is a character cut.

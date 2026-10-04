@@ -13,7 +13,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -28,13 +30,31 @@ const timeout = 5 * time.Second
 // Runner runs the herdr command with args and gives its standard output.
 type Runner func(ctx context.Context, args ...string) ([]byte, error)
 
-// Command is the Runner that runs the herdr binary: HERDR_BIN_PATH when Herdr gave one, else
-// `herdr` from the PATH.
-func Command(env map[string]string) Runner {
-	bin := env["HERDR_BIN_PATH"]
-	if bin == "" {
-		bin = "herdr"
+// Binary gives the herdr binary to run: HERDR_BIN_PATH when Herdr gave one, else `herdr` from
+// the PATH, else ~/.local/bin/herdr. The last one is where Herdr installs itself on a machine
+// that it reaches over SSH, and a pane's shell there may not have that directory on its PATH
+// (seen with Herdr 0.9.3: "the remote shell does not resolve herdr to that path").
+func Binary(env map[string]string, exists func(path string) bool) string {
+	if bin := env["HERDR_BIN_PATH"]; bin != "" {
+		return bin
 	}
+	if _, err := exec.LookPath("herdr"); err == nil {
+		return "herdr"
+	}
+	if home := env["HOME"]; home != "" {
+		if local := filepath.Join(home, ".local", "bin", "herdr"); exists(local) {
+			return local
+		}
+	}
+	return "herdr"
+}
+
+// Command is the Runner that runs the herdr binary (see Binary).
+func Command(env map[string]string) Runner {
+	bin := Binary(env, func(path string) bool {
+		info, err := os.Stat(path)
+		return err == nil && !info.IsDir()
+	})
 	return func(ctx context.Context, args ...string) ([]byte, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()

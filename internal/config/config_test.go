@@ -303,16 +303,44 @@ func TestDefaultAgentNameExamples(t *testing.T) {
 		"relative":                             "relative",
 	}
 	for cwd, want := range cases {
-		if got := config.DefaultAgentName(cwd); got != want {
+		if got := config.DefaultAgentName(cwd, "/home/someone"); got != want {
 			t.Errorf("DefaultAgentName(%q) = %q, want %q", cwd, got, want)
 		}
+	}
+}
+
+// Found in use: an agent that was started in the home directory of root got the name "root".
+// The name of the home directory is the name of the unix user, and the unix user must not
+// name the agent.
+func TestDefaultAgentNameIsNotTheUnixUser(t *testing.T) {
+	for _, c := range []struct{ cwd, home, want string }{
+		{"/root", "/root", "agent"},
+		{"/root/", "/root", "agent"},
+		{"/home/matt", "/home/matt/", "agent"},
+		{"/Users/matt", "/Users/matt", "agent"},
+		// A project below the home directory keeps its own name, also when it has the
+		// name of the user.
+		{"/root/git/app", "/root", "app"},
+		{"/home/matt/matt", "/home/matt", "matt"},
+		// Another user's home directory is not known here: only this user's counts.
+		{"/root", "/home/agent", "root"},
+		{"/srv/app", "", "app"},
+	} {
+		if got := config.DefaultAgentName(c.cwd, c.home); got != c.want {
+			t.Errorf("DefaultAgentName(%q, %q) = %q, want %q", c.cwd, c.home, got, c.want)
+		}
+	}
+	// Load takes the home directory from the environment.
+	c := config.Load(map[string]string{"HOME": "/root"}, noCred, noWarn, "/root")
+	if c.Agent != "agent" {
+		t.Errorf("Load in the home directory: agent %q, want agent", c.Agent)
 	}
 }
 
 func TestDefaultAgentNameIsAlwaysAnAgentName(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		cwd := rapid.String().Draw(rt, "cwd")
-		got := config.DefaultAgentName(cwd)
+		got := config.DefaultAgentName(cwd, rapid.String().Draw(rt, "home"))
 		if !wire.IsAgentName(got) {
 			rt.Fatalf("DefaultAgentName(%q) = %q", cwd, got)
 		}
@@ -324,7 +352,7 @@ func TestDefaultAgentNameKeepsAValidName(t *testing.T) {
 	name := rapid.StringMatching(`^[a-z0-9_]([a-z0-9_-]{0,62}[a-z0-9_])?$`).Filter(wire.IsAgentName)
 	rapid.Check(t, func(rt *rapid.T) {
 		n := name.Draw(rt, "name")
-		if got := config.DefaultAgentName("/x/" + n); got != n {
+		if got := config.DefaultAgentName("/x/"+n, "/home/someone"); got != n {
 			rt.Fatalf("DefaultAgentName(/x/%s) = %q", n, got)
 		}
 	})

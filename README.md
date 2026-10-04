@@ -78,6 +78,11 @@ Requirements: Claude Code (or another MCP client) and the `coop` binary.
    coop doctor         # every check green, or the command that fixes it
    ```
 
+Do not run agents as root. On a server, `deploy/agent-user.sh` (as root) makes a user
+`agent` with no privileges, gives it coop, a copy of root's Claude Code and root's coop
+credentials, and runs `coop setup` for it; `-n` shows the steps and changes nothing. Log that
+user in to Claude Code one time, then start the agents as that user.
+
 On macOS the first connection asks to allow local network access; approve once. The build is
 signed with a fixed identifier, so a rebuild keeps the approval.
 
@@ -93,11 +98,23 @@ Tell the project which session it is in, then start Claude Code through `coop`:
 ```bash
 cd ~/work/app
 coop session build-42                 # writes ./.coop; agents started here (or below) join build-42
-coop session build-42 --agent reviewer   # and choose the agent name (default: the directory name)
+coop session build-42 --agent reviewer   # and choose the agent name (default: the directory name;
+                                      # "agent" in the home directory, never the unix user)
 coop claude                           # Claude Code in that session, messages pushed in
 coop --agent reviewer claude          # the same, as the agent "reviewer", whatever the directory
 codex                                 # any other MCP client: no push, the agent uses wait/inbox
 ```
+
+To start an agent on another machine from your own terminal, as the agent user there:
+
+```bash
+deploy/start-agent.sh basedmatrix git/app build-42              # machine, project, session
+deploy/start-agent.sh -a reviewer basedmatrix git/app build-42  # with an agent name
+```
+
+When Herdr knows the machine (`herdr machine list`), the agent starts in a new Herdr workspace
+on it; else it starts over SSH in this terminal (`-s` asks for SSH). Arguments after the
+session go to `claude`; `-n` shows the command and does not run it.
 
 A name is held by one session per machine. A second session with the same name is not let in:
 its agent is told why, and it joins when the name is free. To run two agents in one directory,
@@ -188,6 +205,17 @@ gets three things, with no setting:
   `· held` or `· paused`, and the tokens `$coop` and `$gate` are there for a sidebar row.
 - In the TUI, `o` on an agent brings its pane to the front. For an agent on another machine,
   Herdr needs a saved machine whose label is the name of that machine in coop.
+
+This needs the agent to run in a pane of a Herdr on its own machine. For a server, add it to
+Herdr one time, with the name of the machine in coop as the label, and start agents with
+`deploy/start-agent.sh`:
+
+```bash
+herdr machine add ssh://agent@<host> --label <machine>
+```
+
+An agent that you start with a plain `ssh` in a local pane is outside Herdr: none of the three
+applies to it.
 
 Herdr's `agent start` runs a plain `claude`. `coop setup` puts the gate hook into
 `~/.claude/settings.json`, so such an agent is behind the gate too. It gets pushes only when
