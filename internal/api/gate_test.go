@@ -173,6 +173,26 @@ func TestGate(t *testing.T) {
 		}
 	})
 
+	// What the agent says about itself at the join shows to the operator while it is in the
+	// session: that its tool calls go through the gate, and its Herdr pane.
+	t.Run("the presence record says gated and names the herdr pane", func(t *testing.T) {
+		sid := "pane-1"
+		a := mac.stream(sid, "alice", withQuery("gated", "1"), withQuery("herdr_pane", "w1:p3"))
+		defer a.close()
+		a.wait(t, nil)
+		if rec, ok := h.presence(sid + ".mac-1.alice"); !ok || !rec.Gated || rec.HerdrPane != "w1:p3" {
+			t.Fatalf("presence %+v %v", rec, ok)
+		}
+		b := mac.stream(sid, "bob")
+		defer b.close()
+		b.wait(t, nil)
+		if rec, ok := h.presence(sid + ".mac-1.bob"); !ok || rec.Gated || rec.HerdrPane != "" {
+			t.Fatalf("presence of a plain agent %+v %v", rec, ok)
+		}
+		wantStatus(t, 422)(mac.stream(sid, "carol", withQuery("herdr_pane", "--help")).result())
+		wantStatus(t, 422)(mac.stream(sid, "carol", withQuery("gated", "yes")).result())
+	})
+
 	t.Run("bad input", func(t *testing.T) {
 		wantStatus(t, 404)(adm.gate("gate-none", "alice@mac-1", "run"))
 		wantStatus(t, 200)(adm.create("gate-bad", ""))

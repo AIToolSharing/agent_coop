@@ -74,7 +74,7 @@ Requirements: Claude Code (or another MCP client) and the `coop` binary.
 4. Give Claude Code the tools and the skill:
 
    ```bash
-   coop setup          # claude mcp add --scope user coop -- <path to coop> mcp, and the skill
+   coop setup          # the MCP server, the skill, and the gate hook in ~/.claude/settings.json
    coop doctor         # every check green, or the command that fixes it
    ```
 
@@ -115,13 +115,14 @@ Claude Code shows a warning about development channels at each start; choose "I 
 for local development". A plain `claude` gets the same tools, but messages then wait until the
 agent calls `wait` or `inbox`.
 
-`coop claude` also puts the agent behind the operator's gate (see Operate). It gives Claude
-Code a hook with `--settings`: before each tool call, `coop hook pretool` asks the service
-whether the operator lets the agent work. No settings file changes. Because Claude Code takes
-one `--settings`, do not pass your own to `coop claude`; use a settings file. To start one
-session with no gate, set `COOP_GATE=off` in its environment. A plain `claude`, or another MCP
-client, has no hook: the operator sees such an agent marked `soft`, and a hold or a pause is
-only advice to it.
+An agent in a session is behind the operator's gate (see Operate): before each tool call,
+the hook `coop hook pretool` asks the service whether the operator lets the agent work.
+`coop setup` puts the hook into `~/.claude/settings.json` (it keeps a copy of the file as
+`settings.json.before-coop`), so every Claude Code session of a project that is in a session
+has it, however it was started. On a machine where `coop setup` did not run, `coop claude`
+gives the hook with `--settings`; then do not pass a `--settings` of your own. To start one
+session with no gate, set `COOP_GATE=off` in its environment. Another MCP client has no hook:
+the operator sees such an agent marked `soft`, and a hold or a pause is only advice to it.
 
 A headless agent (`claude -p`) gets no channel events; it uses `wait`, `ask` or `inbox`, and
 needs the tools allowed up front:
@@ -174,6 +175,23 @@ agent whose details are open.
   interrupted. A held or paused agent can still read and write messages.
 - **No answer, no work.** When the hook cannot reach the service, it refuses the tool call.
 - `coop serve --hold-new=false` makes new sessions start their agents at once.
+
+### With Herdr
+
+[Herdr](https://herdr.dev) runs agents in terminal panes. An agent that runs in a Herdr pane
+gets three things, with no setting:
+
+- A pause or a stop interrupts the agent's turn at once: the shim sends Escape to its own
+  pane when Herdr says that the agent works. An agent that sits in `wait`, or that shows a
+  question to its human, gets no key.
+- The pane shows the agent's place in coop: the title is `coop <session>/<agent>`, with
+  `· held` or `· paused`, and the tokens `$coop` and `$gate` are there for a sidebar row.
+- In the TUI, `o` on an agent brings its pane to the front. For an agent on another machine,
+  Herdr needs a saved machine whose label is the name of that machine in coop.
+
+Herdr's `agent start` runs a plain `claude`. `coop setup` puts the gate hook into
+`~/.claude/settings.json`, so such an agent is behind the gate too. It gets pushes only when
+its arguments hold the channel flag (see `coop claude`).
 
 An agent that left stays in the agent list for five minutes. `:forget <name>` drops it at once,
 also from the peers of the other agents; `:forget` with no name drops each agent that left.

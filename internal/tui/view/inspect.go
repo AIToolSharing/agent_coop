@@ -66,6 +66,9 @@ func RenderAgent(v *model.Session, address string, o Options) Rendered {
 	add(kv("host", or(a.Host, "?"), Style{}), "")
 	add(kv("directory", or(a.Cwd, "?"), Style{}), "")
 	add(kv("client", or(a.Client, "?"), Style{}), "")
+	if a.HerdrPane != "" {
+		add(kv("herdr", "pane "+a.HerdrPane+" (o goes to it)", Style{}), "")
+	}
 	joined := "?"
 	if a.JoinedAt != "" {
 		joined = Clock(a.JoinedAt, o.loc()) + " (" + Age(a.JoinedAt, o.Now) + " ago)"

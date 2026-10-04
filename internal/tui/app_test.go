@@ -359,6 +359,7 @@ func storeWithGates() *model.Store {
 	for i, key := range []string{"build-42.vps-2.bob", "build-42.mac-3.carol"} {
 		s.Apply(model.Update{Presence: &wire.PresenceUpdate{Key: key, Revision: int64(800 + i), Record: &wire.PresenceRecord{
 			Host: "h", Cwd: "/src/app", Client: wire.Client{Name: "claude-code", Version: "2.1"}, State: "idle", JoinedAt: modeltest.At(0), Gated: true,
+			HerdrPane: fmt.Sprintf("w1:p%d", i+3),
 		}}})
 	}
 	s.Apply(model.Update{Session: &wire.SessionUpdate{SID: "build-42", Revision: 900, Record: &wire.SessionRecord{Status: "open", CreatedAt: modeltest.At(-60), Hold: true}}})
@@ -417,6 +418,38 @@ func TestReleaseWithNoTaskAndFromTheDetails(t *testing.T) {
 	if fmt.Sprint(h.op.calls) != "[gate build-42 bob@vps-2 run]" || h.status() != "released bob@vps-2" {
 		t.Fatalf("calls %v status %q", h.op.calls, h.status())
 	}
+}
+
+// o brings the Herdr pane of the selected agent to the front: on this machine with no
+// machine name, on another machine with the name of the agent's machine.
+func TestOGoesToTheHerdrPaneOfTheAgent(t *testing.T) {
+	h := start(t, storeWithGates())
+	h.openSession()
+	h.keys("tab", "down", "down", "o")
+	if h.status() != "alice@mac-1 runs in no herdr pane" {
+		t.Fatalf("status %q", h.status())
+	}
+	h.keys("down", "o")
+	if h.status() != "herdr is not on this machine" {
+		t.Fatalf("status %q", h.status())
+	}
+	var calls []string
+	h.app.host = "vps-2" // bob's machine is this machine
+	h.app.focusPane = func(_ context.Context, machine, pane string) error {
+		calls = append(calls, machine+"|"+pane)
+		return nil
+	}
+	h.keys("o")
+	if h.status() != "herdr: pane w1:p3 of bob@vps-2" {
+		t.Fatalf("status %q", h.status())
+	}
+	h.keys("down", "o")
+	if fmt.Sprint(calls) != "[|w1:p3 mac-3|w1:p4]" {
+		t.Fatalf("calls %v", calls)
+	}
+	// The details of the agent name the pane.
+	h.keys("enter")
+	contains(t, h.frame(), "pane w1:p4 (o goes to it)")
 }
 
 func TestSessionKeysAndCommandsSetGatesAndHold(t *testing.T) {

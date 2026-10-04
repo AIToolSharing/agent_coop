@@ -121,9 +121,16 @@ func (a api) history(sid, agent, extra string) (int, []byte) {
 type streamConfig struct {
 	instance    string
 	lastEventID *string
+	// extra holds more query parameters, after the six that every join has.
+	extra [][2]string
 }
 
 type streamOpt func(*streamConfig)
+
+// withQuery adds one query parameter to the join.
+func withQuery(key, value string) streamOpt {
+	return func(c *streamConfig) { c.extra = append(c.extra, [2]string{key, value}) }
+}
 
 // withInstance joins as an instance that joined before: the join takes over its old stream.
 func withInstance(id string) streamOpt { return func(c *streamConfig) { c.instance = id } }
@@ -147,6 +154,7 @@ func (a api) stream(sid, agent string, opts ...streamOpt) *stream {
 		{"client_name", "test"},
 		{"client_version", "0"},
 	}
+	q = append(q, c.extra...)
 	var qs strings.Builder
 	for i, p := range q {
 		if i > 0 {

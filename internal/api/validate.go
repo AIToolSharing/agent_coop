@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"unicode/utf8"
 
+	"github.com/AIToolSharing/agent_coop/internal/herdr"
 	"github.com/AIToolSharing/agent_coop/internal/hub"
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
@@ -101,7 +102,7 @@ func query(q url.Values, keys ...string) (map[string]string, error) {
 // --- Agent routes ----------------------------------------------------------------------------
 
 func parseStreamQuery(q url.Values) (hub.StreamQuery, error) {
-	m, err := query(q, "agent", "instance", "host", "cwd", "client_name", "client_version", "gated")
+	m, err := query(q, "agent", "instance", "host", "cwd", "client_name", "client_version", "gated", "herdr_pane")
 	if err != nil {
 		return hub.StreamQuery{}, err
 	}
@@ -124,6 +125,12 @@ func parseStreamQuery(q url.Values) (hub.StreamQuery, error) {
 			return s, invalid("gated: 0 or 1")
 		}
 		s.Gated = gated == "1"
+	}
+	if pane, ok := m["herdr_pane"]; ok {
+		if !herdr.IsPaneID(pane) {
+			return s, invalid("herdr_pane: not a pane id")
+		}
+		s.HerdrPane = pane
 	}
 	return s, nil
 }

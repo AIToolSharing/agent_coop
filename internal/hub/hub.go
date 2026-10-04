@@ -115,6 +115,8 @@ type StreamQuery struct {
 	ClientName, ClientVersion string
 	// Gated is true when the agent's tool calls go through the gate (started by `coop claude`).
 	Gated bool
+	// HerdrPane is the Herdr pane that the agent runs in, or "".
+	HerdrPane string
 }
 
 // Message is a message as an agent gets it.
@@ -324,6 +326,8 @@ type Conn struct {
 	// gate is whether the operator lets the agent work: run, held or paused.
 	gate  string
 	gated bool
+	// herdrPane is the Herdr pane that the agent runs in, or "".
+	herdrPane string
 	// quiet is the sequence of a gate record that the agent gets no notice of, or 0.
 	quiet int64
 	// sent holds the ids of the messages written to the stream, for redact notices.
@@ -434,7 +438,7 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 		joinedAt: h.now(), resumed: old != nil,
 		out:   make(chan item, 256),
 		state: "idle", sent: map[string]bool{},
-		gate: gate, gated: q.Gated,
+		gate: gate, gated: q.Gated, herdrPane: q.HerdrPane,
 		status: row.Record.Status, reason: "disconnected", done: make(chan struct{}),
 	}
 	h.conns[key] = c
@@ -670,7 +674,7 @@ func (h *Hub) putPresenceLocked(c *Conn) {
 func (c *Conn) presence() wire.PresenceRecord {
 	r := wire.PresenceRecord{
 		Host: c.host, Cwd: c.cwd, Client: c.client, State: c.state, Note: c.note,
-		JoinedAt: c.joinedAt, Gated: c.gated,
+		JoinedAt: c.joinedAt, Gated: c.gated, HerdrPane: c.herdrPane,
 	}
 	if c.waiting != nil {
 		w := *c.waiting

@@ -41,6 +41,11 @@ type Options struct {
 	Op      Operator
 	Now     func() time.Time
 	Loc     *time.Location
+	// Focus brings the Herdr pane of an agent to the front. machine is "" for a pane on this
+	// machine, else the name of the agent's machine. Nil means that there is no Herdr here.
+	Focus func(ctx context.Context, machine, pane string) error
+	// Host is the name of this machine, as an agent on it gives it at its join.
+	Host string
 }
 
 const (
@@ -71,11 +76,13 @@ type mode struct {
 
 // App is the tea.Model. All state lives here; Update reads and writes it in one goroutine.
 type App struct {
-	store   *model.Store
-	updates <-chan model.Update
-	op      Operator
-	now     func() time.Time
-	loc     *time.Location
+	store     *model.Store
+	updates   <-chan model.Update
+	op        Operator
+	now       func() time.Time
+	loc       *time.Location
+	focusPane func(ctx context.Context, machine, pane string) error
+	host      string
 
 	width, height int
 	sid           string
@@ -127,6 +134,7 @@ func New(o Options) *App {
 	ta.CharLimit = wire.MaxText
 	return &App{
 		store: o.Store, updates: o.Updates, op: o.Op, now: o.Now, loc: o.Loc,
+		focusPane: o.Focus, host: o.Host,
 		width: 80, height: 24,
 		sid: model.AllSessions, view: viewTranscript, focus: "main", sidebar: true,
 		cursor: -1, follow: true, system: true, scroll: -1,
@@ -580,8 +588,32 @@ func (a *App) gateKey(key string, s screen) (cmd tea.Cmd, ok bool) {
 		return a.command("pause "+ag.Address, s), true
 	case "x":
 		return a.command("kick "+ag.Address, s), true
+	case "o":
+		return a.goToPane(ag), true
 	}
 	return nil, false
+}
+
+// goToPane brings the Herdr pane of an agent to the front. For an agent on another machine,
+// Herdr must have a saved machine whose label is the name of the agent's machine.
+func (a *App) goToPane(ag *model.Agent) tea.Cmd {
+	switch {
+	case ag.HerdrPane == "":
+		return a.setStatus(ag.Address + " runs in no herdr pane")
+	case a.focusPane == nil:
+		return a.setStatus("herdr is not on this machine")
+	}
+	machine := ""
+	if ag.Host != a.host {
+		_, machine, _ = strings.Cut(ag.Address, "@")
+	}
+	pane, focus := ag.HerdrPane, a.focusPane
+	return a.act(func(ctx context.Context) (string, error) {
+		if err := focus(ctx, machine, pane); err != nil {
+			return "", err
+		}
+		return "herdr: pane " + pane + " of " + ag.Address, nil
+	})
 }
 
 func (a *App) compose(to string, r *reply) {
@@ -1001,7 +1033,7 @@ func (a *App) hint() string {
 		return "y yes · n no"
 	}
 	if a.overlay != nil && a.overlay.kind == "agent" {
-		return "g release · p pause/resume · x stop · esc back · ↑↓ scroll · ? help · q quit"
+		return "g release · p pause/resume · x stop · o herdr pane · esc back · ↑↓ scroll · ? help · q quit"
 	}
 	if a.overlay != nil {
 		return "esc back · ↑↓ scroll · ? help · q quit"

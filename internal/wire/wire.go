@@ -178,6 +178,8 @@ type PresenceRecord struct {
 	// Gated is true when the agent's tool calls go through the operator's gate: the agent
 	// was started with `coop claude`.
 	Gated bool `json:"gated,omitempty"`
+	// HerdrPane is the Herdr pane that the agent runs in, for example w1:p3; "" for none.
+	HerdrPane string `json:"herdr_pane,omitempty"`
 }
 
 // Gates: whether the operator lets an agent work.

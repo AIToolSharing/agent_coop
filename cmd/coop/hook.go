@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
@@ -35,20 +34,7 @@ type hookInput struct {
 // hookSettings is the settings text that makes Claude Code call this binary before each tool
 // call. `coop claude` passes it with --settings, so no settings file changes.
 func hookSettings(exe string) string {
-	type hook struct {
-		Type    string `json:"type"`
-		Command string `json:"command"`
-		Timeout int    `json:"timeout"`
-	}
-	type group struct {
-		Matcher string `json:"matcher"`
-		Hooks   []hook `json:"hooks"`
-	}
-	// The command goes through a shell: quote the path.
-	quoted := "'" + strings.ReplaceAll(exe, "'", `'\''`) + "'"
-	b, _ := json.Marshal(map[string]any{"hooks": map[string][]group{
-		"PreToolUse": {{Matcher: "", Hooks: []hook{{Type: "command", Command: quoted + " hook pretool", Timeout: hookTimeoutS}}}},
-	}})
+	b, _ := json.Marshal(map[string]any{"hooks": map[string][]hookGroup{"PreToolUse": {gateGroup(exe)}}})
 	return string(b)
 }
 

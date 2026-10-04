@@ -66,7 +66,13 @@ func launchEnv(env map[string]string, session string, cfg func(map[string]string
 // session only through the channel flag during the research preview of channels. The hook
 // asks the hub before each tool call whether the operator lets the agent work.
 func cmdClaude(args []string, stderr io.Writer) int {
-	session, argv, err := claudeCommand(args, environ(), hookSettings(executable()))
+	// The settings file of the user can hold the hook already (coop setup). A second copy
+	// from --settings would ask the hub two times for each tool call.
+	settings := ""
+	if exe := executable(); !hookInSettings(exe) {
+		settings = hookSettings(exe)
+	}
+	session, argv, err := claudeCommand(args, environ(), settings)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2

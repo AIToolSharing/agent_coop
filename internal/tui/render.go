@@ -115,6 +115,7 @@ var help = [][2]string{
 	{"g", "release a held or paused agent, with a task or none"},
 	{"p", "pause the agent at its next tool call, or resume it"},
 	{"x", "stop the agent: remove it (:allow lets it back)"},
+	{"o", "go to the agent's herdr pane"},
 	{"P  R", "pause each working agent; resume each paused one"},
 	{"H", "new agents are held, or start at once"},
 	{"COMMANDS  (: then tab completes)", ""},
