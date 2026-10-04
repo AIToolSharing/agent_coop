@@ -37,13 +37,23 @@ const machines = "id1\tbasedmatrix\tssh://agent@vps\tdefault\tenabled\nid2\toffl
 
 func TestStartGoesToHerdrWhenHerdrKnowsTheMachine(t *testing.T) {
 	p, err := planStart(startOpts{machine: "basedmatrix", dir: "git/app", session: "build-42", user: "agent", claudeArgs: []string{"--model", "opus"}}, machines, true)
-	if err != nil || !p.herdr || p.cwd != "~/git/app" || p.label != "build-42/app" || p.command != "coop claude build-42 --permission-mode bypassPermissions --model opus" {
+	// Herdr does not expand "~": a path below the home directory goes to cd in the pane, which
+	// starts in the home directory.
+	if err != nil || !p.herdr || p.cwd != "" || p.label != "build-42/app" || p.command != "cd git/app && coop claude build-42 --permission-mode bypassPermissions --model opus" {
 		t.Fatalf("%+v %v", p, err)
 	}
-	// The home directory, an absolute path, a path with "~/", and an agent name.
-	for dir, cwd := range map[string]string{".": "~", "/srv/app": "/srv/app", "~/git/app": "~/git/app"} {
+	// The home directory, an absolute path, a path with "~/", a path with a space, and an agent
+	// name.
+	const coop = "coop --agent reviewer claude build-42 --permission-mode bypassPermissions"
+	for dir, want := range map[string][2]string{
+		".":         {"", coop},
+		"~":         {"", coop},
+		"/srv/app":  {"/srv/app", coop},
+		"~/git/app": {"", "cd git/app && " + coop},
+		"my app":    {"", "cd 'my app' && " + coop},
+	} {
 		p, _ := planStart(startOpts{machine: "basedmatrix", dir: dir, session: "build-42", agent: "reviewer"}, machines, true)
-		if p.cwd != cwd || p.label != "build-42/reviewer" || p.command != "coop --agent reviewer claude build-42 --permission-mode bypassPermissions" {
+		if p.cwd != want[0] || p.label != "build-42/reviewer" || p.command != want[1] {
 			t.Errorf("%s: %+v", dir, p)
 		}
 	}

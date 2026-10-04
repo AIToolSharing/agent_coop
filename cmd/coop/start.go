@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"flag"
@@ -48,7 +49,7 @@ type startOpts struct {
 // startPlan is how a start runs: in a Herdr workspace on the machine, or over SSH.
 type startPlan struct {
 	herdr bool
-	// Herdr: the directory (absolute, or below "~", which the machine expands), the label
+	// Herdr: the absolute directory ("" for the home directory), the label
 	// of the workspace, and the command line for the pane.
 	cwd, label, command string
 	// SSH: the command to run here.
@@ -114,12 +115,14 @@ func planStart(o startOpts, machines string, tty bool) (startPlan, error) {
 	coop = append(coop, o.claudeArgs...)
 	command := shellJoin(coop)
 	if !o.sshOnly && herdrKnows(machines, o.machine) {
-		cwd := "~/" + dir
+		// Herdr takes --cwd as it is and does not expand "~": the pane then starts in the home
+		// directory, and a cd goes below it.
+		cwd := ""
 		switch {
 		case strings.HasPrefix(dir, "/"):
 			cwd = dir
-		case dir == "." || dir == "~":
-			cwd = "~"
+		case dir != "." && dir != "~":
+			command = "cd " + shellQuote(dir) + " && " + command
 		}
 		name := o.agent
 		if name == "" {
@@ -178,10 +181,14 @@ func cmdStart(args []string, stdout, stderr io.Writer) int {
 	}
 	if p.herdr {
 		if *dry {
-			fmt.Fprintf(stdout, "in a new herdr workspace on %s, directory %s: %s\n", o.machine, p.cwd, p.command)
+			fmt.Fprintf(stdout, "in a new herdr workspace on %s, directory %s: %s\n", o.machine, cmp.Or(p.cwd, "~"), p.command)
 			return 0
 		}
-		out, err := run(ctx, "--machine", o.machine, "workspace", "create", "--cwd", p.cwd, "--label", p.label, "--focus")
+		create := []string{"--machine", o.machine, "workspace", "create", "--label", p.label, "--focus"}
+		if p.cwd != "" {
+			create = append(create, "--cwd", p.cwd)
+		}
+		out, err := run(ctx, create...)
 		var made struct {
 			Result struct {
 				RootPane struct {
