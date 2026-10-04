@@ -97,10 +97,10 @@ upgrade the hub, do steps 1 to 3 again.
    cd <project> && coop claude <session>
    ```
 
-   To start the agent on another machine, use the start script.
+   To start the agent on another machine, use `coop start`. The directory needs no `.coop` file.
 
    ```bash
-   deploy/start-agent.sh <machine> <project> <session>
+   coop start <machine> <project> <session>
    ```
 
 3. Release the agent. A new agent is held and does no work. In the TUI, press `tab`, go to the
@@ -209,11 +209,12 @@ coop claude build-42                  # Claude Code in session build-42
 COOP_SESSION=build-42 codex
 ```
 
-To start an agent on another machine, as the user `agent` there, use the start script.
+To start an agent on another machine, as the user `agent` there, use `coop start`. The session
+comes from the command line, so the directory needs no `.coop` file.
 
 ```bash
-deploy/start-agent.sh basedmatrix git/app build-42              # machine, project, session
-deploy/start-agent.sh -a reviewer basedmatrix git/app build-42  # with an agent name
+coop start basedmatrix git/app build-42              # machine, project, session
+coop start -a reviewer basedmatrix git/app build-42  # with an agent name
 ```
 
 When Herdr knows the machine (`herdr machine list`), the agent starts in a new Herdr workspace
@@ -352,7 +353,7 @@ things, with no setting:
 
 The agent must run in a pane of a Herdr on its own machine. For a server, add the machine to
 Herdr one time. Use the name of the machine in coop as the label. Then start agents with
-`deploy/start-agent.sh`.
+`coop start`.
 
 ```bash
 herdr machine add ssh://agent@<host> --label <machine>
