@@ -11,6 +11,7 @@ import (
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
 	"github.com/AIToolSharing/agent_coop/internal/pin"
+	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
 // cmdDoctor checks everything an agent machine or an operator needs, in the order a connection
@@ -73,8 +74,15 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 					ok(want + " token accepted")
 				}
 			}
-			check(cfg.Token, "machine", "COOP_TOKEN")
-			check(cfg.OperatorToken, "operator", "COOP_OPERATOR_TOKEN")
+			check(cfg.Token, wire.RoleMachine, "COOP_TOKEN")
+			check(cfg.OperatorToken, wire.RoleOperator, "COOP_OPERATOR_TOKEN")
+			// The tokens of the two other roles are not needed on each machine.
+			if cfg.OrchestratorToken != "" {
+				check(cfg.OrchestratorToken, wire.RoleOrchestrator, "COOP_ORCHESTRATOR_TOKEN")
+			}
+			if cfg.ReporterToken != "" {
+				check(cfg.ReporterToken, wire.RoleReporter, "COOP_REPORTER_TOKEN")
+			}
 		}
 	}
 	switch {

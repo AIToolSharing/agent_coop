@@ -33,18 +33,19 @@ func TestUsageAndVersion(t *testing.T) {
 	}
 }
 
+// hub stands in for a hub that knows an operator token and a machine token, and the tokens
+// orch.3 (orchestrator) and rep.4 (reporter).
 func hub(t *testing.T, operator, machine string) *httptest.Server {
 	t.Helper()
+	roles := map[string]string{operator: "operator", machine: "machine", "orch.3": "orchestrator", "rep.4": "reporter"}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		switch {
-		case r.URL.Path != "/v1/admin/sessions":
+		case r.URL.Path != "/v1/whoami":
 			w.WriteHeader(404)
-		case auth == operator:
-			_, _ = w.Write([]byte(`{"sessions":[]}`))
-		case auth == machine:
-			w.WriteHeader(403)
-			_, _ = w.Write([]byte(`{"error":"forbidden","message":"this needs an operator token"}`))
+		case roles[auth] != "":
+			name, _, _ := strings.Cut(auth, ".")
+			_, _ = w.Write([]byte(`{"name":"` + name + `","role":"` + roles[auth] + `"}`))
 		default:
 			w.WriteHeader(401)
 			_, _ = w.Write([]byte(`{"error":"unauthorized","message":"bad token"}`))
@@ -62,6 +63,15 @@ func TestProbeTokenTellsTheRole(t *testing.T) {
 	}
 	if role, err := probeToken(ctx, srv.Client(), srv.URL, "mac.2"); err != nil || role != "machine" {
 		t.Fatal(role, err)
+	}
+	if role, err := probeToken(ctx, srv.Client(), srv.URL, "orch.3"); err != nil || role != "orchestrator" {
+		t.Fatal(role, err)
+	}
+	// A hub of a version before the roles has no whoami: the error says to upgrade it.
+	old := httptest.NewServer(http.NotFoundHandler())
+	defer old.Close()
+	if _, err := probeToken(ctx, old.Client(), old.URL, "op.1"); err == nil || !strings.Contains(err.Error(), "older version") {
+		t.Fatal(err)
 	}
 	if _, err := probeToken(ctx, srv.Client(), srv.URL, "x"); !errors.Is(err, errBadToken) {
 		t.Fatal(err)
@@ -87,6 +97,19 @@ func TestLoginStoresTheTokenUnderTheKeyOfItsRole(t *testing.T) {
 	got := config.ReadEnvFile(file, func(s string) { t.Fatal(s) })
 	if got["COOP_URL"] != srv.URL || got["COOP_OPERATOR_TOKEN"] != "op.1" || got["COOP_TOKEN"] != "mac.2" {
 		t.Fatalf("env file %v", got)
+	}
+	// The tokens of the two other roles get keys of their own: no token replaces another.
+	for _, tok := range []string{"orch.3", "rep.4"} {
+		if code := run([]string{"login", srv.URL, tok}, &out, &errOut); code != 0 {
+			t.Fatalf("%s: code %d: %s", tok, code, errOut.String())
+		}
+	}
+	got = config.ReadEnvFile(file, func(s string) { t.Fatal(s) })
+	if got["COOP_ORCHESTRATOR_TOKEN"] != "orch.3" || got["COOP_REPORTER_TOKEN"] != "rep.4" || got["COOP_TOKEN"] != "mac.2" || got["COOP_OPERATOR_TOKEN"] != "op.1" {
+		t.Fatalf("env file %v", got)
+	}
+	if !strings.Contains(out.String(), "coop --orchestrator claude") {
+		t.Fatalf("stdout %q", out.String())
 	}
 	if !strings.Contains(out.String(), "operator token for") || !strings.Contains(out.String(), "next:  coop tui") {
 		t.Fatalf("stdout %q", out.String())

@@ -145,6 +145,7 @@ func TestContract(t *testing.T) {
 	}
 	conforms(tok, "^/v1/sessions/", "agent")
 	conforms(op, "^/v1/admin/", "admin")
+	conforms(tok, "^/v1/whoami$", "whoami")
 }
 
 func envOr(key, def string) string {

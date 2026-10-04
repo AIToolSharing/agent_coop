@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,15 +12,24 @@ import (
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
 	"github.com/AIToolSharing/agent_coop/internal/pin"
+	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
 // errBadToken: the hub answered, and refused the token.
 var errBadToken = errors.New("the hub refused the token")
 
-// probeToken asks the hub what the token is. The admin route answers 200 to an operator token,
-// 403 to a machine token, and 401 to a token it does not know.
+// roleKeys is the key of the credential file for the token of each role.
+var roleKeys = map[string]string{
+	wire.RoleMachine:      "COOP_TOKEN",
+	wire.RoleOperator:     "COOP_OPERATOR_TOKEN",
+	wire.RoleOrchestrator: "COOP_ORCHESTRATOR_TOKEN",
+	wire.RoleReporter:     "COOP_REPORTER_TOKEN",
+}
+
+// probeToken asks the hub what the token is: GET /v1/whoami gives its role, and 401 for a token
+// that the hub does not know.
 func probeToken(ctx context.Context, c *http.Client, base, token string) (role string, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/admin/sessions", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/whoami", nil)
 	if err != nil {
 		return "", err
 	}
@@ -29,20 +39,25 @@ func probeToken(ctx context.Context, c *http.Client, base, token string) (role s
 		return "", fmt.Errorf("cannot reach %s: %w", base, err)
 	}
 	defer res.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
+	var me struct {
+		Role string `json:"role"`
+	}
 	switch res.StatusCode {
 	case 200:
-		return "operator", nil
-	case 403:
-		return "machine", nil
+		if err := json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&me); err != nil || !wire.IsRole(me.Role) {
+			return "", fmt.Errorf("%s gave no role for the token", base)
+		}
+		return me.Role, nil
 	case 401:
 		return "", errBadToken
+	case 404:
+		return "", fmt.Errorf("%s is a hub of an older version: upgrade it", base)
 	}
 	return "", fmt.Errorf("%s answered %d", base, res.StatusCode)
 }
 
 // cmdLogin stores the hub address and a token in the credential file. The token's role decides
-// the key: COOP_OPERATOR_TOKEN for the TUI, COOP_TOKEN for the agents of this machine.
+// the key (roleKeys): COOP_TOKEN for the agents of this machine, COOP_OPERATOR_TOKEN for the TUI.
 func cmdLogin(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 2 {
 		fmt.Fprintln(stderr, "usage: coop login <url> <token>")
@@ -75,20 +90,21 @@ func cmdLogin(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	key := "COOP_TOKEN"
-	if role == "operator" {
-		key = "COOP_OPERATOR_TOKEN"
-	}
-	values[key] = args[1]
+	values[roleKeys[role]] = args[1]
 	file := config.DefaultEnvFile()
 	if err := config.UpdateEnvFile(file, values); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "wrote %s (mode 0600): %s token for %s\n", file, role, base)
-	if role == "operator" {
+	switch role {
+	case wire.RoleOperator:
 		fmt.Fprintln(stdout, "next:  coop tui")
-	} else {
+	case wire.RoleOrchestrator:
+		fmt.Fprintln(stdout, "next:  coop --orchestrator claude <session>   # an agent that may also act for the operator")
+	case wire.RoleReporter:
+		fmt.Fprintln(stdout, "next:  coop --reporter claude                 # an agent that reads every session")
+	default:
 		fmt.Fprintln(stdout, "next:  cd <project> && coop session <name>   # put the project's agents in a session")
 		fmt.Fprintln(stdout, "       coop claude                           # Claude Code with the coop channel")
 	}

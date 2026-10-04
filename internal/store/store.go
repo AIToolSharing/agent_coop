@@ -595,7 +595,7 @@ func (s *Store) KnownAgent(sid, agent string) (KnownRow, bool, error) {
 // TokenRow is one token: its name, role and dates. The secret is never stored.
 type TokenRow struct {
 	Name      string
-	Role      string // machine or operator
+	Role      string // a wire role: machine, operator, orchestrator or reporter
 	CreatedAt string
 	RevokedAt string // "" while valid
 }
@@ -605,13 +605,13 @@ func sha(secret string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// IssueToken makes a token `<name>.<secret>` with the role machine or operator. It replaces
-// the old token of that name. Only the hash of the secret is stored.
+// IssueToken makes a token `<name>.<secret>` with a role of wire.IsRole. It replaces the old
+// token of that name. Only the hash of the secret is stored.
 func (s *Store) IssueToken(name, role, at string) (string, error) {
 	if !wire.IsToken(name) {
 		return "", fmt.Errorf("invalid token name: %s", name)
 	}
-	if role != "machine" && role != "operator" {
+	if !wire.IsRole(role) {
 		return "", fmt.Errorf("invalid token role: %s", role)
 	}
 	var raw [32]byte

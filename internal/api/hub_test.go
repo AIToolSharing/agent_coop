@@ -759,7 +759,7 @@ func (x *hubSuite) adminAPI(t *testing.T) {
 	t.Run("a machine token is refused; a bad token is 401", func(t *testing.T) {
 		// mac1's own token: a new h.token("mac-1") would replace it and log mac1 out.
 		body := wantStatus(t, 403)(admin{x.h.base, x.mac1.token}.sessions())
-		if m := parse[errBody](t, body).Message; !strings.Contains(m, "operator token") {
+		if m := parse[errBody](t, body).Message; m != "a machine token cannot use the admin API" {
 			t.Fatalf("message %q", m)
 		}
 		wantStatus(t, 401)(admin{x.h.base, "nope"}.sessions())
@@ -1089,6 +1089,7 @@ func (x *hubSuite) contractDocument(t *testing.T) {
 			"/v1/sessions/{sid}/messages",
 			"/v1/sessions/{sid}/stream",
 			"/v1/sessions/{sid}/trace",
+			"/v1/whoami",
 		}
 		if got := slices.Sorted(maps.Keys(doc.Paths)); !slices.Equal(got, want) {
 			t.Fatalf("paths %v, want %v", got, want)

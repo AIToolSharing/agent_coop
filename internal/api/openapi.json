@@ -15,6 +15,150 @@
     "parameters": {}
   },
   "paths": {
+    "/v1/whoami": {
+      "get": {
+        "summary": "Give the name and the role of the token",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9_-]{1,64}$"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "machine",
+                        "operator",
+                        "orchestrator",
+                        "reporter"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "role"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/sessions/{sid}/stream": {
       "get": {
         "summary": "Join a session and receive its events as server-sent events",

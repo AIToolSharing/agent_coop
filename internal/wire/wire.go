@@ -13,6 +13,21 @@ import (
 	"time"
 )
 
+// Token roles. A machine token acts as the agents of one machine. The operator is the human.
+// An orchestrator is an agent that may also do what the operator does, but it sends as itself.
+// A reporter only reads.
+const (
+	RoleMachine      = "machine"
+	RoleOperator     = "operator"
+	RoleOrchestrator = "orchestrator"
+	RoleReporter     = "reporter"
+)
+
+// IsRole reports whether s is a token role.
+func IsRole(s string) bool {
+	return s == RoleMachine || s == RoleOperator || s == RoleOrchestrator || s == RoleReporter
+}
+
 // Reserved names in addressing.
 const (
 	Operator  = "operator"

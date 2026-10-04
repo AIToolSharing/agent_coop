@@ -45,7 +45,38 @@ type route struct {
 	pattern  []string // path segments; "{sid}" is the session
 	path     string
 	handlers map[string]http.HandlerFunc // by method
+	kinds    map[string]kind             // by method
 	allow    string                      // the Allow header
+}
+
+// kind says which token roles may use a route.
+type kind int
+
+const (
+	kindAny      kind = iota // each valid token
+	kindAgent                // acts as an agent in a session
+	kindRead                 // reads what the operator sees
+	kindAct                  // changes sessions and agents for the operator
+	kindOperator             // speaks as the operator: only the human
+)
+
+// mayUse is the rule of the token roles: for each kind of route, the roles that may use it.
+// An orchestrator is an agent that may also act for the operator. It sends as itself, so that
+// agents and the gates of a workflow can tell it from the human.
+var mayUse = map[kind][]string{
+	kindAny:      {wire.RoleMachine, wire.RoleOperator, wire.RoleOrchestrator, wire.RoleReporter},
+	kindAgent:    {wire.RoleMachine, wire.RoleOrchestrator},
+	kindRead:     {wire.RoleOperator, wire.RoleOrchestrator, wire.RoleReporter},
+	kindAct:      {wire.RoleOperator, wire.RoleOrchestrator},
+	kindOperator: {wire.RoleOperator},
+}
+
+// refusal is what a role that may not use a kind of route reads.
+var refusal = map[kind]string{
+	kindAgent:    "cannot act as an agent",
+	kindRead:     "cannot use the admin API",
+	kindAct:      "cannot change sessions or agents",
+	kindOperator: "cannot send as the operator",
 }
 
 // New makes the handler. log gets internal errors; nil discards them.
@@ -54,30 +85,32 @@ func New(h *hub.Hub, log func(format string, args ...any)) *Server {
 		log = func(string, ...any) {}
 	}
 	s := &Server{hub: h, log: log}
-	s.add("GET", "/v1/sessions/{sid}/stream", s.machine(s.stream))
-	s.add("POST", "/v1/sessions/{sid}/messages", s.machine(s.send))
-	s.add("GET", "/v1/sessions/{sid}/messages", s.machine(s.history))
-	s.add("POST", "/v1/sessions/{sid}/activity", s.machine(s.activity))
-	s.add("POST", "/v1/sessions/{sid}/gate", s.machine(s.gate))
-	s.add("POST", "/v1/sessions/{sid}/trace", s.machine(s.trace))
-	s.add("GET", "/v1/sessions/{sid}", s.machine(s.view))
-	s.add("GET", "/v1/admin/sessions", s.operator(s.adminSessions))
-	s.add("POST", "/v1/admin/sessions", s.operator(s.adminCreate))
-	s.add("POST", "/v1/admin/sessions/{sid}/close", s.operator(s.adminClose))
-	s.add("POST", "/v1/admin/sessions/{sid}/reopen", s.operator(s.adminReopen))
-	s.add("DELETE", "/v1/admin/sessions/{sid}", s.operator(s.adminDelete))
-	s.add("POST", "/v1/admin/sessions/{sid}/kick", s.operator(s.adminKick))
-	s.add("POST", "/v1/admin/sessions/{sid}/unkick", s.operator(s.adminUnkick))
-	s.add("POST", "/v1/admin/sessions/{sid}/forget", s.operator(s.adminForget))
-	s.add("POST", "/v1/admin/sessions/{sid}/gate", s.operator(s.adminGate))
-	s.add("POST", "/v1/admin/sessions/{sid}/hold", s.operator(s.adminHold))
-	s.add("POST", "/v1/admin/sessions/{sid}/redact", s.operator(s.adminRedact))
-	s.add("POST", "/v1/admin/sessions/{sid}/messages", s.operator(s.adminSend))
-	s.add("GET", "/v1/admin/stream", s.operator(s.adminStream))
+	s.add("GET", "/v1/whoami", kindAny, s.whoami)
+	s.add("GET", "/v1/sessions/{sid}/stream", kindAgent, s.stream)
+	s.add("POST", "/v1/sessions/{sid}/messages", kindAgent, s.send)
+	s.add("GET", "/v1/sessions/{sid}/messages", kindAgent, s.history)
+	s.add("POST", "/v1/sessions/{sid}/activity", kindAgent, s.activity)
+	s.add("POST", "/v1/sessions/{sid}/gate", kindAgent, s.gate)
+	s.add("POST", "/v1/sessions/{sid}/trace", kindAgent, s.trace)
+	s.add("GET", "/v1/sessions/{sid}", kindAgent, s.view)
+	s.add("GET", "/v1/admin/sessions", kindRead, s.adminSessions)
+	s.add("POST", "/v1/admin/sessions", kindAct, s.adminCreate)
+	s.add("POST", "/v1/admin/sessions/{sid}/close", kindAct, s.adminClose)
+	s.add("POST", "/v1/admin/sessions/{sid}/reopen", kindAct, s.adminReopen)
+	s.add("DELETE", "/v1/admin/sessions/{sid}", kindAct, s.adminDelete)
+	s.add("POST", "/v1/admin/sessions/{sid}/kick", kindAct, s.adminKick)
+	s.add("POST", "/v1/admin/sessions/{sid}/unkick", kindAct, s.adminUnkick)
+	s.add("POST", "/v1/admin/sessions/{sid}/forget", kindAct, s.adminForget)
+	s.add("POST", "/v1/admin/sessions/{sid}/gate", kindAct, s.adminGate)
+	s.add("POST", "/v1/admin/sessions/{sid}/hold", kindAct, s.adminHold)
+	s.add("POST", "/v1/admin/sessions/{sid}/redact", kindAct, s.adminRedact)
+	s.add("POST", "/v1/admin/sessions/{sid}/messages", kindOperator, s.adminSend)
+	s.add("GET", "/v1/admin/stream", kindRead, s.adminStream)
 	return s
 }
 
-func (s *Server) add(method, path string, h http.HandlerFunc) {
+// add registers a route: a body limit, then a token whose role may use the kind of route.
+func (s *Server) add(method, path string, k kind, h handler) {
 	var r *route
 	for _, x := range s.routes {
 		if x.path == path {
@@ -85,10 +118,11 @@ func (s *Server) add(method, path string, h http.HandlerFunc) {
 		}
 	}
 	if r == nil {
-		r = &route{pattern: strings.Split(strings.TrimPrefix(path, "/"), "/"), path: path, handlers: map[string]http.HandlerFunc{}}
+		r = &route{pattern: strings.Split(strings.TrimPrefix(path, "/"), "/"), path: path, handlers: map[string]http.HandlerFunc{}, kinds: map[string]kind{}}
 		s.routes = append(s.routes, r)
 	}
-	r.handlers[method] = h
+	r.handlers[method] = s.guard(k, h)
+	r.kinds[method] = k
 	methods := make([]string, 0, len(r.handlers))
 	for m := range r.handlers {
 		methods = append(methods, m)
@@ -131,7 +165,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if sid != "" && !wire.IsToken(sid) {
 			// The auth comes first, as in the TypeScript hub; a bad session name is 422 after it.
-			if _, err := s.auth(r, strings.HasPrefix(rt.path, "/v1/admin/")); err != nil {
+			if _, err := s.auth(r, rt.kinds[r.Method]); err != nil {
 				writeHubError(w, err)
 				return
 			}
@@ -168,35 +202,29 @@ func match(pattern, segs []string) (sid string, ok bool) {
 
 // --- Auth and plumbing -----------------------------------------------------------------------
 
-func (s *Server) auth(r *http.Request, admin bool) (hub.Owner, error) {
+// auth gives the owner of the request's token when its role may use the kind of route.
+func (s *Server) auth(r *http.Request, k kind) (hub.Owner, error) {
 	owner, err := s.hub.Auth(r.Header.Get("Authorization"))
 	if err != nil {
 		return owner, err
 	}
-	if admin && owner.Role != "operator" {
-		return owner, &hub.Error{Code: "forbidden", Message: "this needs an operator token"}
+	for _, role := range mayUse[k] {
+		if owner.Role == role {
+			return owner, nil
+		}
 	}
-	if !admin && owner.Role != "machine" {
-		return owner, &hub.Error{Code: "forbidden", Message: "an operator token cannot act as an agent"}
-	}
-	return owner, nil
+	return owner, &hub.Error{Code: "forbidden", Message: "a " + owner.Role + " token " + refusal[k]}
 }
 
 type handler func(w http.ResponseWriter, r *http.Request, owner hub.Owner, sid string)
 
-// machine wraps an agent route: a body limit, then a machine token.
-func (s *Server) machine(h handler) http.HandlerFunc { return s.guard(false, h) }
-
-// operator wraps an admin route: a body limit, then an operator token.
-func (s *Server) operator(h handler) http.HandlerFunc { return s.guard(true, h) }
-
-func (s *Server) guard(admin bool, h handler) http.HandlerFunc {
+func (s *Server) guard(k kind, h handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > MaxBody {
 			writeError(w, 413, "too_large", "body too large")
 			return
 		}
-		owner, err := s.auth(r, admin)
+		owner, err := s.auth(r, k)
 		if err != nil {
 			writeHubError(w, err)
 			return
@@ -296,6 +324,15 @@ func (s *sink) Ping() error {
 		return err
 	}
 	return s.flush()
+}
+
+// whoami gives the name and the role of the token.
+func (s *Server) whoami(w http.ResponseWriter, r *http.Request, owner hub.Owner, _ string) {
+	if _, err := query(r.URL.Query()); err != nil {
+		writeHubError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]string{"name": owner.Name, "role": owner.Role})
 }
 
 // --- Agent routes ----------------------------------------------------------------------------
