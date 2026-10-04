@@ -136,6 +136,28 @@ Upgrade the hub and the `coop` binary on every machine together. A part reads me
 own version of the message schema, and an older part drops a message that only a newer schema
 allows.
 
+One command does it for the hub, each agent machine and the machine that you are on:
+
+```bash
+deploy/rollout.sh <hub host> <agent host>...     # for example: deploy/rollout.sh hub-1 vps-1 vps-2 hub-1
+deploy/rollout.sh -n <hub host> <agent host>...  # show each step, change nothing
+```
+
+Run it in the repository, on the commit to roll out. A host is an SSH host or alias with a root
+login. The script needs [`sshp`](https://github.com/bahamas10/sshp). It does these steps and
+stops at the first step that fails:
+
+1. It builds the release binaries and the binary of this machine.
+2. It copies the binary and the scripts to each host, all hosts at one time.
+3. On the hub, it runs `install.sh`, which starts the hub again. The agents connect again.
+4. On each agent machine, at one time, it runs `agent-user.sh`. That installs the binary and
+   runs `coop setup` as the user `agent`, which writes the hooks of the new version.
+5. On this machine, it runs `coop setup` and `coop doctor`.
+
+Steps 3 and 4 check that the host has the new version. You can run the script again.
+
+To upgrade only the hub by hand:
+
 ```bash
 make release
 scp dist/coop-linux-amd64 deploy/install.sh deploy/coop.service <host>:/tmp/

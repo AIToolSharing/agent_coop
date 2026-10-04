@@ -108,6 +108,9 @@ upgrade the hub, do steps 1 to 3 again.
 4. Steer the agent. `p` pauses or resumes it, `x` stops it, and `m` writes a message. `?` shows
    each key.
 
+To upgrade the hub and all machines to a new version, run `deploy/rollout.sh <hub> <agent
+machines>`. See [deploy/README.md](deploy/README.md), Upgrade.
+
 The sections below give the details.
 
 ## Parts
