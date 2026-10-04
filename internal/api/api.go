@@ -59,6 +59,7 @@ func New(h *hub.Hub, log func(format string, args ...any)) *Server {
 	s.add("GET", "/v1/sessions/{sid}/messages", s.machine(s.history))
 	s.add("POST", "/v1/sessions/{sid}/activity", s.machine(s.activity))
 	s.add("POST", "/v1/sessions/{sid}/gate", s.machine(s.gate))
+	s.add("POST", "/v1/sessions/{sid}/trace", s.machine(s.trace))
 	s.add("GET", "/v1/sessions/{sid}", s.machine(s.view))
 	s.add("GET", "/v1/admin/sessions", s.operator(s.adminSessions))
 	s.add("POST", "/v1/admin/sessions", s.operator(s.adminCreate))
@@ -364,6 +365,19 @@ func (s *Server) gate(w http.ResponseWriter, r *http.Request, owner hub.Owner, s
 		return
 	}
 	writeJSON(w, 200, map[string]string{"gate": gate})
+}
+
+func (s *Server) trace(w http.ResponseWriter, r *http.Request, owner hub.Owner, sid string) {
+	b, ok := body(w, r)
+	if !ok {
+		return
+	}
+	req, err := parseTrace(b)
+	if err != nil {
+		writeHubError(w, err)
+		return
+	}
+	s.done(w, s.hub.Trace(owner.Name, sid, req))
 }
 
 func (s *Server) view(w http.ResponseWriter, r *http.Request, owner hub.Owner, sid string) {

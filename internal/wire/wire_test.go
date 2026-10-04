@@ -254,6 +254,14 @@ func TestAdminEventDecoding(t *testing.T) {
 	if err != nil || snap.Kind != "snapshot" || snap.Bucket != "presence" {
 		t.Fatalf("%+v %v", snap, err)
 	}
+	tr, err := wire.ParseAdminEvent([]byte(`{"kind":"trace","boot":1791000000000,"key":"build-42.mac-3.carol","branch":"main","items":[{"n":7,"at":"2026-09-30T12:02:00.000Z","kind":"tool_end","id":"t1","tool":"Edit","text":"a.go","ms":40,"file":"a.go"}],"files":[{"path":"a.go","count":2,"at":"2026-09-30T12:02:00.000Z"}]}`))
+	if err != nil || tr.Kind != "trace" || tr.Trace == nil || tr.Trace.Key != "build-42.mac-3.carol" || tr.Trace.Boot != 1791000000000 || tr.Trace.Branch != "main" ||
+		len(tr.Trace.Items) != 1 || tr.Trace.Items[0].N != 7 || tr.Trace.Items[0].File != "a.go" || len(tr.Trace.Files) != 1 || tr.Trace.Files[0].Count != 2 {
+		t.Fatalf("%+v %v", tr, err)
+	}
+	if _, err := wire.ParseAdminEvent([]byte(`{"kind":"trace","boot":1,"key":"not a key","items":[]}`)); err == nil {
+		t.Fatal("a trace with a bad key accepted")
+	}
 	if _, err := wire.ParseAdminEvent([]byte(`{"kind":"other"}`)); err == nil {
 		t.Fatal("unknown kind accepted")
 	}

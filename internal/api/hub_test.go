@@ -1088,6 +1088,7 @@ func (x *hubSuite) contractDocument(t *testing.T) {
 			"/v1/sessions/{sid}/gate",
 			"/v1/sessions/{sid}/messages",
 			"/v1/sessions/{sid}/stream",
+			"/v1/sessions/{sid}/trace",
 		}
 		if got := slices.Sorted(maps.Keys(doc.Paths)); !slices.Equal(got, want) {
 			t.Fatalf("paths %v, want %v", got, want)

@@ -411,15 +411,71 @@ func validActivity(a Activity) bool {
 	return false
 }
 
+// --- The trace: what an agent does at its terminal -------------------------------------------
+
+// Trace kinds.
+const (
+	TraceToolStart = "tool_start" // a tool call starts
+	TraceToolEnd   = "tool_end"   // a tool call ends
+	TraceSay       = "say"        // words of the agent
+	TracePrompt    = "prompt"     // a prompt that a person typed at the agent's terminal
+)
+
+// Limits of the trace.
+const (
+	MaxTraceItems = 20   // items in one report
+	MaxTraceText  = 2000 // characters of the text of one item
+	MaxTraceName  = 128  // characters of an id or a tool name
+	MaxTracePath  = 1024 // characters of a file path
+)
+
+// IsTraceKind reports whether s is a trace kind.
+func IsTraceKind(s string) bool {
+	return s == TraceToolStart || s == TraceToolEnd || s == TraceSay || s == TracePrompt
+}
+
+// TraceItem is one thing an agent did at its terminal, as a hook of Claude Code reports it.
+// The hub keeps the newest items of each agent in memory and gives them only to the operator.
+type TraceItem struct {
+	// N and At come from the hub: the place of the item in the order of all items, and the
+	// time the hub got it.
+	N    int64  `json:"n,omitempty"`
+	At   string `json:"at,omitempty"`
+	Kind string `json:"kind"`
+	// ID names the tool call: tool_start and tool_end of one call have the same ID. For say
+	// it names the text: the hub drops a say item with an ID that it has for the agent.
+	ID   string `json:"id,omitempty"`
+	Tool string `json:"tool,omitempty"`
+	// Text is one line that says what the tool call does, or the words.
+	Text string `json:"text,omitempty"`
+	// Failed: the tool call ended with an error.
+	Failed bool `json:"failed,omitempty"`
+	// MS is how long the tool call ran, in milliseconds.
+	MS int64 `json:"ms,omitempty"`
+	// File is the file that the tool call wrote, relative to the project directory when it
+	// is in it.
+	File string `json:"file,omitempty"`
+	// Final: the words end a turn of the agent.
+	Final bool `json:"final,omitempty"`
+}
+
+// TraceFile is one file that an agent changed.
+type TraceFile struct {
+	Path  string `json:"path"`
+	Count int    `json:"count"` // how many tool calls wrote it
+	At    string `json:"at"`    // the time of the last one
+}
+
 // --- The operator's feed ---------------------------------------------------------------------
 
 // AdminEvent is one SSE event of GET /v1/admin/stream. Kind is the SSE event name.
 type AdminEvent struct {
-	Kind     string // event session kick presence snapshot
+	Kind     string // event session kick presence snapshot trace
 	Event    *Event
 	Session  *SessionUpdate
 	Kick     *KickUpdate
 	Presence *PresenceUpdate
+	Trace    *TraceUpdate
 	Bucket   string // snapshot: sessions or presence
 }
 
@@ -442,6 +498,18 @@ type PresenceUpdate struct {
 	Record   *PresenceRecord
 }
 
+// TraceUpdate is new trace of one agent. Boot names the run of the hub that made it: the
+// trace lives in the hub's memory, so a hub that starts again starts with none, and its item
+// numbers start again.
+type TraceUpdate struct {
+	Boot   int64       `json:"boot"`
+	Key    string      `json:"key"` // the presence key of the agent
+	Branch string      `json:"branch,omitempty"`
+	Items  []TraceItem `json:"items"`
+	// Files are the changed files whose record is new with these items.
+	Files []TraceFile `json:"files,omitempty"`
+}
+
 var errAdminEvent = errors.New("wire: bad admin event")
 
 // ParseAdminEvent decodes the data of one feed event.
@@ -456,6 +524,7 @@ func ParseAdminEvent(data []byte) (AdminEvent, error) {
 		Revision int64           `json:"revision"`
 		Record   json.RawMessage `json:"record"`
 		Bucket   string          `json:"bucket"`
+		TraceUpdate
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return AdminEvent{}, fmt.Errorf("%w: %v", errAdminEvent, err)
@@ -500,6 +569,13 @@ func ParseAdminEvent(data []byte) (AdminEvent, error) {
 			return AdminEvent{}, fmt.Errorf("%w: bucket %q", errAdminEvent, raw.Bucket)
 		}
 		return AdminEvent{Kind: "snapshot", Bucket: raw.Bucket}, nil
+	case "trace":
+		if _, ok := ParsePresenceKey(raw.Key); !ok {
+			return AdminEvent{}, fmt.Errorf("%w: trace key %q", errAdminEvent, raw.Key)
+		}
+		u := raw.TraceUpdate
+		u.Key = raw.Key
+		return AdminEvent{Kind: "trace", Trace: &u}, nil
 	}
 	return AdminEvent{}, fmt.Errorf("%w: kind %q", errAdminEvent, raw.Kind)
 }

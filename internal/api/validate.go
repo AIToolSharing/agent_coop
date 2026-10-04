@@ -72,6 +72,26 @@ func (o *optString) UnmarshalJSON(b []byte) error {
 	return json.Unmarshal(b, &o.val)
 }
 
+// optBool is an optional true or false. As with optString, a null is not an absent field.
+type optBool struct{ val bool }
+
+func (o *optBool) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		return errors.New("null is not allowed")
+	}
+	return json.Unmarshal(b, &o.val)
+}
+
+// optInt is an optional integer.
+type optInt struct{ val int64 }
+
+func (o *optInt) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		return errors.New("null is not allowed")
+	}
+	return json.Unmarshal(b, &o.val)
+}
+
 // decodeStrict reads exactly one JSON object with no unknown fields into v.
 func decodeStrict(body []byte, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(body))
@@ -180,6 +200,61 @@ func parseAgentBody(body []byte) (string, error) {
 		return "", invalid("agent: not a valid agent name")
 	}
 	return b.Agent, nil
+}
+
+// maxTraceMS is the longest run of a tool call that a report may give: one day.
+const maxTraceMS = 86_400_000
+
+type traceItemBody struct {
+	Kind   string    `json:"kind"`
+	ID     optString `json:"id"`
+	Tool   optString `json:"tool"`
+	Text   optString `json:"text"`
+	Failed optBool   `json:"failed"`
+	MS     optInt    `json:"ms"`
+	File   optString `json:"file"`
+	Final  optBool   `json:"final"`
+}
+
+type traceBody struct {
+	Agent  string          `json:"agent"`
+	Branch optString       `json:"branch"`
+	Items  []traceItemBody `json:"items"`
+}
+
+func parseTrace(body []byte) (hub.TraceRequest, error) {
+	var b traceBody
+	if err := decodeStrict(body, &b); err != nil {
+		return hub.TraceRequest{}, err
+	}
+	r := hub.TraceRequest{Agent: b.Agent, Branch: b.Branch.val}
+	switch {
+	case !wire.IsAgentName(r.Agent):
+		return r, invalid("agent: not a valid agent name")
+	case runes(r.Branch) > 256:
+		return r, invalid("branch: at most 256 characters")
+	case len(b.Items) < 1 || len(b.Items) > wire.MaxTraceItems:
+		return r, invalid("items: 1 to 20 items")
+	}
+	for _, it := range b.Items {
+		switch {
+		case !wire.IsTraceKind(it.Kind):
+			return r, invalid("kind: tool_start, tool_end, say or prompt")
+		case runes(it.ID.val) > wire.MaxTraceName, runes(it.Tool.val) > wire.MaxTraceName:
+			return r, invalid("id and tool: at most 128 characters")
+		case runes(it.Text.val) > wire.MaxTraceText:
+			return r, invalid("text: at most 2000 characters")
+		case runes(it.File.val) > wire.MaxTracePath:
+			return r, invalid("file: at most 1024 characters")
+		case it.MS.val < 0 || it.MS.val > maxTraceMS:
+			return r, invalid("ms: an integer from 0 to 86400000")
+		}
+		r.Items = append(r.Items, wire.TraceItem{
+			Kind: it.Kind, ID: it.ID.val, Tool: it.Tool.val, Text: it.Text.val,
+			Failed: it.Failed.val, MS: it.MS.val, File: it.File.val, Final: it.Final.val,
+		})
+	}
+	return r, nil
 }
 
 type sendBody struct {

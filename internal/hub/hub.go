@@ -71,6 +71,8 @@ type Limit struct {
 // normal use.
 type Limits struct {
 	Join, Msg, Activity Limit
+	// Trace limits the reports of what an agent does at its terminal.
+	Trace Limit
 }
 
 // DefaultLimits are the limits of the TypeScript hub.
@@ -78,6 +80,7 @@ var DefaultLimits = Limits{
 	Join:     Limit{Burst: 10, PerSecond: 1},
 	Msg:      Limit{Burst: 30, PerSecond: 5},
 	Activity: Limit{Burst: 120, PerSecond: 20},
+	Trace:    Limit{Burst: 240, PerSecond: 40},
 }
 
 // Options configures a Hub.
@@ -215,13 +218,19 @@ type Hub struct {
 	st             *store.Store
 	opt            Options
 	join, msg, act *limiter
+	traceLim       *limiter
 	mu             sync.Mutex
 	conns          map[string]*Conn // live connections, by presence key
 	feeds          map[*feed]struct{}
 	// refusedAt is when the hub last recorded a refused join, by presence key and reason.
 	refusedAt map[string]time.Time
-	closed    bool
-	wg        sync.WaitGroup
+	// traces is what each agent did at its terminal lately, by presence key. traceN numbers
+	// the items. boot names this run of the hub in the feed.
+	traces map[string]*traceLog
+	traceN int64
+	boot   int64
+	closed bool
+	wg     sync.WaitGroup
 }
 
 // New makes a hub over st.
@@ -242,6 +251,7 @@ func New(st *store.Store, opt Options) *Hub {
 		Join:     pick(opt.Limits.Join, DefaultLimits.Join),
 		Msg:      pick(opt.Limits.Msg, DefaultLimits.Msg),
 		Activity: pick(opt.Limits.Activity, DefaultLimits.Activity),
+		Trace:    pick(opt.Limits.Trace, DefaultLimits.Trace),
 	}
 	return &Hub{
 		st:        st,
@@ -249,6 +259,9 @@ func New(st *store.Store, opt Options) *Hub {
 		join:      newLimiter(opt.Limits.Join, opt.Now),
 		msg:       newLimiter(opt.Limits.Msg, opt.Now),
 		act:       newLimiter(opt.Limits.Activity, opt.Now),
+		traceLim:  newLimiter(opt.Limits.Trace, opt.Now),
+		traces:    map[string]*traceLog{},
+		boot:      opt.Now().UnixMilli(),
 		conns:     map[string]*Conn{},
 		feeds:     map[*feed]struct{}{},
 		refusedAt: map[string]time.Time{},
@@ -915,6 +928,7 @@ func (h *Hub) DeleteSession(sid string) error {
 		h.feedAll("kick", kickOut{Kind: "kick", Key: kickKey(k.SID, k.Target), Revision: k.Revision}, "")
 	}
 	h.feedAll("session", sessionOut{Kind: "session", Session: sid, Revision: rev}, "")
+	h.dropSessionTraceLocked(sid)
 	for _, c := range h.inSessionLocked(sid) {
 		c.close("closed")
 	}
@@ -968,6 +982,7 @@ func (h *Hub) Forget(sid string, target wire.Address) error {
 	if err != nil || !known {
 		return storeErr(err)
 	}
+	h.dropTraceLocked(wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: target}))
 	_, err = h.publishLocked(wire.Event{Kind: wire.EventActivity, SID: sid, From: target.String(), Activity: &wire.Activity{
 		Kind: "forgotten", At: h.now(),
 	}}, false, nil)
@@ -1233,7 +1248,8 @@ func (h *Hub) feedSession(row store.SessionRow) {
 
 // AdminFeed sends the operator's feed to sink until ctx ends or the token is revoked: the
 // current sessions and kicks, then `snapshot sessions`; the live presence, then `snapshot
-// presence`; every stored event from fromSeq; then every change as it happens.
+// presence`; the trace of each agent; every stored event from fromSeq; then every change as
+// it happens.
 func (h *Hub) AdminFeed(ctx context.Context, name string, sink Sink, fromSeq int64) {
 	f := &feed{name: name, out: make(chan feedItem, 1024), done: make(chan struct{})}
 	h.mu.Lock()
@@ -1253,6 +1269,7 @@ func (h *Hub) AdminFeed(ctx context.Context, name string, sink Sink, fromSeq int
 		rec := c.presence()
 		presence = append(presence, feedItem{event: "presence", data: presenceOut{Kind: "presence", Key: c.key, Revision: c.rev, Record: &rec}})
 	}
+	traces := h.traceDumpLocked()
 	h.mu.Unlock()
 	defer func() {
 		h.mu.Lock()
@@ -1290,6 +1307,11 @@ func (h *Hub) AdminFeed(ctx context.Context, name string, sink Sink, fromSeq int
 	}
 	if !write(feedItem{event: "snapshot", data: snapshotOut{Kind: "snapshot", Bucket: "presence"}}) {
 		return
+	}
+	for _, t := range traces {
+		if !write(t) {
+			return
+		}
 	}
 	if fromSeq <= end {
 		rows, err := h.st.Rows(max(fromSeq, 1), end)
