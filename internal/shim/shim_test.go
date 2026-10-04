@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/AIToolSharing/agent_coop/internal/channel"
+	"github.com/AIToolSharing/agent_coop/internal/herdr"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -103,13 +104,19 @@ func options(h *fakeHub, machine, session, agent string, push bool) Options {
 // that no text the agent saw names how the service works.
 func start(t *testing.T, o Options) *testAgent {
 	t.Helper()
+	return startAs(t, o, "test-client")
+}
+
+// startAs is start with the name that the MCP client gives in its handshake.
+func startAs(t *testing.T, o Options, clientName string) *testAgent {
+	t.Helper()
 	serverT, clientT := mcp.NewInMemoryTransports()
 	o.Transport = serverT
 	ctx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
 	go func() { served <- Serve(ctx, o) }()
 	a := &testAgent{t: t}
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0"}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: clientName, Version: "1.0"}, nil)
 	cs, err := client.Connect(ctx, captureTransport{clientT, a}, nil)
 	if err != nil {
 		cancel()
@@ -834,6 +841,159 @@ func TestOperatorMessageArrivesFromOperator(t *testing.T) {
 	})
 }
 
+// The operator holds, pauses and releases an agent. The agent must know its gate from status,
+// and must be told each change with what to do, also while it sits in wait.
+func TestTheGateShowsInStatusAndArrivesAsANotice(t *testing.T) {
+	h := newFakeHub(t)
+	h.createSession("s")
+	h.mu.Lock()
+	h.sessions["s"].gate = "held"
+	h.mu.Unlock()
+	b := start(t, options(h, "vps-2", "s", "bob", true))
+	s := joined(t, b)
+	if s["gate"] != "held" || !strings.Contains(fmt.Sprint(s["gate_note"]), "holds you") {
+		t.Fatalf("status of a held agent: %v", s)
+	}
+	if q := h.lastQuery(); strings.Contains(q, "gated") {
+		t.Fatalf("an agent that was not started with the gate says gated: %s", q)
+	}
+	h.gate("s", "bob@vps-2", noticeReleased)
+	eventually(t, "bob gets the released notice", func() bool {
+		return slices.ContainsFunc(b.pushes(), func(p push) bool { return p.Meta["notice"] == noticeReleased })
+	})
+	if p := b.pushes()[0]; p.Content != "The user released you. You may work now." {
+		t.Fatalf("push %+v", p)
+	}
+	if s := b.json("status", nil); s["gate"] != "run" || s["gate_note"] != nil {
+		t.Fatalf("status after the release: %v", s)
+	}
+	h.gate("s", "bob@vps-2", noticePaused)
+	eventually(t, "status says paused", func() bool { return b.json("status", nil)["gate"] == "paused" })
+	if note := fmt.Sprint(b.json("status", nil)["gate_note"]); !strings.Contains(note, "paused you") || !strings.Contains(note, "`wait`") {
+		t.Fatalf("gate note %q", note)
+	}
+}
+
+// An agent that `coop claude` started tells the service that its tool calls go through the
+// gate. A service of an earlier version sends no gate with the join: that counts as run.
+func TestAGatedAgentSaysSoAndAJoinWithNoGateCountsAsRun(t *testing.T) {
+	h := newFakeHub(t)
+	h.createSession("s")
+	o := options(h, "vps-2", "s", "bob", false)
+	o.Gated = true
+	b := start(t, o)
+	if s := joined(t, b); s["gate"] != "run" {
+		t.Fatalf("status %v", s)
+	}
+	if q := h.lastQuery(); !strings.Contains(q, "gated=1") {
+		t.Fatalf("join query %s", q)
+	}
+}
+
+// The gate hook in the user's settings gates every Claude Code session, also one that
+// `coop claude` did not start. Another MCP client has no such hook: it must not say gated.
+func TestTheSettingsHookGatesClaudeCodeOnly(t *testing.T) {
+	h := newFakeHub(t)
+	h.createSession("s")
+	o := options(h, "vps-2", "s", "bob", false)
+	o.HookInSettings = true
+	joined(t, startAs(t, o, "claude-code"))
+	if q := h.lastQuery(); !strings.Contains(q, "gated=1") {
+		t.Fatalf("claude-code with the hook in the settings: %s", q)
+	}
+	o = options(h, "vps-2", "s", "carol", false)
+	o.HookInSettings = true
+	joined(t, startAs(t, o, "codex"))
+	if q := h.lastQuery(); strings.Contains(q, "gated") {
+		t.Fatalf("another client says gated: %s", q)
+	}
+}
+
+// fakeHerdr stands in for the herdr command. It says that the agent in the pane works.
+type fakeHerdr struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (f *fakeHerdr) run(_ context.Context, args ...string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, strings.Join(args, " "))
+	if len(args) > 1 && args[0] == "agent" && args[1] == "get" {
+		return []byte(`{"id":"cli","result":{"type":"agent_info","agent":{"agent_status":"working"}}}`), nil
+	}
+	return []byte(`{"id":"cli","result":{"type":"ok"}}`), nil
+}
+
+func (f *fakeHerdr) has(call string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Contains(f.calls, call)
+}
+
+func (f *fakeHerdr) count(prefix string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// In a Herdr pane the agent tells the service its pane, shows its session, name and gate on
+// the pane, and a pause interrupts the turn that runs: without this, a pause acts only at the
+// next tool call. An agent that sits in wait gets no interrupt: the wait gives it the notice.
+func TestInAHerdrPaneTheGateShowsAndAPauseInterrupts(t *testing.T) {
+	h := newFakeHub(t)
+	h.createSession("s")
+	h.mu.Lock()
+	h.sessions["s"].gate = "held"
+	h.mu.Unlock()
+	f := &fakeHerdr{}
+	o := options(h, "vps-2", "s", "bob", true)
+	o.Pane = herdr.FromEnv(map[string]string{"HERDR_ENV": "1", "HERDR_PANE_ID": "w1:p3"}, f.run)
+	b := start(t, o)
+	joined(t, b)
+	if q := h.lastQuery(); !strings.Contains(q, "herdr_pane=w1%3Ap3") {
+		t.Fatalf("join query %s", q)
+	}
+	show := func(gate string) string {
+		title := "coop s/bob"
+		if gate != "run" {
+			title += " · " + gate
+		}
+		return "pane report-metadata w1:p3 --source coop:shim --title " + title + " --token coop=s/bob --token gate=" + gate
+	}
+	eventually(t, "the pane shows the hold", func() bool { return f.has(show("held")) })
+	h.gate("s", "bob@vps-2", noticeReleased)
+	eventually(t, "the pane shows no gate", func() bool { return f.has(show("run")) })
+	if n := f.count("agent"); n != 0 {
+		t.Fatalf("a release sent %d agent calls to herdr: %v", n, f.calls)
+	}
+	// A pause while the agent works: escape goes to the pane.
+	h.gate("s", "bob@vps-2", noticePaused)
+	eventually(t, "the pause interrupts", func() bool { return f.has("agent send-keys w1:p3 esc") && f.has(show("paused")) })
+	// A pause while the agent sits in wait: the wait ends with the notice, and no key goes.
+	h.gate("s", "bob@vps-2", noticeReleased)
+	eventually(t, "released again", func() bool { return b.json("status", nil)["gate"] == "run" })
+	keys := f.count("agent send-keys")
+	waiting := b.async("wait", map[string]any{"from": "operator", "timeout_s": 500})
+	eventually(t, "the wait is open", func() bool {
+		acts := h.activities("s")
+		return len(acts) > 0 && acts[len(acts)-1].Kind == "wait_start"
+	})
+	h.gate("s", "bob@vps-2", noticePaused)
+	if r := <-waiting; !strings.Contains(r.text, "paused you") {
+		t.Fatalf("wait gave %+v", r)
+	}
+	if n := f.count("agent send-keys"); n != keys {
+		t.Fatalf("a pause during wait sent a key: %v", f.calls)
+	}
+}
+
 // --- opacity ---------------------------------------------------------------------------------
 
 // Every test checks its agents' texts at the end (see start). This test makes sure that the
@@ -847,7 +1007,7 @@ func TestNothingAnAgentSeesNamesHowTheServiceWorks(t *testing.T) {
 			t.Fatalf("the description of %s names the service", name)
 		}
 	}
-	for _, kind := range []string{noticeKicked, noticeClosed, noticeReopened, noticeRedacted, noticePeerLeft} {
+	for _, kind := range []string{noticeKicked, noticeClosed, noticeReopened, noticeRedacted, noticePeerLeft, noticeHeld, noticePaused, noticeReleased} {
 		if text := noticeText(notice{Kind: kind, ID: "1", Peer: "a@m"}); text == "" || forbiddenRE.MatchString(text) {
 			t.Fatalf("notice %s: %q", kind, text)
 		}

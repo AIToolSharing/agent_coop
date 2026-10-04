@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 	title      TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL,
 	closed_at  TEXT NOT NULL DEFAULT '',
-	revision   INTEGER NOT NULL
+	revision   INTEGER NOT NULL,
+	hold       INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS kicks (
 	sid      TEXT NOT NULL,
@@ -80,9 +81,34 @@ CREATE TABLE IF NOT EXISTS known (
 	state    TEXT NOT NULL,
 	note     TEXT NOT NULL DEFAULT '',
 	seen_seq INTEGER NOT NULL,
+	gate     TEXT NOT NULL DEFAULT 'run',
 	PRIMARY KEY (sid, agent)
 );
 `
+
+// added lists the columns that a later version added to a table. Open adds each one that a
+// database of an earlier version does not have. The definitions are the same as in schema.
+var added = []struct{ table, column, definition string }{
+	{"sessions", "hold", "INTEGER NOT NULL DEFAULT 1"},
+	{"known", "gate", "TEXT NOT NULL DEFAULT 'run'"},
+}
+
+// migrate adds the columns that the database does not have yet.
+func migrate(db *sql.DB) error {
+	for _, c := range added {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.column).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.column + ` ` + c.definition); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // Open opens or creates the database at path, with its directory.
 func Open(path string) (*Store, error) {
@@ -100,6 +126,10 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
+	}
+	if err := migrate(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
 	return &Store{db: db}, nil
 }
@@ -264,11 +294,11 @@ type SessionRow struct {
 	Revision int64
 }
 
-const sessionColumns = `sid, status, title, created_at, closed_at, revision`
+const sessionColumns = `sid, status, title, created_at, closed_at, revision, hold`
 
 func scanSession(sc interface{ Scan(...any) error }) (SessionRow, error) {
 	var r SessionRow
-	err := sc.Scan(&r.SID, &r.Record.Status, &r.Record.Title, &r.Record.CreatedAt, &r.Record.ClosedAt, &r.Revision)
+	err := sc.Scan(&r.SID, &r.Record.Status, &r.Record.Title, &r.Record.CreatedAt, &r.Record.ClosedAt, &r.Revision, &r.Record.Hold)
 	return r, err
 }
 
@@ -299,8 +329,9 @@ func (s *Store) Sessions() ([]SessionRow, error) {
 	return out, rs.Err()
 }
 
-// CreateSession makes an open session. ErrExists when there is one.
-func (s *Store) CreateSession(sid, title, at string) (SessionRow, error) {
+// CreateSession makes an open session. With hold, an agent that joins it for the first time is
+// held. ErrExists when there is one.
+func (s *Store) CreateSession(sid, title, at string, hold bool) (SessionRow, error) {
 	var row SessionRow
 	err := s.tx(func(tx *sql.Tx) error {
 		var n int
@@ -314,8 +345,8 @@ func (s *Store) CreateSession(sid, title, at string) (SessionRow, error) {
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(`INSERT INTO sessions (sid, status, title, created_at, closed_at, revision) VALUES (?, 'open', ?, ?, '', ?)`, sid, title, at, rev)
-		row = SessionRow{SID: sid, Record: wire.SessionRecord{Status: "open", Title: title, CreatedAt: at}, Revision: rev}
+		_, err = tx.Exec(`INSERT INTO sessions (sid, status, title, created_at, closed_at, revision, hold) VALUES (?, 'open', ?, ?, '', ?, ?)`, sid, title, at, rev, hold)
+		row = SessionRow{SID: sid, Record: wire.SessionRecord{Status: "open", Title: title, CreatedAt: at, Hold: hold}, Revision: rev}
 		return err
 	})
 	return row, err
@@ -349,6 +380,31 @@ func (s *Store) SetStatus(sid, status, at string) (row SessionRow, changed bool,
 		return nil
 	})
 	return row, changed, err
+}
+
+// SetHold sets whether the session holds an agent that joins for the first time, and gives
+// the new record. ErrNotFound for an unknown session.
+func (s *Store) SetHold(sid string, hold bool) (row SessionRow, err error) {
+	err = s.tx(func(tx *sql.Tx) error {
+		old, err := scanSession(tx.QueryRow(`SELECT `+sessionColumns+` FROM sessions WHERE sid = ?`, sid))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		rev, err := bump(tx)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE sessions SET hold = ?, revision = ? WHERE sid = ?`, hold, rev, sid); err != nil {
+			return err
+		}
+		row = old
+		row.Record.Hold, row.Revision = hold, rev
+		return nil
+	})
+	return row, err
 }
 
 // DeleteSession removes a closed session with its events, kicks and known agents. It gives
@@ -466,26 +522,36 @@ func (s *Store) Kicks() ([]KickRow, error) {
 
 // --- Known agents --------------------------------------------------------------------------
 
-// KnownRow is an agent that was in a session: its last state and how far it saw the log.
+// KnownRow is an agent that was in a session: its last state, how far it saw the log, and
+// whether the operator lets it work.
 type KnownRow struct {
 	SID     string
 	Agent   string // agent@machine
 	State   string
 	Note    string
 	SeenSeq int64
+	Gate    string // run, held or paused
+}
+
+const knownColumns = `sid, agent, state, note, seen_seq, gate`
+
+func scanKnown(sc interface{ Scan(...any) error }) (KnownRow, error) {
+	var k KnownRow
+	err := sc.Scan(&k.SID, &k.Agent, &k.State, &k.Note, &k.SeenSeq, &k.Gate)
+	return k, err
 }
 
 // Known gives every agent that was in sid, by address.
 func (s *Store) Known(sid string) ([]KnownRow, error) {
-	rs, err := s.db.Query(`SELECT sid, agent, state, note, seen_seq FROM known WHERE sid = ? ORDER BY agent`, sid)
+	rs, err := s.db.Query(`SELECT `+knownColumns+` FROM known WHERE sid = ? ORDER BY agent`, sid)
 	if err != nil {
 		return nil, err
 	}
 	defer rs.Close()
 	var out []KnownRow
 	for rs.Next() {
-		var k KnownRow
-		if err := rs.Scan(&k.SID, &k.Agent, &k.State, &k.Note, &k.SeenSeq); err != nil {
+		k, err := scanKnown(rs)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, k)
@@ -493,11 +559,31 @@ func (s *Store) Known(sid string) ([]KnownRow, error) {
 	return out, rs.Err()
 }
 
+// SetGate sets the gate of one known agent of sid: run, held or paused. changed is false when
+// the agent is not known or has that gate already.
+func (s *Store) SetGate(sid, agent, gate string) (changed bool, err error) {
+	res, err := s.db.Exec(`UPDATE known SET gate = ? WHERE sid = ? AND agent = ? AND gate <> ?`, gate, sid, agent, gate)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// Forget removes one known agent of sid: the hub then has no state and no replay point for it.
+// It reports whether the agent was known.
+func (s *Store) Forget(sid, agent string) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM known WHERE sid = ? AND agent = ?`, sid, agent)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // KnownAgent gives one known agent of sid, or false.
 func (s *Store) KnownAgent(sid, agent string) (KnownRow, bool, error) {
-	var k KnownRow
-	err := s.db.QueryRow(`SELECT sid, agent, state, note, seen_seq FROM known WHERE sid = ? AND agent = ?`, sid, agent).
-		Scan(&k.SID, &k.Agent, &k.State, &k.Note, &k.SeenSeq)
+	k, err := scanKnown(s.db.QueryRow(`SELECT `+knownColumns+` FROM known WHERE sid = ? AND agent = ?`, sid, agent))
 	if errors.Is(err, sql.ErrNoRows) {
 		return KnownRow{}, false, nil
 	}

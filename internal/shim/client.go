@@ -7,6 +7,7 @@ package shim
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"io"
@@ -15,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
 // unreachable is the text for every failure that a retry can repair.
@@ -41,6 +44,7 @@ const (
 type link struct {
 	kind string
 	me   string // the agent's address, for joined
+	gate string // whether the user lets the agent work, for joined
 }
 
 // streamHandlers get what the stream gives. The stream loop calls them one at a time.
@@ -58,6 +62,10 @@ type joinInfo struct {
 	cwd           string
 	clientName    string
 	clientVersion string
+	// gated: the agent's tool calls go through the operator's gate.
+	gated bool
+	// herdrPane is the Herdr pane of this process, or "".
+	herdrPane string
 }
 
 const (
@@ -82,6 +90,9 @@ type hubClient struct {
 	idle time.Duration
 	// sleep waits for d. It gives false when ctx ended first.
 	sleep func(ctx context.Context, d time.Duration) bool
+	// plain: the join goes without the optional parameters (gated, herdr_pane). A service of
+	// an earlier version refuses a join that has them.
+	plain bool
 }
 
 func newHubClient(base, token, session string, join joinInfo) *hubClient {
@@ -151,6 +162,10 @@ func (c *hubClient) run(ctx context.Context, h streamHandlers) {
 			case res.StatusCode == 401:
 				h.state(link{kind: linkRefused})
 				return
+			case res.StatusCode == 422 && !c.plain && (c.join.gated || c.join.herdrPane != ""):
+				// A service of an earlier version does not know the optional parameters.
+				// Join without them: the agent then works as with that version.
+				c.plain = true
 			case res.StatusCode == 403 && e != nil && e.Message == "removed from session":
 				h.state(link{kind: linkRemoved})
 				return
@@ -197,6 +212,12 @@ func (c *hubClient) openStream(ctx context.Context, lastID string) (*http.Respon
 		"cwd":            {c.join.cwd},
 		"client_name":    {c.join.clientName},
 		"client_version": {c.join.clientVersion},
+	}
+	if c.join.gated && !c.plain {
+		q.Set("gated", "1")
+	}
+	if c.join.herdrPane != "" && !c.plain {
+		q.Set("herdr_pane", c.join.herdrPane)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.path("/stream")+"?"+q.Encode(), nil)
 	if err != nil {
@@ -252,7 +273,7 @@ func dispatch(event, id, data string, h streamHandlers, lastID *string) bool {
 	switch event {
 	case "joined":
 		if j, ok := decode[joinedEvent]([]byte(data)); ok {
-			h.state(link{kind: linkJoined, me: j.Me})
+			h.state(link{kind: linkJoined, me: j.Me, gate: cmp.Or(j.Gate, wire.GateRun)})
 		}
 	case "message":
 		if m, ok := decode[message]([]byte(data)); ok {

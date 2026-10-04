@@ -25,7 +25,8 @@ type limit struct {
 type limits struct{ join, msg, activity limit }
 
 // options of a test hub; autoCreate false means the operator creates sessions.
-type options struct{ autoCreate bool }
+// holdNew true means a session that the hub makes holds new agents.
+type options struct{ autoCreate, holdNew bool }
 
 // testPing is the hub's ping and sweep interval in tests, so that a revoked token or a
 // changed session shows within a second.
@@ -75,6 +76,7 @@ func (h *harness) start() {
 	conv := func(l limit) hub.Limit { return hub.Limit{Burst: l.burst, PerSecond: l.perSecond} }
 	h.h = hub.New(h.st, hub.Options{
 		AutoCreate: h.o.autoCreate,
+		HoldNew:    h.o.holdNew,
 		Ping:       testPing,
 		Limits:     hub.Limits{Join: conv(h.l.join), Msg: conv(h.l.msg), Activity: conv(h.l.activity)},
 	})

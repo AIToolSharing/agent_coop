@@ -25,6 +25,7 @@ type Config struct {
 	Session       string // the session, or "" when the agent is in no session
 	Agent         string // the agent name; never empty
 	Push          bool   // true when Claude Code loads the server as a channel
+	Gated         bool   // true when `coop claude` started the agent with the gate hook
 }
 
 // Load finds the configuration. For each key, a value in env wins, and an empty value counts as
@@ -79,6 +80,8 @@ func Load(env map[string]string, file string, warn func(string), cwd string) Con
 		Session:       session,
 		Agent:         agent,
 		Push:          pick("COOP_PUSH", fromFile) == "1",
+		// Only the launch environment says that the hook is there; a file cannot.
+		Gated: env["COOP_GATED"] == "1",
 	}
 }
 

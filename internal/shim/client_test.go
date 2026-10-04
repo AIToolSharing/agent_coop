@@ -174,6 +174,45 @@ func TestSilentStreamIsDroppedAfterIdleAndOpenedAgain(t *testing.T) {
 	}
 }
 
+// A hub of a version before the gate refuses a join with a query parameter that it does not
+// know (422). The client then joins without the optional parameters, at once, so that a new
+// agent still works with an old hub.
+func TestAJoinThatAnOlderServiceRefusesGoesAgainWithoutTheOptionalParameters(t *testing.T) {
+	var mu sync.Mutex
+	var queries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		queries = append(queries, r.URL.RawQuery)
+		mu.Unlock()
+		q := r.URL.Query()
+		if q.Has("gated") || q.Has("herdr_pane") {
+			writeError(w, 422, "invalid", "unknown query parameter gated")
+			return
+		}
+		openStream(w)
+		writeEvent(w, "joined", "", joinedA)
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	rec := &recorder{}
+	c := testClient(t, srv.URL, rec)
+	c.join.gated, c.join.herdrPane = true, "w1:p3"
+	runUntil(t, c, rec, func() bool {
+		states, _, _, _ := rec.snapshot()
+		return slices.Contains(states, linkJoined)
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if len(queries) != 2 || !strings.Contains(queries[0], "gated=1") || !strings.Contains(queries[0], "herdr_pane=") ||
+		strings.Contains(queries[1], "gated") || strings.Contains(queries[1], "herdr_pane") {
+		t.Fatalf("queries %q", queries)
+	}
+	// No wait between the two tries, and the agent never looked unreachable.
+	if states, _, _, _ := rec.snapshot(); slices.Contains(states, linkUnreachable) {
+		t.Fatalf("states %v", states)
+	}
+}
+
 func TestPingsKeepTheStreamOpen(t *testing.T) {
 	var mu sync.Mutex
 	opened := 0

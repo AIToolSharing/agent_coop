@@ -94,7 +94,7 @@ func (x *hubSuite) joining(t *testing.T) {
 		defer s.close()
 		wantStatus(t, 200)(s.status(), s.body)
 		got := data[joinedEvent](t, s.wait(t, nil))
-		if want := (joinedEvent{Me: "alice@mac-1", Session: sid}); got != want {
+		if want := (joinedEvent{Me: "alice@mac-1", Session: sid, Gate: "run"}); got != want {
 			t.Fatalf("joined %+v, want %+v", got, want)
 		}
 		if _, ok := x.h.presence(sid + ".mac-1.alice"); !ok {
@@ -732,7 +732,7 @@ func (x *hubSuite) autoCreate(t *testing.T) {
 		defer s.close()
 		wantStatus(t, 200)(s.status(), s.body)
 		got := data[joinedEvent](t, s.wait(t, nil))
-		if want := (joinedEvent{Me: "alice@mac-1", Session: "fresh"}); got != want {
+		if want := (joinedEvent{Me: "alice@mac-1", Session: "fresh", Gate: "run"}); got != want {
 			t.Fatalf("joined %+v, want %+v", got, want)
 		}
 		if rec, ok := op.getSession(t, "fresh"); !ok || rec.Status != "open" {
@@ -845,6 +845,56 @@ func (x *hubSuite) adminAPI(t *testing.T) {
 		if v := parse[sessionView](t, jsonOf(x.mac1.view(sid, "alice"))); !slices.Equal(v.Peers, away) {
 			t.Fatalf("peers after the allow %+v, want %+v", v.Peers, away)
 		}
+	})
+
+	// Found in use: three agents of a test run each joined for some seconds, and stayed peers
+	// of the session for ever (smoke-researcher, smoke2, eng-t1). The only way to drop one was
+	// a kick, and a kick also keeps the name out. Forget drops the agent and keeps the name free.
+	t.Run("a forgotten agent is no longer a peer; it may join again as a new agent", func(t *testing.T) {
+		sid := x.session(t)
+		a := x.mac1.stream(sid, "alice")
+		defer a.close()
+		a.wait(t, nil)
+		b := x.vps2.stream(sid, "smoke2")
+		b.wait(t, nil)
+		// An agent that is in the session cannot be forgotten.
+		wantStatus(t, 409)(adm.forget(sid, "smoke2@vps-2"))
+		b.close()
+		a.wait(t, eventIs("notice"))
+		wantStatus(t, 200)(x.mac1.send(sid, "alice", "smoke2", "for later", ""))
+		if v := parse[sessionView](t, jsonOf(x.mac1.view(sid, "alice"))); len(v.Peers) != 1 {
+			t.Fatalf("peers before the forget %+v, want smoke2 away", v.Peers)
+		}
+		forgotten := func() int {
+			n := 0
+			for _, e := range x.h.events(sid) {
+				if e.Kind == wire.EventActivity && e.From == "smoke2@vps-2" && e.Activity != nil && e.Activity.Kind == "forgotten" {
+					n++
+				}
+			}
+			return n
+		}
+		wantStatus(t, 204)(adm.forget(sid, "smoke2@vps-2"))
+		if v := parse[sessionView](t, jsonOf(x.mac1.view(sid, "alice"))); len(v.Peers) != 0 {
+			t.Fatalf("peers after the forget %+v, want none", v.Peers)
+		}
+		wantStatus(t, 404)(x.mac1.send(sid, "alice", "smoke2", "hi", ""))
+		// A second forget, and a forget of an agent that never joined, change nothing.
+		wantStatus(t, 204)(adm.forget(sid, "smoke2@vps-2"))
+		wantStatus(t, 204)(adm.forget(sid, "nobody@vps-2"))
+		if n := forgotten(); n != 1 {
+			t.Fatalf("%d forgotten records, want 1", n)
+		}
+		// The name is free: the agent joins again, as a new agent with no replay.
+		b2 := x.vps2.stream(sid, "smoke2")
+		defer b2.close()
+		b2.wait(t, nil)
+		b2.none(t, isMsg, 300*time.Millisecond)
+		if v := parse[sessionView](t, jsonOf(x.mac1.view(sid, "alice"))); len(v.Peers) != 1 || !v.Peers[0].Online {
+			t.Fatalf("peers after the new join %+v, want smoke2 online", v.Peers)
+		}
+		wantStatus(t, 404)(adm.forget("no-such-session", "smoke2@vps-2"))
+		wantStatus(t, 422)(adm.forget(sid, "smoke2"))
 	})
 
 	// Asked for by the operator: a removed agent that tries to join must show. Without a record
@@ -1024,6 +1074,9 @@ func (x *hubSuite) contractDocument(t *testing.T) {
 			"/v1/admin/sessions",
 			"/v1/admin/sessions/{sid}",
 			"/v1/admin/sessions/{sid}/close",
+			"/v1/admin/sessions/{sid}/forget",
+			"/v1/admin/sessions/{sid}/gate",
+			"/v1/admin/sessions/{sid}/hold",
 			"/v1/admin/sessions/{sid}/kick",
 			"/v1/admin/sessions/{sid}/messages",
 			"/v1/admin/sessions/{sid}/redact",
@@ -1032,6 +1085,7 @@ func (x *hubSuite) contractDocument(t *testing.T) {
 			"/v1/admin/stream",
 			"/v1/sessions/{sid}",
 			"/v1/sessions/{sid}/activity",
+			"/v1/sessions/{sid}/gate",
 			"/v1/sessions/{sid}/messages",
 			"/v1/sessions/{sid}/stream",
 		}

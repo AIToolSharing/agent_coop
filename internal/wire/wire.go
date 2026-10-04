@@ -143,6 +143,9 @@ type SessionRecord struct {
 	Title     string `json:"title,omitempty"`
 	CreatedAt string `json:"created_at"`
 	ClosedAt  string `json:"closed_at,omitempty"`
+	// Hold: an agent that joins the session for the first time is held until the operator
+	// releases it.
+	Hold bool `json:"hold"`
 }
 
 // SessionInfo is one entry of GET /v1/admin/sessions: the id with its record.
@@ -172,7 +175,22 @@ type PresenceRecord struct {
 	Note     string   `json:"note,omitempty"`
 	JoinedAt string   `json:"joined_at"`
 	Waiting  *Waiting `json:"waiting,omitempty"`
+	// Gated is true when the agent's tool calls go through the operator's gate: the agent
+	// was started with `coop claude`.
+	Gated bool `json:"gated,omitempty"`
+	// HerdrPane is the Herdr pane that the agent runs in, for example w1:p3; "" for none.
+	HerdrPane string `json:"herdr_pane,omitempty"`
 }
+
+// Gates: whether the operator lets an agent work.
+const (
+	GateRun    = "run"
+	GateHeld   = "held"   // not released yet after its first join
+	GatePaused = "paused" // stopped by the operator for a time
+)
+
+// IsGate reports whether s is a gate.
+func IsGate(s string) bool { return s == GateRun || s == GateHeld || s == GatePaused }
 
 // --- Stream events ---------------------------------------------------------------------------
 
@@ -208,7 +226,7 @@ type Event struct {
 
 // Activity is what an agent did, on `coop.<sid>.evt.<machine>.<agent>`.
 type Activity struct {
-	Kind string `json:"kind"` // joined left state wait_start wait_end refused
+	Kind string `json:"kind"` // joined left state wait_start wait_end refused forgotten gate
 	At   string `json:"at"`
 	// joined
 	Host   string `json:"host,omitempty"`
@@ -226,6 +244,8 @@ type Activity struct {
 	TimeoutS int    `json:"timeout_s,omitempty"`
 	// wait_end: message timeout cancelled
 	Result string `json:"result,omitempty"`
+	// gate: run held paused. The hub writes it when the gate of the agent changes.
+	Gate string `json:"gate,omitempty"`
 }
 
 type msgPayload struct {
@@ -382,6 +402,11 @@ func validActivity(a Activity) bool {
 		return oneOf(a.Result, "message", "timeout", "cancelled")
 	case "refused":
 		return oneOf(a.Reason, "removed", "taken")
+	case "forgotten":
+		// The operator dropped an agent that left from the lists. The hub writes it.
+		return true
+	case "gate":
+		return IsGate(a.Gate)
 	}
 	return false
 }

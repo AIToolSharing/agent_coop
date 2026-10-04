@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -184,6 +185,111 @@ func TestKnownFollowsTheAppends(t *testing.T) {
 	}
 }
 
+func TestForgetRemovesOneKnownAgent(t *testing.T) {
+	s, _ := open(t)
+	must(s.Append(evt("s1", "alice@mac-1", "joined"), true, nil))
+	must(s.Append(evt("s1", "bob@vps-2", "joined"), true, nil))
+	must(s.Append(evt("s2", "bob@vps-2", "joined"), true, nil))
+	if known := must(s.Forget("s1", "bob@vps-2")); !known {
+		t.Fatal("Forget of a known agent gave false")
+	}
+	if known := must(s.Forget("s1", "bob@vps-2")); known {
+		t.Fatal("a second Forget gave true")
+	}
+	if all := must(s.Known("s1")); len(all) != 1 || all[0].Agent != "alice@mac-1" {
+		t.Fatalf("Known s1: %+v", all)
+	}
+	// The same address in another session stays.
+	if _, ok := must2(s.KnownAgent("s2", "bob@vps-2")); !ok {
+		t.Fatal("Forget took the agent of another session")
+	}
+	// The events stay: the history of the session does not change.
+	if events := must(s.Events("s1", 1, 10)); len(events) != 2 {
+		t.Fatalf("%d events of s1, want 2", len(events))
+	}
+}
+
+func TestGateOfAKnownAgent(t *testing.T) {
+	s, _ := open(t)
+	me := "alice@mac-1"
+	if changed := must(s.SetGate("s1", me, "paused")); changed {
+		t.Fatal("SetGate changed an agent that is not known")
+	}
+	must(s.Append(evt("s1", me, "joined"), true, nil))
+	if k, _ := must2(s.KnownAgent("s1", me)); k.Gate != "run" {
+		t.Fatalf("gate of a new agent %q, want run", k.Gate)
+	}
+	if changed := must(s.SetGate("s1", me, "paused")); !changed {
+		t.Fatal("SetGate did not change run to paused")
+	}
+	if changed := must(s.SetGate("s1", me, "paused")); changed {
+		t.Fatal("SetGate changed paused to paused")
+	}
+	// A later event of the agent keeps the gate.
+	must(s.Append(evt("s1", me, "state"), false, &store.Known{State: "working"}))
+	if all := must(s.Known("s1")); len(all) != 1 || all[0].Gate != "paused" {
+		t.Fatalf("Known: %+v", all)
+	}
+}
+
+func TestHoldOfASession(t *testing.T) {
+	s, _ := open(t)
+	if row := must(s.CreateSession("held", "", at, true)); !row.Record.Hold {
+		t.Fatal("CreateSession with hold gave a record without it")
+	}
+	if row := must(s.CreateSession("free", "", at, false)); row.Record.Hold {
+		t.Fatal("CreateSession without hold gave a record with it")
+	}
+	before, _ := must2(s.Session("held"))
+	row := must(s.SetHold("held", false))
+	if row.Record.Hold || row.Revision <= before.Revision {
+		t.Fatalf("SetHold: %+v, revision before %d", row, before.Revision)
+	}
+	if got, _ := must2(s.Session("held")); got.Record.Hold || got.Record.Status != "open" {
+		t.Fatalf("after SetHold: %+v", got)
+	}
+	if _, err := s.SetHold("nope", true); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("SetHold of an unknown session: %v", err)
+	}
+}
+
+// A database of a version before the gate has no hold and no gate column. Open adds them:
+// a session then holds new agents, and an agent that the hub knows may work.
+func TestOpenAddsTheColumnsOfALaterVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "coop.db")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`CREATE TABLE sessions (sid TEXT PRIMARY KEY, status TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, closed_at TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL)`,
+		`CREATE TABLE known (sid TEXT NOT NULL, agent TEXT NOT NULL, state TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', seen_seq INTEGER NOT NULL, PRIMARY KEY (sid, agent))`,
+		`INSERT INTO sessions (sid, status, created_at, revision) VALUES ('s1', 'open', '` + at + `', 1)`,
+		`INSERT INTO known (sid, agent, state, seen_seq) VALUES ('s1', 'alice@mac-1', 'working', 7)`,
+	} {
+		if _, err := old.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := old.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 { // the second Open finds the columns and adds nothing
+		s, err := store.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, _ := must2(s.Session("s1"))
+		k, _ := must2(s.KnownAgent("s1", "alice@mac-1"))
+		if !row.Record.Hold || k.Gate != "run" || k.SeenSeq != 7 {
+			t.Fatalf("session %+v, known %+v", row, k)
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func must2[T any](v T, ok bool, err error) (T, bool) {
 	if err != nil {
 		panic(err)
@@ -209,7 +315,7 @@ func TestRevisionsIncrease(t *testing.T) {
 			sid := sids[i%len(sids)]
 			switch op {
 			case 0:
-				row, err := s.CreateSession(sid, "", at)
+				row, err := s.CreateSession(sid, "", at, false)
 				if errors.Is(err, store.ErrExists) {
 					continue
 				}
@@ -249,14 +355,14 @@ func TestSessions(t *testing.T) {
 	if _, ok, _ := s.Session("x"); ok {
 		t.Fatal("session before create")
 	}
-	row := must(s.CreateSession("x", "Title", at))
+	row := must(s.CreateSession("x", "Title", at, false))
 	if row.SID != "x" || row.Record.Status != "open" || row.Record.Title != "Title" || row.Record.CreatedAt != at || row.Record.ClosedAt != "" {
 		t.Fatalf("created: %+v", row)
 	}
-	if _, err := s.CreateSession("x", "", at); !errors.Is(err, store.ErrExists) {
+	if _, err := s.CreateSession("x", "", at, false); !errors.Is(err, store.ErrExists) {
 		t.Fatalf("second create: %v", err)
 	}
-	must(s.CreateSession("a", "", at))
+	must(s.CreateSession("a", "", at, false))
 	list := must(s.Sessions())
 	if len(list) != 2 || list[0].SID != "a" || list[1].SID != "x" {
 		t.Fatalf("Sessions: %+v", list)

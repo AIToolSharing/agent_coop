@@ -85,6 +85,16 @@ type Agent struct {
 	// the name: a second session asked for it. "" for none, and after a later join.
 	DuplicateAt string
 	Left        *Left
+	// Forgotten is true from the time the operator dropped the agent from the lists until the
+	// agent joins again.
+	Forgotten bool
+	// Gate is whether the operator lets the agent work: run, held or paused.
+	Gate string
+	// Gated is true while the agent is online and its tool calls go through the gate. An
+	// agent that is not gated only gets the gate as advice.
+	Gated bool
+	// HerdrPane is the Herdr pane that the agent runs in while it is online, or "".
+	HerdrPane string
 	// FirstSeq is the sequence of the agent's first event: the order agents are listed in.
 	FirstSeq int64
 
@@ -383,7 +393,7 @@ func (v *Session) agent(sid, address string, seq int64) *Agent {
 	key := v.agentKey(sid, address)
 	a := v.Agents[key]
 	if a == nil {
-		a = &Agent{Address: address, SID: sid, State: "unknown", dState: "unknown", FirstSeq: math.MaxInt64}
+		a = &Agent{Address: address, SID: sid, State: "unknown", dState: "unknown", Gate: wire.GateRun, FirstSeq: math.MaxInt64}
 		if addr, ok := wire.ParseAddress(address); ok {
 			kick := wire.BuildSessionsKey(wire.SessionsKey{Kind: "kick", SID: sid, Target: addr})
 			a.Kicked = v.store.Kicks[kick] != nil
@@ -487,6 +497,17 @@ func (v *Session) applyEvent(e *wire.Event) {
 			} else {
 				sys("tried to join; it is removed (:allow lets it back)")
 			}
+		case "forgotten":
+			sys("forgotten by the operator")
+		case "gate":
+			switch x.Gate {
+			case wire.GateHeld:
+				sys("is held until the operator releases it")
+			case wire.GatePaused:
+				sys("paused by the operator")
+			default:
+				sys("released by the operator")
+			}
 		}
 	}
 }
@@ -581,6 +602,8 @@ func (a *Agent) addEvent(seq int64, x *wire.Activity) {
 func (a *Agent) derive() {
 	a.Host, a.Cwd, a.Client, a.JoinedAt, a.RefusedAt, a.DuplicateAt = "", "", "", "", "", ""
 	a.Left = nil
+	a.Forgotten = false
+	a.Gate = wire.GateRun
 	a.dState, a.dSince, a.dNote, a.dWaiting = "unknown", "", "", nil
 	for _, ev := range a.evts {
 		x := ev.a
@@ -589,6 +612,7 @@ func (a *Agent) derive() {
 			a.Host, a.Cwd, a.JoinedAt = x.Host, x.Cwd, x.At
 			a.Client = x.Client.Name + " " + x.Client.Version
 			a.Left = nil
+			a.Forgotten = false
 			a.DuplicateAt = ""
 			if a.dState == "left" || a.dState == "unknown" {
 				a.dState, a.dSince = "idle", x.At
@@ -608,6 +632,12 @@ func (a *Agent) derive() {
 			} else {
 				a.RefusedAt = x.At
 			}
+		case "forgotten":
+			// The hub knows nothing of the agent now: its next join starts with a new gate.
+			a.Forgotten = true
+			a.Gate = wire.GateRun
+		case "gate":
+			a.Gate = x.Gate
 		}
 	}
 	a.refresh()
@@ -616,11 +646,11 @@ func (a *Agent) derive() {
 // refresh sets the effective fields: the live presence record wins while the agent is online.
 func (a *Agent) refresh() {
 	if a.live == nil {
-		a.Online = false
+		a.Online, a.Gated, a.HerdrPane = false, false, ""
 		a.State, a.Note, a.StateSince, a.Waiting = a.dState, a.dNote, a.dSince, a.dWaiting
 		return
 	}
-	a.Online = true
+	a.Online, a.Gated, a.HerdrPane = true, a.live.Gated, a.live.HerdrPane
 	a.State, a.Note, a.StateSince = a.live.State, a.live.Note, a.dSince
 	a.Waiting = nil
 	if w := a.live.Waiting; w != nil {

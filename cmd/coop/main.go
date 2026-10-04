@@ -19,7 +19,8 @@ const usageText = `usage:
   coop login <url> <token>        store the hub address and a token (operator or machine)
   coop session <name> [--agent <a>]
                                   put this directory's agents into a session (writes .coop)
-  coop claude [<session>] [args]  start Claude Code with the coop channel enabled
+  coop claude [<session>] [args]  start Claude Code with the coop channel and the operator's
+                                  gate (COOP_GATE=off in the environment: no gate)
   coop --agent <name> claude ...  the same, as the agent <name> (default: the name in .coop,
                                   then the directory name)
   coop tui [--url <url>] [--token <token>]
@@ -27,7 +28,8 @@ const usageText = `usage:
   coop setup                      register coop with Claude Code and install the skill
   coop doctor                     check the connection, the tokens, the session, the setup
   coop mcp                        the MCP server Claude Code starts (stdio)
-  coop serve [--listen <addr>] [--data <dir>] [--auto-create=false]
+  coop hook pretool               the gate check Claude Code runs before a tool call
+  coop serve [--listen <addr>] [--data <dir>] [--auto-create=false] [--hold-new=false]
                                   run the hub (the server)
   coop admin token add [--operator] <name> | list | revoke <name>
                                   manage tokens on the hub's host
@@ -76,6 +78,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdDoctor(args[1:], stdout, stderr)
 	case "mcp":
 		return cmdMCP(args[1:], stderr)
+	case "hook":
+		return cmdHook(args[1:], os.Stdin, stdout, stderr)
 	case "serve":
 		return cmdServe(args[1:], stderr)
 	case "admin":

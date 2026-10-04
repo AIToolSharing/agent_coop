@@ -108,6 +108,11 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 	} else {
 		ok("skill " + skillPath())
 	}
+	if hookInSettings(executable()) {
+		ok("gate hook in " + claudeSettingsPath() + ": every Claude Code session in a coop session is gated")
+	} else {
+		note("no gate hook in " + claudeSettingsPath() + ": only sessions started with coop claude are gated; run coop setup")
+	}
 	if cfg.Push {
 		ok("COOP_PUSH=1: this process advertises the channel")
 	}

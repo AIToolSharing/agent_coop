@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
+	"github.com/AIToolSharing/agent_coop/internal/herdr"
 	"github.com/AIToolSharing/agent_coop/internal/shim"
 )
 
@@ -17,7 +18,7 @@ import (
 func mcpOptions(cfg config.Config, log func(string, ...any)) shim.Options {
 	return shim.Options{
 		URL: cfg.URL, Token: cfg.Token,
-		Session: cfg.Session, Agent: cfg.Agent, Push: cfg.Push,
+		Session: cfg.Session, Agent: cfg.Agent, Push: cfg.Push, Gated: cfg.Gated,
 		Log: log,
 	}
 }
@@ -36,6 +37,14 @@ func cmdMCP(args []string, stderr io.Writer) int {
 	log := func(format string, a ...any) { fmt.Fprintf(stderr, format+"\n", a...) }
 	o := mcpOptions(cfg, log)
 	o.HTTPClient = hubHTTP(cfg, stderr)
+	env := environ()
+	o.Pane = herdr.FromEnv(env, herdr.Command(env))
+	// A session that `coop claude` did not start has the gate hook when the user's settings
+	// file holds it. COOP_GATE=off takes the gate away for one start.
+	o.HookInSettings = hookInSettings(executable())
+	if env["COOP_GATE"] == "off" {
+		o.Gated, o.HookInSettings = false, false
+	}
 	if err := shim.Serve(ctx, o); err != nil {
 		fmt.Fprintln(stderr, "coop mcp:", err)
 		return 1

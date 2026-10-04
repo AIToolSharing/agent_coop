@@ -254,6 +254,117 @@ func TestRemovedAgentsLeaveTheSidebarUnlessTheyTriedToJoin(t *testing.T) {
 	}
 }
 
+// Found in use: three agents of a test run each joined for some seconds, and their "left" rows
+// stayed in the sidebar and in the session count for ever (smoke-researcher, smoke2, eng-t1).
+// An agent that left stays for five minutes. An agent that the operator forgot goes at once.
+func TestAgentsThatLeftGoFromTheSidebar(t *testing.T) {
+	s := store()
+	now := modeltest.Now
+	iso := func(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z07:00") }
+	act := func(seq int64, a wire.Activity) {
+		s.Apply(model.Update{Event: &wire.Event{Kind: wire.EventActivity, Seq: seq, SID: "build-42", From: "bob@vps-2", Activity: &a}})
+	}
+	sidebar := func(at time.Time) string {
+		v := s.View("build-42")
+		sb := view.RenderSidebar(view.Summaries(s, at), view.Listed(v, at), view.Selection{SID: "build-42", Cursor: -1}, 60, at)
+		return strings.Join(texts(sb.Rendered), "\n")
+	}
+	counts := func(at time.Time) string {
+		for _, sum := range view.Summaries(s, at) {
+			if sum.SID == "build-42" {
+				return fmt.Sprintf("%d/%d", sum.Online, sum.Agents)
+			}
+		}
+		return "?"
+	}
+	listed := func(at time.Time) bool { return strings.Contains(sidebar(at), "bob@vps-2") }
+
+	// bob leaves one minute before now.
+	s.Apply(model.Update{Presence: &wire.PresenceUpdate{Key: "build-42.vps-2.bob", Revision: 1000}})
+	act(500, wire.Activity{Kind: "left", Reason: "disconnected", At: iso(now.Add(-time.Minute))})
+	if got := sidebar(now); !strings.Contains(got, "bob@vps-2 left") || counts(now) != "2/3" {
+		t.Fatalf("one minute after the leave: counts %s, sidebar:\n%s", counts(now), got)
+	}
+	if at := now.Add(4*time.Minute - time.Second); !listed(at) {
+		t.Fatalf("one second before five minutes after the leave, bob is not listed:\n%s", sidebar(at))
+	}
+	late := now.Add(4 * time.Minute)
+	if listed(late) || counts(late) != "2/2" {
+		t.Fatalf("five minutes after the leave: counts %s, sidebar:\n%s", counts(late), sidebar(late))
+	}
+	// The agent stays known, so that :forget and the history find it.
+	if s.View("build-42").Agents["bob@vps-2"] == nil {
+		t.Fatal("AgentList lost the agent that left")
+	}
+
+	// The operator forgets bob: he goes at once, also inside the five minutes.
+	act(501, wire.Activity{Kind: "forgotten", At: iso(now)})
+	if listed(now) || counts(now) != "2/2" {
+		t.Fatalf("after the forget: counts %s, sidebar:\n%s", counts(now), sidebar(now))
+	}
+
+	// bob joins again: he is listed again.
+	act(502, wire.Activity{Kind: "joined", Host: "vps-2", Cwd: "/srv/api", Client: wire.Client{Name: "codex", Version: "0.9"}, At: iso(now)})
+	s.Apply(model.Update{Presence: &wire.PresenceUpdate{Key: "build-42.vps-2.bob", Revision: 1001, Record: &wire.PresenceRecord{Host: "vps-2", Cwd: "/srv/api", State: "idle", JoinedAt: iso(now)}}})
+	if !listed(late) || counts(late) != "3/3" {
+		t.Fatalf("after the new join: counts %s, sidebar:\n%s", counts(late), sidebar(late))
+	}
+}
+
+// A held or paused agent shows its gate in place of its own state, and counts as something
+// that needs the operator while it is held. An agent with no gate hook shows "soft": the gate
+// is only advice to it. The name stays whole.
+func TestTheSidebarShowsTheGate(t *testing.T) {
+	s := store()
+	now := modeltest.Now
+	gate := func(seq int64, from, g string) {
+		s.Apply(model.Update{Event: &wire.Event{Kind: wire.EventActivity, Seq: seq, SID: "build-42", From: from, Activity: &wire.Activity{Kind: "gate", Gate: g, At: modeltest.At(80)}}})
+	}
+	gate(500, "bob@vps-2", "held")
+	gate(501, "carol@mac-3", "paused")
+	// bob was started with the gate; carol was not.
+	s.Apply(model.Update{Presence: &wire.PresenceUpdate{Key: "build-42.vps-2.bob", Revision: 1000, Record: &wire.PresenceRecord{Host: "vps-2", Cwd: "/srv/api", State: "working", JoinedAt: modeltest.At(2), Gated: true}}})
+	v := s.View("build-42")
+	agents := view.Listed(v, now)
+	sums := view.Summaries(s, now)
+	width := view.SidebarWidth(sums, agents, 40, now)
+	sb := view.RenderSidebar(sums, agents, view.Selection{SID: "build-42", Cursor: -1, Hold: true}, width, now)
+	got := strings.Join(texts(sb.Rendered), "\n")
+	for _, want := range []string{"new agents are held (H)", "● alice@mac-1 working", "● bob@vps-2 held", "● carol@mac-3 paused (soft) ⏳"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "bob@vps-2 held (soft)") {
+		t.Errorf("a gated agent shows as soft:\n%s", got)
+	}
+	sb = view.RenderSidebar(sums, agents, view.Selection{SID: "build-42", Cursor: -1}, width, now)
+	if got := strings.Join(texts(sb.Rendered), "\n"); !strings.Contains(got, "new agents start at once (H)") {
+		t.Errorf("hold off:\n%s", got)
+	}
+	// The attention line counts the held agent, not the paused one.
+	items := view.Attention(v, now)
+	held := 0
+	for _, it := range items {
+		if it.Kind == "held" {
+			held++
+			if it.Address != "bob@vps-2" || view.Describe(it) != "bob@vps-2 is held: g releases it" {
+				t.Errorf("held item %+v: %s", it, view.Describe(it))
+			}
+		}
+	}
+	if line := view.Plain(view.RenderAttention(items, now)); held != 1 || !strings.Contains(line, "1 held") {
+		t.Errorf("%d held items, line %q", held, line)
+	}
+	// The details say what the gate means, and that carol has no gate hook.
+	if lines := strings.Join(texts(view.RenderAgent(v, "bob@vps-2", opts(110))), "\n"); !strings.Contains(lines, "held: it does no work until you release it (g)") || strings.Contains(lines, "no gate:") {
+		t.Errorf("details of bob:\n%s", lines)
+	}
+	if lines := strings.Join(texts(view.RenderAgent(v, "carol@mac-3", opts(110))), "\n"); !strings.Contains(lines, "paused: it does no work until you resume it (p)") || !strings.Contains(lines, "no gate: this agent was not started with coop claude") {
+		t.Errorf("details of carol:\n%s", lines)
+	}
+}
+
 // Asked for by the operator: a second session that asks for a name in use shows under the agent
 // that holds the name, for five minutes after its last try.
 func TestADuplicateSessionShowsUnderTheAgentThatHoldsTheName(t *testing.T) {

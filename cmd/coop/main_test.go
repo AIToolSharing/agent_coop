@@ -74,6 +74,7 @@ func TestProbeTokenTellsTheRole(t *testing.T) {
 func TestLoginStoresTheTokenUnderTheKeyOfItsRole(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	srv := hub(t, "op.1", "mac.2")
 	var out, errOut bytes.Buffer
 	if code := run([]string{"login", srv.URL + "/", "op.1"}, &out, &errOut); code != 0 {
@@ -125,13 +126,24 @@ func TestSessionWritesTheProjectFile(t *testing.T) {
 }
 
 func TestClaudeCommandLine(t *testing.T) {
-	session, argv := claudeCommand([]string{"build-42", "--model", "opus"}, map[string]string{})
-	if session != "build-42" || strings.Join(argv, " ") != "claude --dangerously-load-development-channels server:coop --model opus" {
-		t.Fatalf("%q %v", session, argv)
+	session, argv, err := claudeCommand([]string{"build-42", "--model", "opus"}, map[string]string{}, "")
+	if err != nil || session != "build-42" || strings.Join(argv, " ") != "claude --dangerously-load-development-channels server:coop --model opus" {
+		t.Fatalf("%q %v %v", session, argv, err)
 	}
-	session, argv = claudeCommand([]string{"-p", "hi"}, map[string]string{"COOP_CHANNEL": "plugin:coop@coop"})
-	if session != "" || strings.Join(argv, " ") != "claude --dangerously-load-development-channels plugin:coop@coop -p hi" {
-		t.Fatalf("%q %v", session, argv)
+	session, argv, err = claudeCommand([]string{"-p", "hi"}, map[string]string{"COOP_CHANNEL": "plugin:coop@coop"}, "")
+	if err != nil || session != "" || strings.Join(argv, " ") != "claude --dangerously-load-development-channels plugin:coop@coop -p hi" {
+		t.Fatalf("%q %v %v", session, argv, err)
+	}
+	// The settings with the gate hook come before the user's arguments.
+	_, argv, err = claudeCommand([]string{"-p", "hi"}, map[string]string{}, `{"hooks":{}}`)
+	if err != nil || strings.Join(argv, " ") != `claude --dangerously-load-development-channels server:coop --settings {"hooks":{}} -p hi` {
+		t.Fatalf("%v %v", argv, err)
+	}
+	// Claude Code takes one --settings: a second one is refused, not dropped.
+	for _, args := range [][]string{{"--settings", "x.json"}, {"-p", "hi", "--settings=x.json"}} {
+		if _, _, err := claudeCommand(args, map[string]string{}, `{"hooks":{}}`); err == nil || !strings.Contains(err.Error(), "--settings") {
+			t.Fatalf("%v: error %v", args, err)
+		}
 	}
 }
 
@@ -165,6 +177,7 @@ func (f *fakeClaude) install(t *testing.T, exe string) {
 func TestSetupRegistersTheBinaryAndWritesTheSkill(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	f := &fakeClaude{}
 	f.install(t, "/opt/coop/coop")
 	var out, errOut bytes.Buffer
@@ -181,11 +194,20 @@ func TestSetupRegistersTheBinaryAndWritesTheSkill(t *testing.T) {
 	if !strings.Contains(out.String(), "registered coop with Claude Code") || !strings.Contains(out.String(), "coop login") {
 		t.Fatalf("stdout %q", out.String())
 	}
+	// The gate hook is in the user's settings: a session that another tool starts (Herdr's
+	// agent start, a plain claude) is then gated too.
+	settings := filepath.Join(home, ".claude", "settings.json")
+	if text, err := os.ReadFile(settings); err != nil || !hookInstalled(text, "/opt/coop/coop") || !strings.Contains(out.String(), "added the gate hook to "+settings) {
+		t.Fatalf("settings: %v %q\nstdout %q", err, text, out.String())
+	}
 	// A second run with the same binary changes nothing.
 	f.calls = nil
 	out.Reset()
 	if code := run([]string{"setup"}, &out, &errOut); code != 0 || strings.Join(f.calls, " | ") != "mcp get coop" {
 		t.Fatalf("second run: code %d calls %v", code, f.calls)
+	}
+	if !strings.Contains(out.String(), "the gate hook is in "+settings) {
+		t.Fatalf("second run stdout %q", out.String())
 	}
 	// A registration that points elsewhere is replaced.
 	f.registered = "/old/coop"
@@ -198,6 +220,7 @@ func TestSetupRegistersTheBinaryAndWritesTheSkill(t *testing.T) {
 func TestDoctorReportsEachStep(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("COOP_SESSION", "")
 	t.Setenv("COOP_AGENT", "")
 	t.Setenv("CLAUDE_PROJECT_DIR", "")
@@ -248,6 +271,7 @@ func TestMCPOptionsFollowTheConfiguration(t *testing.T) {
 func TestLoginPinsASelfSignedHubAndDoctorUsesThePin(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("COOP_SESSION", "")
 	t.Setenv("COOP_AGENT", "")
 	srv := httptest.NewTLSServer(hub(t, "op.1", "mac.2").Config.Handler)
