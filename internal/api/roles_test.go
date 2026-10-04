@@ -83,7 +83,11 @@ func TestEachRoleReachesOnlyItsRoutes(t *testing.T) {
 			} else {
 				status, body = httpCall(h.base, tok, method, path, map[string]any{})
 			}
-			refused := status == http.StatusForbidden && strings.Contains(string(body), "a "+role+" token cannot")
+			article := "a "
+			if role == wire.RoleOperator || role == wire.RoleOrchestrator {
+				article = "an "
+			}
+			refused := status == http.StatusForbidden && strings.Contains(string(body), article+role+" token cannot")
 			allowed := false
 			for _, r := range may {
 				allowed = allowed || r == role

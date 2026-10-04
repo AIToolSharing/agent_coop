@@ -215,7 +215,11 @@ func (s *Server) auth(r *http.Request, k kind) (hub.Owner, error) {
 			return owner, nil
 		}
 	}
-	return owner, &hub.Error{Code: "forbidden", Message: "a " + owner.Role + " token " + refusal[k]}
+	article := "a "
+	if strings.ContainsRune("aeiou", rune(owner.Role[0])) {
+		article = "an "
+	}
+	return owner, &hub.Error{Code: "forbidden", Message: article + owner.Role + " token " + refusal[k]}
 }
 
 type handler func(w http.ResponseWriter, r *http.Request, owner hub.Owner, sid string)
