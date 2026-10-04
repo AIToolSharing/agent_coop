@@ -8,9 +8,11 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
-// Took is a short length of time from milliseconds: 0.4s, 42s, 3m12s.
+// Took is a short length of time from milliseconds: 40ms, 1.4s, 42s, 3m12s.
 func Took(ms int64) string {
 	switch {
+	case ms < 1000:
+		return itoa(ms) + "ms"
 	case ms < 10_000:
 		return itoa(ms/1000) + "." + itoa(ms%1000/100) + "s"
 	case ms < 60_000:
@@ -48,8 +50,9 @@ type actKey struct {
 
 // activityLines draws trace items, oldest first. A tool call is one entry, at the place where
 // it started, with its result when it has one. The words of an agent and the prompts are
-// whole, wrapped to the width.
-func activityLines(acts []model.Act, o Options, all bool) []Line {
+// whole, wrapped to the width. names false leaves the name of the agent out: the details of
+// one agent do not need it.
+func activityLines(acts []model.Act, o Options, all, names bool) []Line {
 	starts, ends := map[actKey]bool{}, map[actKey]wire.TraceItem{}
 	running := map[actKey]bool{}
 	nameW := 0
@@ -72,6 +75,9 @@ func activityLines(acts []model.Act, o Options, all bool) []Line {
 		nameW = max(nameW, Width(who(x.Agent, all)))
 	}
 	nameW = min(nameW, 28)
+	if !names {
+		nameW = 0
+	}
 	var out []Line
 	for _, x := range acts {
 		it, k := x.Item, actKey{x.Agent, x.Item.ID}
@@ -115,7 +121,11 @@ func activityLines(acts []model.Act, o Options, all bool) []Line {
 		default:
 			mark, body = S("  "), it.Text
 		}
-		lead := Line{Dim(Clock(it.At, o.loc()) + "  "), Bold(Cut(who(x.Agent, all), nameW)), S("  "), mark}
+		lead := Line{Dim(Clock(x.At, o.loc()) + "  ")}
+		if names {
+			lead = append(lead, Bold(Cut(who(x.Agent, all), nameW)), S("  "))
+		}
+		lead = append(lead, mark)
 		pad := strings.Repeat(" ", Width(Plain(lead)))
 		lines := Wrap(body+tail, max(10, o.Width-len(pad)))
 		for i, text := range lines {
@@ -147,7 +157,7 @@ func who(a *model.Agent, all bool) string {
 // RenderActivity shows what the agents of the view do at their terminals: tool calls, their
 // own words, and the prompts that a person typed there. Oldest first.
 func RenderActivity(v *model.Session, o Options) Rendered {
-	lines := activityLines(v.Activity(), o, v.SID == model.AllSessions)
+	lines := activityLines(v.Activity(), o, v.SID == model.AllSessions, true)
 	if len(lines) == 0 {
 		return Note("no activity yet: an agent that coop claude started reports its tool calls and its words here", o.Width)
 	}
@@ -176,10 +186,7 @@ func agentTrace(v *model.Session, a *model.Agent, o Options, add func(Line, stri
 			add(l, "")
 		}
 	}
-	var acts []model.Act
-	for _, it := range a.Trace.Items {
-		acts = append(acts, model.Act{Agent: a, Item: it})
-	}
+	acts := a.Activity()
 	if len(acts) == 0 {
 		return
 	}
@@ -191,7 +198,7 @@ func agentTrace(v *model.Session, a *model.Agent, o Options, add func(Line, stri
 	add(Line{S("")}, "")
 	add(Line{Bold(title)}, "")
 	o.Agent, o.Search = "", ""
-	for _, l := range activityLines(acts, o, false) {
+	for _, l := range activityLines(acts, o, false, false) {
 		add(l, "")
 	}
 }

@@ -113,6 +113,11 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 	} else {
 		note("no gate hook in " + claudeSettingsPath() + ": only sessions started with coop claude are gated; run coop setup")
 	}
+	if missing := hooksMissing(readUserSettings(), executable()); len(missing) == 0 {
+		ok("activity hooks in " + claudeSettingsPath() + ": the operator sees the tool calls and the words of each agent")
+	} else if len(missing) < len(hookEvents) {
+		note("some hooks of coop are not in " + claudeSettingsPath() + ": only sessions started with coop claude report all their activity; run coop setup")
+	}
 	if cfg.Push {
 		ok("COOP_PUSH=1: this process advertises the channel")
 	}

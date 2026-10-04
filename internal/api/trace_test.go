@@ -44,7 +44,7 @@ func TestTrace(t *testing.T) {
 		feed.wait(t, eventIs("snapshot"))
 
 		wantStatus(t, 204)(mac.trace(sid, map[string]any{"agent": "alice", "branch": "main", "items": items(
-			map[string]any{"kind": "say", "id": "u1", "text": "I run the tests now."},
+			map[string]any{"kind": "say", "id": "u1", "text": "I run the tests now.", "before": "t1"},
 			map[string]any{"kind": "tool_start", "id": "t1", "tool": "Bash", "text": "go test ./..."},
 		)}))
 		u := data[traceEvent](t, feed.wait(t, isTrace(sid+".mac-1.alice")))
@@ -52,7 +52,7 @@ func TestTrace(t *testing.T) {
 			t.Fatalf("trace event %+v, want a boot, branch main and 2 items", u)
 		}
 		say, start := u.Items[0], u.Items[1]
-		if say.Kind != "say" || say.Text != "I run the tests now." || start.Tool != "Bash" || start.Text != "go test ./..." {
+		if say.Kind != "say" || say.Text != "I run the tests now." || say.Before != "t1" || start.Tool != "Bash" || start.Text != "go test ./..." {
 			t.Fatalf("items %+v", u.Items)
 		}
 		if say.N < 1 || start.N != say.N+1 || !wire.IsTime(say.At) {

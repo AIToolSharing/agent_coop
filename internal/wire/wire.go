@@ -457,6 +457,9 @@ type TraceItem struct {
 	File string `json:"file,omitempty"`
 	// Final: the words end a turn of the agent.
 	Final bool `json:"final,omitempty"`
+	// Before is the ID of the tool call that the words stand before. The hook can read the
+	// words only after the call, so they get a later number than the start of the call.
+	Before string `json:"before,omitempty"`
 }
 
 // TraceFile is one file that an agent changed.

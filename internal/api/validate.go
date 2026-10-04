@@ -214,6 +214,7 @@ type traceItemBody struct {
 	MS     optInt    `json:"ms"`
 	File   optString `json:"file"`
 	Final  optBool   `json:"final"`
+	Before optString `json:"before"`
 }
 
 type traceBody struct {
@@ -240,8 +241,8 @@ func parseTrace(body []byte) (hub.TraceRequest, error) {
 		switch {
 		case !wire.IsTraceKind(it.Kind):
 			return r, invalid("kind: tool_start, tool_end, say or prompt")
-		case runes(it.ID.val) > wire.MaxTraceName, runes(it.Tool.val) > wire.MaxTraceName:
-			return r, invalid("id and tool: at most 128 characters")
+		case runes(it.ID.val) > wire.MaxTraceName, runes(it.Tool.val) > wire.MaxTraceName, runes(it.Before.val) > wire.MaxTraceName:
+			return r, invalid("id, tool and before: at most 128 characters")
 		case runes(it.Text.val) > wire.MaxTraceText:
 			return r, invalid("text: at most 2000 characters")
 		case runes(it.File.val) > wire.MaxTracePath:
@@ -251,7 +252,7 @@ func parseTrace(body []byte) (hub.TraceRequest, error) {
 		}
 		r.Items = append(r.Items, wire.TraceItem{
 			Kind: it.Kind, ID: it.ID.val, Tool: it.Tool.val, Text: it.Text.val,
-			Failed: it.Failed.val, MS: it.MS.val, File: it.File.val, Final: it.Final.val,
+			Failed: it.Failed.val, MS: it.MS.val, File: it.File.val, Final: it.Final.val, Before: it.Before.val,
 		})
 	}
 	return r, nil

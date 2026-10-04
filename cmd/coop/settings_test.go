@@ -58,7 +58,7 @@ func TestInstallHookAddsOneEntryAndKeepsTheRest(t *testing.T) {
 		t.Fatalf("top-level keys %v", got)
 	}
 	top, _ := members(out)
-	if got := keysOf(t, get(top, "hooks")); strings.Join(got, ",") != "SessionStart,PreToolUse,Stop" {
+	if got := keysOf(t, get(top, "hooks")); strings.Join(got, ",") != "SessionStart,PreToolUse,Stop,PostToolUse,PostToolUseFailure,UserPromptSubmit" {
 		t.Fatalf("hook events %v", got)
 	}
 	var groups []json.RawMessage
@@ -247,5 +247,41 @@ func TestInstallHookFileKeepsACopyAndTheMode(t *testing.T) {
 		if strings.HasPrefix(e.Name(), ".settings-") {
 			t.Fatalf("left over: %s", e.Name())
 		}
+	}
+}
+
+// A machine with coop v0.4.0 has only the gate hook in its settings. The next `coop setup`
+// adds the hooks that report what the agent does, and leaves one gate hook. Until then,
+// `coop claude` gives the hooks that the file does not have with --settings, and no others:
+// a hook that is there two times would run two times.
+func TestHooksOfAnOlderSetupAreCompleted(t *testing.T) {
+	old := `{"hooks":{"PreToolUse":[{"matcher":"","hooks":[{"type":"command","command":"'/home/u/.local/bin/coop' hook pretool","timeout":30}]}]}}`
+	missing := hooksMissing([]byte(old), exeA)
+	var events []string
+	for _, e := range missing {
+		events = append(events, e.event)
+	}
+	if strings.Join(events, ",") != "PostToolUse,PostToolUseFailure,UserPromptSubmit,Stop" || !hookInstalled([]byte(old), exeA) {
+		t.Fatalf("missing %v, gate hook installed %v", events, hookInstalled([]byte(old), exeA))
+	}
+	if s := hookSettings(exeA, missing); strings.Contains(s, "PreToolUse") || strings.Count(s, " hook ") != 4 {
+		t.Fatalf("settings for coop claude: %s", s)
+	}
+	out, changed, err := installHook([]byte(old), exeA)
+	if err != nil || !changed || len(hooksMissing(out, exeA)) != 0 || strings.Count(string(out), "hook pretool") != 1 {
+		t.Fatalf("changed %v err %v\n%s", changed, err, out)
+	}
+	// No settings: each hook is missing. The binary at another path: each hook is replaced.
+	if n := len(hooksMissing(nil, exeA)); n != len(hookEvents) {
+		t.Fatalf("%d hooks missing with no settings, want %d", n, len(hookEvents))
+	}
+	moved, changed, err := installHook(out, exeB)
+	if err != nil || !changed || len(hooksMissing(moved, exeB)) != 0 || strings.Contains(string(moved), exeA) {
+		t.Fatalf("moved binary: changed %v err %v\n%s", changed, err, moved)
+	}
+	// The Stop hook of another tool stays, before the hook of coop.
+	withStop, _, err := installHook([]byte(userSettings), exeA)
+	if err != nil || !strings.Contains(string(withStop), "verify-done.sh") || strings.Index(string(withStop), "verify-done.sh") > strings.Index(string(withStop), "hook stop") {
+		t.Fatalf("err %v\n%s", err, withStop)
 	}
 }

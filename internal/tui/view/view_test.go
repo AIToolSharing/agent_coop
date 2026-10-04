@@ -542,9 +542,11 @@ func traced() *model.Store {
 	}
 	words := "I will run the tests first, and then I will change the parser so that it reads the new header."
 	s.Apply(model.Update{Trace: &wire.TraceUpdate{Boot: 1, Key: key(modeltest.Alice), Branch: "fix-parser", Items: []wire.TraceItem{
-		{N: 1, At: modeltest.At(200), Kind: wire.TraceSay, ID: "u1", Text: words},
-		{N: 2, At: modeltest.At(201), Kind: wire.TraceToolStart, ID: "t1", Tool: "Bash", Text: "go test ./..."},
-		{N: 3, At: modeltest.At(215), Kind: wire.TraceToolEnd, ID: "t1", Tool: "Bash", Text: "go test ./...", MS: 14200},
+		// The hook reads the words after the tool call: they have the number 3 and stand
+		// before the call.
+		{N: 1, At: modeltest.At(201), Kind: wire.TraceToolStart, ID: "t1", Tool: "Bash", Text: "go test ./..."},
+		{N: 2, At: modeltest.At(215), Kind: wire.TraceToolEnd, ID: "t1", Tool: "Bash", Text: "go test ./...", MS: 14200},
+		{N: 3, At: modeltest.At(215), Kind: wire.TraceSay, ID: "u1", Text: words, Before: "t1"},
 		{N: 6, At: modeltest.At(230), Kind: wire.TraceToolEnd, ID: "t2", Tool: "Edit", Text: "src/parser.go", MS: 40, File: "src/parser.go"},
 		{N: 7, At: modeltest.At(286), Kind: wire.TraceToolStart, ID: "t3", Tool: "Bash", Text: "make build"},
 	}, Files: []wire.TraceFile{{Path: "src/parser.go", Count: 2, At: modeltest.At(230)}, {Path: "README.md", Count: 1, At: modeltest.At(220)}}}})
@@ -581,7 +583,7 @@ func TestActivityShowsToolCallsWithTheirResultAndWholeWords(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	for _, want := range []string{
 		"12:03:21  alice@mac-1  ✓ Bash: go test ./... 14s",  // ended: how long it ran
-		"12:03:50  alice@mac-1  ✓ Edit: src/parser.go 0.0s", // an end with no start in the trace
+		"12:03:50  alice@mac-1  ✓ Edit: src/parser.go 40ms", // an end with no start in the trace
 		"12:04:46  alice@mac-1  ▸ Bash: make build 14s …",   // runs now
 		"12:03:40  bob@vps-2    » also fix the header",      // a prompt of a person
 		"12:03:45  bob@vps-2    ✗ Edit: src/parser.go 1m5s", // failed
@@ -592,8 +594,10 @@ func TestActivityShowsToolCallsWithTheirResultAndWholeWords(t *testing.T) {
 			t.Errorf("missing %q in\n%s", want, joined)
 		}
 	}
-	// Oldest first, in the order the hub got the items, over all agents.
-	if !(strings.Index(joined, "I will run") < strings.Index(joined, "also fix") && strings.Index(joined, "also fix") < strings.Index(joined, "make build")) {
+	// Oldest first, over all agents. The words that stand before a tool call come before it,
+	// with its time.
+	if !strings.Contains(joined, "12:03:21  alice@mac-1    I will run") || !(strings.Index(joined, "I will run") < strings.Index(joined, "go test") &&
+		strings.Index(joined, "go test") < strings.Index(joined, "also fix") && strings.Index(joined, "also fix") < strings.Index(joined, "make build")) {
 		t.Errorf("the items are not in the order of their numbers:\n%s", joined)
 	}
 
@@ -650,7 +654,7 @@ func TestAgentDetailsShowTheTrace(t *testing.T) {
 		"src/parser.go  ×2  1m ago  also bob@vps-2",
 		"README.md  ×1  1m ago",
 		"ACTIVITY",
-		"✓ Bash: go test ./... 14s",
+		"12:03:21  ✓ Bash: go test ./... 14s", // no name: the details are of one agent
 		"TIMELINE",
 	} {
 		if !strings.Contains(joined, want) {

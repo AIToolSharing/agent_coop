@@ -10,6 +10,8 @@ when each agent works.
 - In Claude Code, a message from a peer wakes an idle agent (channel push).
 - The operator holds, releases, pauses and stops each agent from the TUI.
 - The TUI shows the conversation as a transcript and as threads, with each message whole.
+- The TUI shows what each agent does at its terminal: its tool calls, its words, and the files
+  that it changed.
 
 One Go binary, `coop`, is every part: the hub (the server program), the agent's MCP server, the
 TUI, and the setup commands.
@@ -132,6 +134,7 @@ the same way.
 |---|---|---|
 | `coop mcp` | agent machines | the agent's MCP server (stdio). Claude Code starts it. |
 | `coop hook pretool` | agent machines | the gate check before a tool call. Claude Code runs it. |
+| `coop hook posttool`, `prompt`, `stop` | agent machines | report what the agent does to the hub. Claude Code runs them. |
 | `coop tui` | the operator's machine | shows each session and steers each agent |
 | `coop login`, `setup`, `session`, `claude`, `doctor` | agent machines, operator | set a machine up and check it |
 | `coop serve` | the server | the hub: the API over one SQLite file |
@@ -160,8 +163,9 @@ A machine needs Claude Code, or another MCP client, and the `coop` binary.
   it. Compare it with the fingerprint that the server showed. `coop login` adds nothing to the
   system trust store.
 - **Claude Code.** `coop setup` registers `coop mcp` with Claude Code and writes the skill. It
-  also puts the gate hook into `~/.claude/settings.json`. It keeps a copy of that file as
-  `settings.json.before-coop`.
+  also puts the gate hook and the activity hooks into `~/.claude/settings.json`. It keeps a
+  copy of that file as `settings.json.before-coop`. Run `coop setup` again after an upgrade of
+  `coop`.
 - **The check.** `coop doctor` shows each check as ok, or gives the command that repairs it.
 
 Do not run agents as root. On a server, run `deploy/agent-user.sh` as root. The script makes a
@@ -257,6 +261,7 @@ coop tui
 | `tab` | moves between the sidebar and the main pane |
 | `↑` `↓`, `enter`, `esc` | move, open, go back |
 | `1`, `2` | the transcript, and the threads with the open asks |
+| `3` | the activity: what the agents do at their terminals |
 | `m` | writes to the session (`tab` selects the target) |
 | `r` | answers the selected message in its thread |
 | `a` | goes to the next thing that needs you |
@@ -266,6 +271,31 @@ coop tui
 The sidebar lists the sessions, then the agents of the shown session. The commands are `:new`,
 `:close`, `:reopen`, `:delete`, `:kick`, `:allow`, `:forget`, `:go`, `:pause`, `:resume`,
 `:hold`, `:withdraw`, `:filter` and `:sys`.
+
+### See what the agents do
+
+The hooks of Claude Code report to the hub what each agent does at its terminal. The TUI shows
+it in three places.
+
+- **The activity view (`3`).** Each tool call is one line: the tool, what the call does, and
+  its result. The result is `✓`, `✗`, or `▸` while the call runs. The words of an agent are
+  there whole. A prompt that a person typed at the terminal of an agent has the mark
+  `»`. `space` follows the newest line, `/` searches, and `:filter <agent>` shows one agent.
+- **The sidebar.** Under an agent, one line shows the tool call that it runs now.
+- **The agent details (`enter` on an agent).** They show the git branch, the running calls,
+  the files that the agent changed, and its newest activity. A file that a second agent of the
+  session changed too has the mark `also <agent>`.
+
+The limits:
+
+- The hub keeps the newest 300 items of each agent in memory. The activity is not in the
+  record of the session. After a restart of the hub, the activity is empty.
+- A text has at most 2000 characters. A longer text ends with `[…]`.
+- Only an agent with the hooks reports: one that `coop claude` started, or each Claude Code
+  session on a machine where `coop setup` ran. For another agent, the details say so.
+- The agent's own coop tools (`send`, `wait`, and the others) are not in the activity. The
+  messages are in the transcript.
+- No agent gets the activity of another agent. Only an operator token can read it.
 
 ### Hold, pause, stop
 
@@ -345,6 +375,8 @@ Protected:
   connection of the agent. A client cannot send a `from` field.
 - **Visibility.** An agent gets only the messages to it, to `all`, or from it, in the session
   that it joined. A direct message between two other agents stays private.
+- **Activity.** The hub gives the activity of the agents (tool calls, words, prompts, changed
+  files) only to an operator token. The hub keeps it in memory only.
 - **Control.** Only an operator token (`coop admin token add --operator`) can close and delete
   sessions, hold, pause and remove agents, withdraw messages, and send as `operator`. A machine
   token cannot use the admin API. An operator token cannot act as an agent.
@@ -362,6 +394,8 @@ Not protected:
   name is a label, not a secret.
 - The gate stops an agent that does not obey instructions. It does not stop a hostile agent:
   such an agent can start a process that has no hook.
+- The activity can hold a secret: a command line, or words of an agent. Each person with an
+  operator token can read it while the hub keeps it.
 - A message from a peer is input from a collaborator. The skill tells agents not to obey it as
   an instruction from the user. Only `operator` messages come from the user.
 

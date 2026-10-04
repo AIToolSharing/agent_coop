@@ -18,7 +18,7 @@ import (
 const defaultChannel = "server:coop"
 
 // claudeCommand builds the Claude Code command line: the channel flag, the settings that hold
-// the gate hook, then the user's arguments. A first argument that is a session name selects
+// the hooks of coop, then the user's arguments. A first argument that is a session name selects
 // the session for this run. settings "" adds no settings.
 func claudeCommand(args []string, env map[string]string, settings string) (session string, argv []string, err error) {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") && wire.IsToken(args[0]) {
@@ -66,11 +66,13 @@ func launchEnv(env map[string]string, session string, cfg func(map[string]string
 // session only through the channel flag during the research preview of channels. The hook
 // asks the hub before each tool call whether the operator lets the agent work.
 func cmdClaude(args []string, stderr io.Writer) int {
-	// The settings file of the user can hold the hook already (coop setup). A second copy
-	// from --settings would ask the hub two times for each tool call.
+	// The settings file of the user can hold the hooks already (coop setup). A second copy
+	// from --settings would ask the hub two times for each tool call. So --settings gets only
+	// the hooks that the file does not have.
 	settings := ""
-	if exe := executable(); !hookInSettings(exe) {
-		settings = hookSettings(exe)
+	exe := executable()
+	if missing := hooksMissing(readUserSettings(), exe); len(missing) > 0 {
+		settings = hookSettings(exe, missing)
 	}
 	session, argv, err := claudeCommand(args, environ(), settings)
 	if err != nil {

@@ -159,12 +159,22 @@ func TestHookOutputAndSettingsAreWhatClaudeCodeReads(t *testing.T) {
 			} `json:"hooks"`
 		} `json:"hooks"`
 	}
-	if err := json.Unmarshal([]byte(hookSettings("/opt/my tools/it's/coop")), &s); err != nil {
+	if err := json.Unmarshal([]byte(hookSettings("/opt/my tools/it's/coop", hookEvents)), &s); err != nil {
 		t.Fatal(err)
 	}
 	pre := s.Hooks["PreToolUse"]
 	if len(pre) != 1 || pre[0].Matcher != "" || len(pre[0].Hooks) != 1 {
 		t.Fatalf("%+v", s)
+	}
+	// The hooks that report what the agent does: one for each event, with the hook's name.
+	for event, arg := range map[string]string{"PostToolUse": "posttool", "PostToolUseFailure": "posttool", "UserPromptSubmit": "prompt", "Stop": "stop"} {
+		g := s.Hooks[event]
+		if len(g) != 1 || len(g[0].Hooks) != 1 || !strings.HasSuffix(g[0].Hooks[0].Command, "coop' hook "+arg) || time.Duration(g[0].Hooks[0].Timeout)*time.Second <= traceDeadline {
+			t.Fatalf("%s: %+v", event, g)
+		}
+	}
+	if len(s.Hooks) != len(hookEvents) {
+		t.Fatalf("%d events, want %d", len(s.Hooks), len(hookEvents))
 	}
 	h := pre[0].Hooks[0]
 	// The path is quoted for the shell, and Claude Code waits longer than the hook's own limit.

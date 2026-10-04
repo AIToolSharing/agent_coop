@@ -194,10 +194,10 @@ func TestSetupRegistersTheBinaryAndWritesTheSkill(t *testing.T) {
 	if !strings.Contains(out.String(), "registered coop with Claude Code") || !strings.Contains(out.String(), "coop login") {
 		t.Fatalf("stdout %q", out.String())
 	}
-	// The gate hook is in the user's settings: a session that another tool starts (Herdr's
-	// agent start, a plain claude) is then gated too.
+	// The hooks are in the user's settings: a session that another tool starts (Herdr's
+	// agent start, a plain claude) is then gated too, and reports what it does.
 	settings := filepath.Join(home, ".claude", "settings.json")
-	if text, err := os.ReadFile(settings); err != nil || !hookInstalled(text, "/opt/coop/coop") || !strings.Contains(out.String(), "added the gate hook to "+settings) {
+	if text, err := os.ReadFile(settings); err != nil || len(hooksMissing(text, "/opt/coop/coop")) != 0 || !strings.Contains(out.String(), "added the gate hook and the activity hooks to "+settings) {
 		t.Fatalf("settings: %v %q\nstdout %q", err, text, out.String())
 	}
 	// A second run with the same binary changes nothing.
@@ -206,7 +206,7 @@ func TestSetupRegistersTheBinaryAndWritesTheSkill(t *testing.T) {
 	if code := run([]string{"setup"}, &out, &errOut); code != 0 || strings.Join(f.calls, " | ") != "mcp get coop" {
 		t.Fatalf("second run: code %d calls %v", code, f.calls)
 	}
-	if !strings.Contains(out.String(), "the gate hook is in "+settings) {
+	if !strings.Contains(out.String(), "the gate hook and the activity hooks are in "+settings) {
 		t.Fatalf("second run stdout %q", out.String())
 	}
 	// A registration that points elsewhere is replaced.

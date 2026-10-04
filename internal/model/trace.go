@@ -93,22 +93,63 @@ func (t *Trace) FileList() []wire.TraceFile {
 	return out
 }
 
-// Act is one trace item with the agent that it is of.
+// Act is one trace item with the agent that it is of. At is the time that the item has in
+// the order of what happened.
 type Act struct {
 	Agent *Agent
 	Item  wire.TraceItem
+	At    string
+	// place is the number that the item is sorted by; early puts it before the item that
+	// has this number.
+	place int64
+	early bool
 }
 
-// Activity gives the trace items of every agent of the view, in the order the hub got them.
+// acts gives the trace items of one agent. The hub numbers the items as it gets them. Words
+// that stand before a tool call arrive after the start of the call: they get the place and
+// the time of that start.
+func (a *Agent) acts() []Act {
+	starts := map[string]wire.TraceItem{}
+	for _, it := range a.Trace.Items {
+		if it.Kind == wire.TraceToolStart {
+			starts[it.ID] = it
+		}
+	}
+	out := make([]Act, 0, len(a.Trace.Items))
+	for _, it := range a.Trace.Items {
+		x := Act{Agent: a, Item: it, At: it.At, place: it.N}
+		if start, ok := starts[it.Before]; ok && it.Kind == wire.TraceSay && start.N < it.N {
+			x.At, x.place, x.early = start.At, start.N, true
+		}
+		out = append(out, x)
+	}
+	return out
+}
+
+func sortActs(out []Act) []Act {
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.place != b.place {
+			return a.place < b.place
+		}
+		if a.early != b.early {
+			return a.early
+		}
+		return a.Item.N < b.Item.N
+	})
+	return out
+}
+
+// Activity gives the trace items of the agent in the order of what happened.
+func (a *Agent) Activity() []Act { return sortActs(a.acts()) }
+
+// Activity gives the trace items of every agent of the view in the order of what happened.
 func (v *Session) Activity() []Act {
 	var out []Act
 	for _, a := range v.Agents {
-		for _, it := range a.Trace.Items {
-			out = append(out, Act{Agent: a, Item: it})
-		}
+		out = append(out, a.acts()...)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Item.N < out[j].Item.N })
-	return out
+	return sortActs(out)
 }
 
 // trace gives the trace of the agent with this presence key, and makes it at the first use.

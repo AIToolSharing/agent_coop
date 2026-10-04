@@ -1784,6 +1784,10 @@
                         },
                         "final": {
                           "type": "boolean"
+                        },
+                        "before": {
+                          "type": "string",
+                          "maxLength": 128
                         }
                       },
                       "required": [

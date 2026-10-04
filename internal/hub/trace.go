@@ -14,6 +14,7 @@ const (
 	traceRing   = 300 // items that the hub keeps for one agent
 	traceFiles  = 200 // changed files that the hub keeps for one agent
 	traceAgents = 100 // agents that the hub keeps a trace for
+	traceSaid   = 64  // ids of words that the hub keeps for one agent, to know a repeat
 )
 
 // TraceRequest is one report of a hook.
@@ -28,12 +29,16 @@ type traceLog struct {
 	items  []wire.TraceItem // oldest first, at most traceRing
 	files  map[string]wire.TraceFile
 	branch string
+	// said holds the ids of the newest say items, oldest first. A hook reports the newest
+	// words again at each tool call, because Claude Code writes them to its transcript late.
+	// The ids outlive the items: words that left the log must not come back as new.
+	said []string
 }
 
-// has reports whether the log holds a say item with this id.
+// has reports whether the log got a say item with this id lately.
 func (l *traceLog) has(id string) bool {
-	for i := range l.items {
-		if l.items[i].Kind == wire.TraceSay && l.items[i].ID == id {
+	for _, x := range l.said {
+		if x == id {
 			return true
 		}
 	}
@@ -46,6 +51,12 @@ func (l *traceLog) add(it wire.TraceItem) {
 		l.items = append(l.items[:0], l.items[len(l.items)-traceRing+1:]...)
 	}
 	l.items = append(l.items, it)
+	if it.Kind == wire.TraceSay && it.ID != "" {
+		if len(l.said) >= traceSaid {
+			l.said = append(l.said[:0], l.said[len(l.said)-traceSaid+1:]...)
+		}
+		l.said = append(l.said, it.ID)
+	}
 }
 
 // touch records one more change of a file and gives the record. When the log is full of

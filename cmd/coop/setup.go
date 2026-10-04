@@ -82,18 +82,19 @@ func cmdSetup(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "wrote %s\n", path)
-	// The gate hook, for every Claude Code session of this user: also for one that another
+	// The gate hook and the hooks that report what the agent does, for every Claude Code
+	// session of this user: also for one that another
 	// tool starts, such as Herdr. A session in no coop session passes the hook at once.
 	if settings := claudeSettingsPath(); settings != "" {
 		changed, err := installHookFile(settings, exe)
 		switch {
 		case err != nil:
-			fmt.Fprintf(stderr, "cannot add the gate hook: %v\n", err)
+			fmt.Fprintf(stderr, "cannot add the hooks of coop: %v\n", err)
 			return 1
 		case changed:
-			fmt.Fprintf(stdout, "added the gate hook to %s (the file before: %s.before-coop)\n", settings, settings)
+			fmt.Fprintf(stdout, "added the gate hook and the activity hooks to %s (the file before: %s.before-coop)\n", settings, settings)
 		default:
-			fmt.Fprintf(stdout, "the gate hook is in %s\n", settings)
+			fmt.Fprintf(stdout, "the gate hook and the activity hooks are in %s\n", settings)
 		}
 	}
 	cfg := config.Load(environ(), config.DefaultEnvFile(), func(string) {}, cwd())

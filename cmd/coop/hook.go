@@ -24,17 +24,49 @@ const hookDeadline = 8 * time.Second
 // hookDeadline, so that the hook's own answer always comes first.
 const hookTimeoutS = 30
 
-// hookInput is what Claude Code gives a PreToolUse hook on stdin; only what the gate needs.
-// It names no other field: a field of a type that this struct does not expect would make the
-// whole input unreadable (found in use: mcp_server is an object, not a name).
+// hookInput is what Claude Code gives a hook on stdin; only what coop uses.
 type hookInput struct {
-	ToolName string `json:"tool_name"`
+	Event       string          // hook_event_name
+	ToolName    string          // tool_name
+	ToolUseID   string          // tool_use_id
+	ToolInput   json.RawMessage // tool_input
+	DurationMS  int64           // duration_ms
+	Transcript  string          // transcript_path
+	Prompt      string          // prompt
+	LastMessage string          // last_assistant_message
 }
 
-// hookSettings is the settings text that makes Claude Code call this binary before each tool
-// call. `coop claude` passes it with --settings, so no settings file changes.
-func hookSettings(exe string) string {
-	b, _ := json.Marshal(map[string]any{"hooks": map[string][]hookGroup{"PreToolUse": {gateGroup(exe)}}})
+// readHookInput reads the input of a hook. It reads each field on its own: a field of a type
+// that coop does not expect must not make the whole input unreadable (found in use:
+// mcp_server is an object, not a name).
+func readHookInput(raw []byte) (hookInput, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return hookInput{}, err
+	}
+	str := func(key string) string {
+		var s string
+		_ = json.Unmarshal(fields[key], &s)
+		return s
+	}
+	in := hookInput{
+		Event: str("hook_event_name"), ToolName: str("tool_name"), ToolUseID: str("tool_use_id"), ToolInput: fields["tool_input"],
+		Transcript: str("transcript_path"), Prompt: str("prompt"), LastMessage: str("last_assistant_message"),
+	}
+	var ms float64
+	_ = json.Unmarshal(fields["duration_ms"], &ms)
+	in.DurationMS = int64(ms)
+	return in, nil
+}
+
+// hookSettings is the settings text that makes Claude Code call this binary for the given
+// hook events. `coop claude` passes it with --settings, so no settings file changes.
+func hookSettings(exe string, events []hookEvent) string {
+	hooks := map[string][]hookGroup{}
+	for _, e := range events {
+		hooks[e.event] = []hookGroup{e.group(exe)}
+	}
+	b, _ := json.Marshal(map[string]any{"hooks": hooks})
 	return string(b)
 }
 
@@ -65,7 +97,11 @@ func askGate(ctx context.Context, client *http.Client, cfg config.Config) (strin
 	if err != nil {
 		return "", err
 	}
-	defer res.Body.Close()
+	// Read the answer to its end: the trace report then uses the same connection.
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
+		res.Body.Close()
+	}()
 	if res.StatusCode == 404 {
 		// The gate route answers 200 for each session, known or not. Only a hub that does not
 		// have the route answers 404.
@@ -110,16 +146,25 @@ func pretool(ctx context.Context, in hookInput, env map[string]string, cfg confi
 	return gate.Text(g)
 }
 
-// cmdHook is what Claude Code runs before a tool call of an agent that `coop claude` started.
-// It always exits 0 with its answer on stdout: any other end would let the tool call run.
+// cmdHook is what Claude Code runs for an agent in a coop session. `pretool` runs before a
+// tool call: it asks the gate, and it always exits 0 with its answer on stdout, because any
+// other end would let the tool call run. `posttool`, `prompt` and `stop` only report to the
+// hub what the agent does; they print nothing.
 func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
-	if len(args) != 1 || args[0] != "pretool" {
-		fmt.Fprintln(stderr, "usage: coop hook pretool   (Claude Code runs it; see coop claude)")
+	known := false
+	for _, e := range hookEvents {
+		known = known || len(args) == 1 && args[0] == e.arg
+	}
+	if !known {
+		fmt.Fprintln(stderr, "usage: coop hook pretool|posttool|prompt|stop   (Claude Code runs it; see coop claude)")
 		return 2
 	}
+	hook := args[0]
 	defer func() {
 		if r := recover(); r != nil {
-			_, _ = stdout.Write(denyOutput(gate.Unknown))
+			if hook == "pretool" {
+				_, _ = stdout.Write(denyOutput(gate.Unknown))
+			}
 			code = 0
 		}
 	}()
@@ -127,7 +172,7 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int
 	var in hookInput
 	raw, err := io.ReadAll(io.LimitReader(stdin, 4<<20))
 	if err == nil {
-		err = json.Unmarshal(raw, &in)
+		in, err = readHookInput(raw)
 	}
 	// The shim starts in the project directory; the agent may be in another one by now.
 	dir := env["CLAUDE_PROJECT_DIR"]
@@ -139,8 +184,14 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int
 		// Input that cannot be read names no tool: treat the call as one that needs the gate.
 		in = hookInput{}
 	}
-	if reason := pretool(context.Background(), in, env, cfg, hubHTTP(cfg, io.Discard)); reason != "" {
-		_, _ = stdout.Write(denyOutput(reason))
+	client := hubHTTP(cfg, io.Discard)
+	if hook == "pretool" {
+		if reason := pretool(context.Background(), in, env, cfg, client); reason != "" {
+			_, _ = stdout.Write(denyOutput(reason))
+			return 0
+		}
 	}
+	items := traceItems(hook, in, dir, func() []byte { return readTail(in.Transcript, transcriptTail) })
+	report(context.Background(), client, cfg, gitBranch(dir), items)
 	return 0
 }
