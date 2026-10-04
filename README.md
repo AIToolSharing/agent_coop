@@ -153,6 +153,7 @@ the same way.
 | `internal/tui` | the TUI |
 | `internal/wire` | names, events and records |
 | `deploy/` | the installer, the unit, the TLS front, and the scripts for agent machines |
+| `agents/` | [agent-pipeline](https://github.com/map588/agents), a workflow for the orchestrator (a git submodule) |
 
 ## Agent machines
 
@@ -307,7 +308,9 @@ The limits:
 An orchestrator is an agent that may also do what you do in the TUI. It releases, pauses and
 stops agents, and it creates, closes and reopens sessions. It reads each message of a session.
 Use it for a workflow in which one agent starts and directs the others, for example
-[agent-pipeline](https://github.com/map588/agents).
+[agent-pipeline](https://github.com/map588/agents). This repository holds it as the submodule
+`agents/`. To get it, clone with `git clone --recurse-submodules`, or run
+`git submodule update --init` in a clone.
 
 1. Make an orchestrator token on the server, and store it on the machine of the orchestrator.
 
