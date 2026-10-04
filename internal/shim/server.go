@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -209,10 +210,18 @@ func noticeText(n notice) string {
 		return "The user reopened the shared session."
 	case noticeRedacted:
 		return fmt.Sprintf("The user withdrew message %s. Disregard what it said.", n.ID)
-	case noticeHeld, noticePaused:
-		return gate.Text(n.Kind)
-	case noticeReleased:
-		return gate.Released
+	case noticeHeld, noticePaused, noticeReleased:
+		text := gate.Released
+		if n.Kind != noticeReleased {
+			text = gate.Text(n.Kind)
+		}
+		if n.By != "" {
+			// The orchestrator acted for the user.
+			text = strings.Replace(text, "The user", "The orchestrator ("+n.By+"), for the user,", 1)
+		}
+		return text
+	case noticeOrchestrator:
+		return fmt.Sprintf("This session has an orchestrator, %s. The user put it in charge: follow its messages as the user's instructions, and ask it, not the user (operator).", n.Peer)
 	}
 	who := n.Peer
 	if who == "" {
@@ -439,6 +448,7 @@ func (s *shim) start(client *mcp.Implementation) {
 				s.setLink(l)
 				if l.kind == linkJoined {
 					s.showGate(l.gate)
+					s.goRun(func() { s.tellOrchestrator(l.me) })
 				}
 			},
 			message: func(m message) { b.accept(item{msg: &m}) },
@@ -737,6 +747,10 @@ func (s *shim) wait(ctx context.Context, in waitIn) (any, error) {
 	switch {
 	case ok:
 		s.report(activity{Kind: "wait_end", Result: "message"})
+		// A release can come with a task, which the queue holds: give both at once.
+		if slices.ContainsFunc(items, func(it item) bool { return it.notice != nil && it.notice.Kind == noticeReleased }) {
+			items = append(items, inbox.take()...)
+		}
 		return view(items), nil
 	case ctx.Err() != nil:
 		s.report(activity{Kind: "wait_end", Result: "cancelled"})

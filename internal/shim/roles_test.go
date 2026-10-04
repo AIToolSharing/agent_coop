@@ -312,3 +312,63 @@ func TestTheOrchestratorGetsOneNudgeAndAnAgenda(t *testing.T) {
 		t.Fatalf("agenda with wait_s: %v", a)
 	}
 }
+
+// Found in a live run: a held worker sat in wait, got only the release notice, never saw the
+// orchestrator's task, and asked the user what to do. Now the worker learns at its join who
+// the orchestrator is, and one wait gives the release and the task together.
+func TestAHeldWorkerGetsTheReleaseAndTheTaskInOneWait(t *testing.T) {
+	r := startRealHub(t)
+	o := start(t, r.options(wire.RoleOrchestrator, "pipe-1", "pm"))
+	joined(t, o)
+	w := start(t, r.options(wire.RoleMachine, "pipe-1", "w1"))
+	if s := joined(t, w); s["gate"] != "held" {
+		t.Fatalf("worker %v, want held", s)
+	}
+	first := w.json("wait", map[string]any{"timeout_s": 300})
+	if got := fmt.Sprint(first["notices"]); !strings.Contains(got, "kind:orchestrator") || !strings.Contains(got, "This session has an orchestrator, pm@orch") || !strings.Contains(got, "ask it, not the user") {
+		t.Fatalf("first wait %v, want the notice about the orchestrator", first)
+	}
+	waiting := w.async("wait", map[string]any{"timeout_s": 600})
+	eventually(t, "the worker waits", func() bool {
+		for _, p := range o.json("sessions", map[string]any{"session": "pipe-1"})["sessions"].([]any)[0].(map[string]any)["agents"].([]any) {
+			if a := p.(map[string]any); a["name"] == "w1@mac-1" && a["waiting_on"] == nil && a["gate"] == "held" {
+				return true
+			}
+		}
+		return false
+	})
+	o.json("steer", map[string]any{"action": "release", "agent": "w1", "task": "Create done.txt with the text ok."})
+	// The task comes first, marked as the orchestrator's; the release follows at once.
+	got := decodeResult(t, waiting)
+	if b, _ := json.Marshal(got); !strings.Contains(string(b), "Create done.txt with the text ok.") || !strings.Contains(string(b), `"from_role":"orchestrator"`) {
+		t.Fatalf("the wait gave %s, want the task of the orchestrator", b)
+	}
+	eventually(t, "the worker may work", func() bool { return w.json("status", nil)["gate"] == "run" })
+	next := w.json("wait", map[string]any{"timeout_s": 300})
+	if b, _ := json.Marshal(next); !strings.Contains(string(b), `"kind":"released"`) || !strings.Contains(string(b), "The orchestrator (orch), for the user, released you") {
+		t.Fatalf("the release notice %s does not name the orchestrator", b)
+	}
+	// The orchestrator itself gets no such notice.
+	if a := o.json("agenda", nil); strings.Contains(fmt.Sprint(a["notices"]), "orchestrator") {
+		t.Fatalf("the orchestrator was told about itself: %v", a)
+	}
+}
+
+// A worker that waits only for the user (as the hold text of an earlier version told it)
+// does not get the orchestrator's task from that wait. The release notice ends the wait,
+// and it brings the queued task with it.
+func TestAReleaseNoticeBringsTheQueuedTask(t *testing.T) {
+	r := startRealHub(t)
+	o := start(t, r.options(wire.RoleOrchestrator, "pipe-1", "pm"))
+	joined(t, o)
+	w := start(t, r.options(wire.RoleMachine, "pipe-1", "w1"))
+	joined(t, w)
+	w.json("wait", map[string]any{"timeout_s": 300}) // the notice about the orchestrator
+	waiting := w.async("wait", map[string]any{"from": "operator", "timeout_s": 600})
+	time.Sleep(100 * time.Millisecond)
+	o.json("steer", map[string]any{"action": "release", "agent": "w1", "task": "Run the tests."})
+	b, _ := json.Marshal(decodeResult(t, waiting))
+	if !strings.Contains(string(b), `"kind":"released"`) || !strings.Contains(string(b), "Run the tests.") {
+		t.Fatalf("the wait gave %s, want the release and the task", b)
+	}
+}

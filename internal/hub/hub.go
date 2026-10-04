@@ -143,7 +143,9 @@ type Notice struct {
 	Kind string `json:"kind"` // kicked closed reopened redacted peer_left held paused released
 	ID   string `json:"id,omitempty"`
 	Peer string `json:"peer,omitempty"`
-	At   string `json:"at"`
+	// By is the orchestrator token that changed the gate, for held, paused and released.
+	By string `json:"by,omitempty"`
+	At string `json:"at"`
 }
 
 type SendRequest struct {
@@ -598,7 +600,7 @@ func (h *Hub) deliver(c *Conn, it item, sink Sink) bool {
 			return write("notice", Notice{Kind: "redacted", ID: e.ID, At: e.At}, id)
 		case wire.EventActivity:
 			if e.Activity.Kind == "gate" {
-				return write("notice", Notice{Kind: gateNotice(e.Activity.Gate), At: e.Activity.At}, id)
+				return write("notice", Notice{Kind: gateNotice(e.Activity.Gate), By: e.Activity.By, At: e.Activity.At}, id)
 			}
 			return write("notice", Notice{Kind: "peer_left", Peer: e.From, At: e.Activity.At}, id)
 		}

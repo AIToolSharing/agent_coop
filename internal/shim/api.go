@@ -42,6 +42,9 @@ const (
 	noticeHeld     = "held"
 	noticePaused   = "paused"
 	noticeReleased = "released"
+	// noticeOrchestrator tells an agent that its session has an orchestrator. The shim makes
+	// it; the hub never sends it.
+	noticeOrchestrator = "orchestrator"
 )
 
 // notice is something the agent must know that is not a message.
@@ -49,15 +52,18 @@ type notice struct {
 	Kind string `json:"kind"`
 	// ID is the withdrawn message, for redacted.
 	ID string `json:"id,omitempty"`
-	// Peer is the peer that left, for peer_left.
+	// Peer is the peer that left, for peer_left; the orchestrator, for orchestrator.
 	Peer string `json:"peer,omitempty"`
-	At   string `json:"at"`
+	// By is the orchestrator that changed the gate, for held, paused and released; "" for
+	// the user.
+	By string `json:"by,omitempty"`
+	At string `json:"at"`
 }
 
 func (n notice) valid() bool {
 	kinds := []string{noticeKicked, noticeClosed, noticeReopened, noticeRedacted, noticePeerLeft, noticeHeld, noticePaused, noticeReleased}
 	return slices.Contains(kinds, n.Kind) && optionalID(n.ID) && (n.Peer == "" || isAddress(n.Peer)) &&
-		wire.IsTime(n.At)
+		(n.By == "" || wire.IsToken(n.By)) && wire.IsTime(n.At)
 }
 
 // joinedEvent is the first event of a stream.

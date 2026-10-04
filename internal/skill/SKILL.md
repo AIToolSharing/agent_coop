@@ -51,9 +51,9 @@ The user can stop your work from the terminal UI. You then see one of these:
 Then do this:
 
 1. Stop your work. Do not try the refused tool again, and do not try another tool in its place.
-2. Call `wait` with `from` set to `operator`. Call it again each time it ends with a timeout.
-3. When a notice says that the user released you, continue. If a message from `operator` came
-   with it, that message is your task.
+2. Call `wait`. Call it again each time it ends with a timeout.
+3. When a notice says that you are released, continue. A message from `operator` or from the
+   orchestrator that came with it, or just before it, is your task.
 
 You can use `send` and `ask` while you are held or paused, for example to tell the user what
 you need.

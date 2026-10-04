@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/AIToolSharing/agent_coop/internal/admin"
 	"github.com/AIToolSharing/agent_coop/internal/wire"
@@ -217,6 +218,18 @@ func (s *shim) steer(ctx context.Context, in steerIn) (any, error) {
 			return nil, err
 		}
 	}
+	// A task goes before the release: the agent waits, and the release notice then brings
+	// the task in the same result.
+	var sent any
+	if in.Task != "" {
+		client, _, _, err := s.joined()
+		if err != nil {
+			return nil, err
+		}
+		if sent, err = client.send(ctx, who, in.Task, ""); err != nil {
+			return nil, err
+		}
+	}
 	a := s.o.Admin
 	switch in.Action {
 	case "release", "resume":
@@ -249,16 +262,30 @@ func (s *shim) steer(ctx context.Context, in steerIn) (any, error) {
 	} else if agentAction {
 		done["agent"] = "each agent of the session"
 	}
-	if in.Task != "" {
-		client, _, _, err := s.joined()
-		if err != nil {
-			return nil, err
-		}
-		sent, err := client.send(ctx, who, in.Task, "")
-		if err != nil {
-			return nil, err
-		}
+	if sent != nil {
 		done["task"] = sent
 	}
 	return done, nil
+}
+
+// tellOrchestrator gives a joined agent a notice when its session has an orchestrator, so
+// that it follows the orchestrator and asks it, not the user.
+func (s *shim) tellOrchestrator(me string) {
+	if s.o.Role == wire.RoleOrchestrator {
+		return
+	}
+	client, inbox, _, err := s.joined()
+	if err != nil {
+		return
+	}
+	v, err := client.view(s.ctx)
+	if err != nil {
+		return
+	}
+	for _, p := range v.Peers {
+		if p.Online && p.Role == wire.RoleOrchestrator && p.Name != me {
+			inbox.accept(item{notice: &notice{Kind: noticeOrchestrator, Peer: p.Name, At: time.Now().UTC().Format(time.RFC3339Nano)}})
+			return
+		}
+	}
 }

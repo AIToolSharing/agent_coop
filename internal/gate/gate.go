@@ -20,8 +20,8 @@ func Exempt(tool string) bool {
 }
 
 // wait tells the agent where to stay while it may not work.
-const wait = "Call the coop `wait` tool with `from` set to `operator` and wait there. " +
-	"You continue when a notice says that the user released you."
+const wait = "Call the coop `wait` tool and wait there. " +
+	"You continue when a notice says that you are released. A task that comes with the release is in the same result."
 
 // Text tells an agent what its gate means. It is the reason of a denied tool call and the
 // text of a notice. It gives "" for run.
