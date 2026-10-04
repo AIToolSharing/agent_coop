@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -30,7 +31,7 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 	file := config.DefaultEnvFile()
 	if info, err := os.Stat(file); err != nil {
 		fail("no credential file " + file + ": run coop login <url> <token>")
-	} else if info.Mode().Perm()&0o077 != 0 {
+	} else if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		fail(file + " is readable by others: chmod 600 " + file)
 	} else {
 		ok("credential file " + file)
