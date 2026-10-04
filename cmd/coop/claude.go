@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"os/exec"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -87,6 +89,21 @@ func cmdClaude(args []string, stderr io.Writer) int {
 	env := launchEnv(environ(), session, func(env map[string]string) config.Config {
 		return config.Load(env, config.DefaultEnvFile(), func(string) {}, cwd())
 	})
+	if runtime.GOOS == "windows" {
+		// Windows has no exec(2): run Claude Code as a child on the same console and
+		// return its exit code.
+		cmd := exec.Command(path, argv[1:]...)
+		cmd.Env, cmd.Stdin, cmd.Stdout, cmd.Stderr = env, os.Stdin, os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			var exit *exec.ExitError
+			if errors.As(err, &exit) {
+				return exit.ExitCode()
+			}
+			fmt.Fprintln(stderr, "cannot start claude:", err)
+			return 1
+		}
+		return 0
+	}
 	if err := syscall.Exec(path, argv, env); err != nil {
 		fmt.Fprintln(stderr, "cannot start claude:", err)
 		return 1
