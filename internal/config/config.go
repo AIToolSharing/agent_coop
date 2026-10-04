@@ -18,8 +18,10 @@ const ProjectFile = ".coop"
 
 // Config is what the coop command needs to reach the hub. An empty string means "not set".
 type Config struct {
-	URL           string // the hub address, with no "/" at the end
-	Token         string // the machine token, COOP_TOKEN
+	URL string // the hub address, with no "/" at the end
+	// Token is the token that the agent uses: the machine token (COOP_TOKEN), or the token
+	// of Role.
+	Token         string
 	OperatorToken string // the operator token, COOP_OPERATOR_TOKEN
 	// OrchestratorToken and ReporterToken are the tokens of the two other roles,
 	// COOP_ORCHESTRATOR_TOKEN and COOP_REPORTER_TOKEN.
@@ -28,8 +30,12 @@ type Config struct {
 	CertSHA256        string // the pinned hub certificate, COOP_CERT_SHA256 (hex); "" = none
 	Session           string // the session, or "" when the agent is in no session
 	Agent             string // the agent name; never empty
-	Push              bool   // true when Claude Code loads the server as a channel
-	Gated             bool   // true when `coop claude` started the agent with the gate hook
+	// Role is the role that this process acts in: "" for an agent with the machine token,
+	// orchestrator or reporter. It comes only from COOP_ROLE in env: the person who starts
+	// the process selects it.
+	Role  string
+	Push  bool // true when Claude Code loads the server as a channel
+	Gated bool // true when `coop claude` started the agent with the gate hook
 }
 
 // Load finds the configuration. For each key, a value in env wins, and an empty value counts as
@@ -78,7 +84,7 @@ func Load(env map[string]string, file string, warn func(string), cwd string) Con
 		warn(fmt.Sprintf("%s %q is not a valid agent name; using %q", where("COOP_AGENT"), agent, fallback))
 		agent = fallback
 	}
-	return Config{
+	cfg := Config{
 		URL:               strings.TrimRight(pick("COOP_URL", fromFile), "/"),
 		Token:             pick("COOP_TOKEN", fromFile),
 		OperatorToken:     pick("COOP_OPERATOR_TOKEN", fromFile),
@@ -91,6 +97,17 @@ func Load(env map[string]string, file string, warn func(string), cwd string) Con
 		// Only the launch environment says that the hook is there; a file cannot.
 		Gated: env["COOP_GATED"] == "1",
 	}
+	switch role := env["COOP_ROLE"]; role {
+	case "", wire.RoleMachine:
+	case wire.RoleOrchestrator:
+		cfg.Role, cfg.Token = role, cfg.OrchestratorToken
+	case wire.RoleReporter:
+		// A reporter joins no session: it reads every session.
+		cfg.Role, cfg.Token, cfg.Session = role, cfg.ReporterToken, ""
+	default:
+		warn(fmt.Sprintf("COOP_ROLE %q is not orchestrator or reporter; ignoring it", role))
+	}
+	return cfg
 }
 
 // FindGitRoot returns the nearest directory, from dir upwards, that holds .git. A .git file

@@ -16,13 +16,18 @@ import (
 var version = "dev"
 
 const usageText = `usage:
-  coop login <url> <token>        store the hub address and a token (operator or machine)
+  coop login <url> <token>        store the hub address and a token of any role
   coop session <name> [--agent <a>]
                                   put this directory's agents into a session (writes .coop)
   coop claude [<session>] [args]  start Claude Code with the coop channel and the operator's
                                   gate (COOP_GATE=off in the environment: no gate)
   coop --agent <name> claude ...  the same, as the agent <name> (default: the name in .coop,
                                   then the directory name)
+  coop --orchestrator claude <session> ...
+                                  the same, as an orchestrator: it may also release, pause,
+                                  stop agents and set up sessions (COOP_ORCHESTRATOR_TOKEN)
+  coop --reporter claude ...      Claude Code that reads every session and changes nothing
+                                  (COOP_REPORTER_TOKEN)
   coop tui [--url <url>] [--token <token>]
                                   watch and steer all sessions (operator token)
   coop setup                      register coop with Claude Code and install the skill
@@ -31,7 +36,7 @@ const usageText = `usage:
   coop hook pretool               the gate check Claude Code runs before a tool call
   coop serve [--listen <addr>] [--data <dir>] [--auto-create=false] [--hold-new=false]
                                   run the hub (the server)
-  coop admin token add [--operator] <name> | list | revoke <name>
+  coop admin token add [--role <role>] <name> | list | revoke <name>
                                   manage tokens on the hub's host
   coop version
 `
@@ -40,7 +45,16 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
+// launchRole is the role that `coop claude` starts Claude Code in: "" for an agent, or the
+// role of --orchestrator or --reporter.
+var launchRole string
+
 func run(args []string, stdout, stderr io.Writer) int {
+	// --orchestrator and --reporter select the role of the agent that `coop claude` starts.
+	// They come before the command, as --agent does.
+	for len(args) > 0 && (args[0] == "--orchestrator" || args[0] == "--reporter") {
+		launchRole, args = strings.TrimPrefix(args[0], "--"), args[1:]
+	}
 	// A global --agent <name> names the agent for this run, as COOP_AGENT does. It comes before
 	// the command, because claude has an --agent flag of its own.
 	if len(args) > 0 && (args[0] == "--agent" || strings.HasPrefix(args[0], "--agent=")) {
@@ -59,8 +73,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		os.Setenv("COOP_AGENT", name)
 	}
+	for len(args) > 0 && (args[0] == "--orchestrator" || args[0] == "--reporter") {
+		launchRole, args = strings.TrimPrefix(args[0], "--"), args[1:]
+	}
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usageText)
+		return 2
+	}
+	if launchRole != "" && args[0] != "claude" {
+		fmt.Fprintf(stderr, "coop: --%s goes with claude: coop --%s claude ...\n", launchRole, launchRole)
 		return 2
 	}
 	switch args[0] {

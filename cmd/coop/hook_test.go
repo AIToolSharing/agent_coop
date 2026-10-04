@@ -237,7 +237,7 @@ func TestLaunchEnvNamesTheSessionAndTheAgent(t *testing.T) {
 		}
 		return false
 	}
-	env := launchEnv(map[string]string{"PATH": "/bin", "COOP_SESSION": "old"}, "build-42", load)
+	env := launchEnv(map[string]string{"PATH": "/bin", "COOP_SESSION": "old", "COOP_ROLE": "orchestrator"}, "build-42", "", load)
 	for _, kv := range []string{"PATH=/bin", "COOP_PUSH=1", "COOP_GATED=1", "COOP_SESSION=build-42", "COOP_AGENT=from-dir"} {
 		if !has(env, kv) {
 			t.Errorf("missing %s in %v", kv, env)
@@ -254,9 +254,21 @@ func TestLaunchEnvNamesTheSessionAndTheAgent(t *testing.T) {
 			t.Errorf("%s is %d times in the environment", k, n)
 		}
 	}
+	// An agent that an orchestrator starts gets no role from the orchestrator's environment.
+	for _, e := range env {
+		if strings.HasPrefix(e, "COOP_ROLE=") {
+			t.Errorf("a plain start keeps %s", e)
+		}
+	}
 	// No session: nothing is named, and the agent gets no tools and no gate.
-	env = launchEnv(map[string]string{"PATH": "/bin"}, "", load)
+	env = launchEnv(map[string]string{"PATH": "/bin"}, "", "", load)
 	if has(env, "COOP_SESSION=") || has(env, "COOP_AGENT=from-dir") {
 		t.Errorf("no session, but %v", env)
+	}
+	// --orchestrator and --reporter set the role.
+	for _, role := range []string{"orchestrator", "reporter"} {
+		if env := launchEnv(map[string]string{"PATH": "/bin"}, "build-42", role, load); !has(env, "COOP_ROLE="+role) {
+			t.Errorf("%s: %v", role, env)
+		}
 	}
 }

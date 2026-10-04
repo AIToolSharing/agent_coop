@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/AIToolSharing/agent_coop/internal/admin"
 	"github.com/AIToolSharing/agent_coop/internal/config"
 	"github.com/AIToolSharing/agent_coop/internal/herdr"
 	"github.com/AIToolSharing/agent_coop/internal/shim"
@@ -19,7 +20,8 @@ func mcpOptions(cfg config.Config, log func(string, ...any)) shim.Options {
 	return shim.Options{
 		URL: cfg.URL, Token: cfg.Token,
 		Session: cfg.Session, Agent: cfg.Agent, Push: cfg.Push, Gated: cfg.Gated,
-		Log: log,
+		Role: cfg.Role,
+		Log:  log,
 	}
 }
 
@@ -37,6 +39,9 @@ func cmdMCP(args []string, stderr io.Writer) int {
 	log := func(format string, a ...any) { fmt.Fprintf(stderr, format+"\n", a...) }
 	o := mcpOptions(cfg, log)
 	o.HTTPClient = hubHTTP(cfg, stderr)
+	if cfg.Role != "" && cfg.URL != "" && cfg.Token != "" {
+		o.Admin = &admin.Client{Base: cfg.URL, Token: cfg.Token, HTTP: o.HTTPClient}
+	}
 	env := environ()
 	o.Pane = herdr.FromEnv(env, herdr.Command(env))
 	// A session that `coop claude` did not start has the gate hook when the user's settings

@@ -353,3 +353,25 @@ func TestGlobalAgentFlagSetsTheAgentName(t *testing.T) {
 		}
 	}
 }
+
+// --orchestrator and --reporter go only with claude, and need the token of the role.
+func TestRoleFlagsGoWithClaudeAndNeedTheirToken(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("COOP_ORCHESTRATOR_TOKEN", "")
+	t.Setenv("COOP_REPORTER_TOKEN", "")
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	defer func() { launchRole = "" }()
+	var out, errOut bytes.Buffer
+	if code := run([]string{"--reporter", "tui"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "goes with claude") {
+		t.Fatalf("--reporter tui: code %d stderr %q", code, errOut.String())
+	}
+	errOut.Reset()
+	if code := run([]string{"--orchestrator", "--agent", "pm", "claude", "pipe-1"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "no orchestrator token (COOP_ORCHESTRATOR_TOKEN)") {
+		t.Fatalf("no orchestrator token: code %d stderr %q", code, errOut.String())
+	}
+	errOut.Reset()
+	if code := run([]string{"--reporter", "claude", "pipe-1"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "takes no session") {
+		t.Fatalf("reporter with a session: code %d stderr %q", code, errOut.String())
+	}
+}

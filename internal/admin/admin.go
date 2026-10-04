@@ -296,6 +296,65 @@ func (c *Client) DeleteSession(ctx context.Context, sid string) error {
 	return c.do(ctx, http.MethodDelete, sessionPath(sid), nil)
 }
 
+// Agent is one agent of a session as GET /v1/admin/sessions/{sid} gives it.
+type Agent struct {
+	Name      string `json:"name"`
+	Online    bool   `json:"online"`
+	State     string `json:"state"`
+	Note      string `json:"note,omitempty"`
+	Gate      string `json:"gate"`
+	WaitingOn string `json:"waiting_on,omitempty"`
+	Role      string `json:"role,omitempty"`
+}
+
+// Session is a session with its agents.
+type Session struct {
+	wire.SessionInfo
+	Agents []Agent `json:"agents"`
+}
+
+// Session gives a session with its agents.
+func (c *Client) Session(ctx context.Context, sid string) (Session, error) {
+	var s Session
+	res, err := c.call(ctx, http.MethodGet, sessionPath(sid), nil)
+	if err != nil {
+		return s, err
+	}
+	defer res.Body.Close()
+	err = json.NewDecoder(res.Body).Decode(&s)
+	return s, err
+}
+
+// Message is one message of a session.
+type Message struct {
+	ID      string `json:"id"`
+	From    string `json:"from"`
+	To      string `json:"to"`
+	Text    string `json:"text"`
+	ReplyTo string `json:"reply_to,omitempty"`
+	SentAt  string `json:"sent_at"`
+}
+
+// Messages gives the messages of a session, also those between two agents, oldest first.
+// With after (a message id), it gives the first limit messages after it; with "", the newest
+// limit.
+func (c *Client) Messages(ctx context.Context, sid, after string, limit int) ([]Message, error) {
+	q := url.Values{"limit": {strconv.Itoa(limit)}}
+	if after != "" {
+		q.Set("after", after)
+	}
+	res, err := c.call(ctx, http.MethodGet, sessionPath(sid)+"/messages?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	var list struct {
+		Messages []Message `json:"messages"`
+	}
+	err = json.NewDecoder(res.Body).Decode(&list)
+	return list.Messages, err
+}
+
 // Kick keeps an agent out of a session. target is an address.
 func (c *Client) Kick(ctx context.Context, sid, target string) error {
 	return c.do(ctx, http.MethodPost, sessionPath(sid)+"/kick", map[string]string{"target": target})

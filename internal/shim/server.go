@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AIToolSharing/agent_coop/internal/admin"
 	"github.com/AIToolSharing/agent_coop/internal/channel"
 	"github.com/AIToolSharing/agent_coop/internal/gate"
 	"github.com/AIToolSharing/agent_coop/internal/herdr"
@@ -36,6 +37,12 @@ type Options struct {
 	Session string
 	// Agent is the agent name in the session.
 	Agent string
+	// Role is "" for an agent, or orchestrator or reporter (wire roles). An orchestrator gets
+	// the tools steer, sessions and read; a reporter joins no session and gets only sessions
+	// and read. Both need Admin.
+	Role string
+	// Admin reaches the admin API with the token of Role.
+	Admin *admin.Client
 	// Push advertises the channel capability and pushes incoming items into the session.
 	Push bool
 	// Gated says that the agent's tool calls go through the operator's gate (`coop claude`).
@@ -259,9 +266,15 @@ func Serve(ctx context.Context, o Options) error {
 	tr := channel.Wrap(inner)
 	tr.Classic = true
 	runCtx, cancel := context.WithCancel(ctx)
+	if o.Role == wire.RoleReporter {
+		// A reporter is in no session: each tool names the session that it reads.
+		o.Session = ""
+	}
 	s := &shim{o: o, push: tr.Push, ctx: runCtx, link: link{kind: linkJoining}}
 
-	inSession := o.Session != ""
+	inSession := o.Session != "" && o.Role != wire.RoleReporter
+	reporter := o.Role == wire.RoleReporter && o.Admin != nil
+	orchestrator := o.Role == wire.RoleOrchestrator && o.Admin != nil
 	caps := &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}}
 	opts := &mcp.ServerOptions{
 		Capabilities: caps,
@@ -273,16 +286,30 @@ func Serve(ctx context.Context, o Options) error {
 			s.start(client)
 		},
 	}
-	if inSession {
+	switch {
+	case reporter:
+		opts.Instructions = reporterInstructions
+	case inSession:
 		opts.Instructions = instructions
+		if orchestrator {
+			opts.Instructions += orchestratorInstructions
+		}
 		if o.Push {
 			caps.Experimental = map[string]any{channel.Capability: map[string]any{}}
 		}
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "coop", Version: version}, opts)
-	if inSession {
+	switch {
+	case reporter:
+		// A reporter joins no session: no stream, no pushes, no gate.
+		s.addReaderTools(server)
+	case inSession:
 		s.addTools(server)
-	} else {
+		if orchestrator {
+			s.addReaderTools(server)
+			addTool(s, server, "steer", s.steer)
+		}
+	default:
 		// No session: no tools. The agent then has nothing to call, so a task costs nothing.
 		// A client that calls a tool anyway gets the reason.
 		server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
@@ -345,7 +372,7 @@ const claudeCode = "claude-code"
 // start joins the session. It runs once, after the client has initialized.
 func (s *shim) start(client *mcp.Implementation) {
 	s.mu.Lock()
-	if s.o.Session == "" || s.started {
+	if s.o.Session == "" || s.o.Role == wire.RoleReporter || s.started {
 		s.mu.Unlock()
 		return
 	}

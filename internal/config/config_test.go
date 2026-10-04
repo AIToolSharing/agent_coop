@@ -427,3 +427,32 @@ func TestLoadTakesThePinnedCertificateFromTheCredentialFile(t *testing.T) {
 		t.Fatalf("environment: %q", c.CertSHA256)
 	}
 }
+
+// COOP_ROLE selects the token. Only the launch environment sets it: a credential file or a
+// .coop file cannot make an agent an orchestrator.
+func TestTheRoleSelectsItsTokenAndOnlyEnvSetsIt(t *testing.T) {
+	dir := t.TempDir()
+	cred := filepath.Join(dir, "env")
+	writeFile(t, cred, "COOP_TOKEN=mac.m\nCOOP_ORCHESTRATOR_TOKEN=orch.o\nCOOP_REPORTER_TOKEN=rep.r\nCOOP_ROLE=orchestrator\n", 0o600)
+	project := t.TempDir()
+	writeFile(t, filepath.Join(project, ".coop"), "COOP_SESSION=build-42\nCOOP_ROLE=orchestrator\n", 0o644)
+	none := func(string) {}
+	if c := config.Load(map[string]string{}, cred, none, project); c.Role != "" || c.Token != "mac.m" || c.Session != "build-42" {
+		t.Fatalf("no role in env: %+v", c)
+	}
+	if c := config.Load(map[string]string{"COOP_ROLE": "orchestrator"}, cred, none, project); c.Role != "orchestrator" || c.Token != "orch.o" || c.Session != "build-42" {
+		t.Fatalf("orchestrator: %+v", c)
+	}
+	// A reporter is in no session, also when a .coop file names one.
+	if c := config.Load(map[string]string{"COOP_ROLE": "reporter"}, cred, none, project); c.Role != "reporter" || c.Token != "rep.r" || c.Session != "" {
+		t.Fatalf("reporter: %+v", c)
+	}
+	var warned string
+	if c := config.Load(map[string]string{"COOP_ROLE": "operator"}, cred, func(s string) { warned = s }, project); c.Role != "" || c.Token != "mac.m" || !strings.Contains(warned, "COOP_ROLE") {
+		t.Fatalf("a role that an agent cannot take: %+v, warning %q", c, warned)
+	}
+	// With no token of that role, the token is empty: the machine is not set up for it.
+	if c := config.Load(map[string]string{"COOP_ROLE": "orchestrator"}, filepath.Join(dir, "none"), none, project); c.Token != "" {
+		t.Fatalf("no orchestrator token: %+v", c)
+	}
+}

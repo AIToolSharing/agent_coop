@@ -47,10 +47,16 @@ func claudeCommand(args []string, env map[string]string, settings string) (sessi
 
 // launchEnv gives the environment of the Claude Code process. It names the session and the
 // agent, so that the shim and the gate hook of this process read the same two values, in
-// whatever directory the agent works later.
-func launchEnv(env map[string]string, session string, cfg func(map[string]string) config.Config) []string {
+// whatever directory the agent works later. role is "" for an agent, or orchestrator or
+// reporter. With no role it removes COOP_ROLE: an agent that an orchestrator starts with
+// `coop claude` must not take the orchestrator's role from its environment.
+func launchEnv(env map[string]string, session, role string, cfg func(map[string]string) config.Config) []string {
 	env = maps.Clone(env)
 	env["COOP_PUSH"], env["COOP_GATED"] = "1", "1"
+	delete(env, "COOP_ROLE")
+	if role != "" {
+		env["COOP_ROLE"] = role
+	}
 	if session != "" {
 		env["COOP_SESSION"] = session
 	}
@@ -82,12 +88,25 @@ func cmdClaude(args []string, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
+	if launchRole == wire.RoleReporter && session != "" {
+		fmt.Fprintln(stderr, "coop --reporter claude takes no session: a reporter reads every session")
+		return 2
+	}
+	if launchRole != "" {
+		env := environ()
+		env["COOP_ROLE"] = launchRole
+		if cfg := config.Load(env, config.DefaultEnvFile(), func(string) {}, cwd()); cfg.Token == "" {
+			key := map[string]string{wire.RoleOrchestrator: "COOP_ORCHESTRATOR_TOKEN", wire.RoleReporter: "COOP_REPORTER_TOKEN"}[launchRole]
+			fmt.Fprintf(stderr, "no %s token (%s): coop login <url> <%s token>\n", launchRole, key, launchRole)
+			return 1
+		}
+	}
 	path, err := exec.LookPath("claude")
 	if err != nil {
 		fmt.Fprintln(stderr, "claude is not on the PATH: install Claude Code first")
 		return 1
 	}
-	env := launchEnv(environ(), session, func(env map[string]string) config.Config {
+	env := launchEnv(environ(), session, launchRole, func(env map[string]string) config.Config {
 		return config.Load(env, config.DefaultEnvFile(), func(string) {}, cwd())
 	})
 	if runtime.GOOS == "windows" {
