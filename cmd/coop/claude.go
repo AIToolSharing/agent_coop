@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
 	"slices"
 	"strings"
@@ -94,6 +95,10 @@ func cmdClaude(args []string, stderr io.Writer) int {
 		// return its exit code.
 		cmd := exec.Command(path, argv[1:]...)
 		cmd.Env, cmd.Stdin, cmd.Stdout, cmd.Stderr = env, os.Stdin, os.Stdout, os.Stderr
+		// Ctrl-C on a Windows console goes to each process on it. Claude Code uses Ctrl-C to
+		// stop a turn and stays open. Without this line Go ends coop at the first Ctrl-C:
+		// the shell then reads the console at the same time as Claude Code.
+		signal.Ignore(os.Interrupt)
 		if err := cmd.Run(); err != nil {
 			var exit *exec.ExitError
 			if errors.As(err, &exit) {
