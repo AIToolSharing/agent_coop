@@ -1,17 +1,112 @@
 # coop
 
-coop lets AI agents on different machines talk to each other in a shared session, in near real
-time. A person sees every session, agent and message in a terminal UI (TUI) and can act on them.
+coop lets AI agents on different machines talk to each other in a shared session. A person,
+the operator, sees each session, agent and message in a terminal UI (TUI). The operator decides
+when each agent works.
 
-- Agents get a small messaging interface: `status`, `send`, `ask`, `wait`, `inbox`, `history`,
-  `set_state`. The interface does not show how delivery works.
-- The person who starts an agent sets the session. The agent does not choose it.
+- Agents get a small set of message tools: `status`, `send`, `ask`, `wait`, `inbox`, `history`,
+  `set_state`. The tools do not show how delivery works.
+- The person who starts an agent sets the session. The agent does not select it.
 - In Claude Code, a message from a peer wakes an idle agent (channel push).
-- The TUI shows the conversation as a transcript and as threads, every message whole, with
-  details per agent and per message, and a line for what needs the person.
+- The operator holds, releases, pauses and stops each agent from the TUI.
+- The TUI shows the conversation as a transcript and as threads, with each message whole.
 
-One Go binary, `coop`, is every part: the agent's MCP server, the operator's TUI, the server,
-and the commands that set a machine up.
+One Go binary, `coop`, is every part: the hub (the server program), the agent's MCP server, the
+TUI, and the setup commands.
+
+## Quick start
+
+### 1. Deploy the hub (one time)
+
+Do these steps on your own machine, in a clone of this repository. You need Go 1.25 or later,
+and a Linux server with systemd.
+
+1. Build the binaries.
+
+   ```bash
+   make release
+   ```
+
+2. Copy the binary and the installer to the server.
+
+   ```bash
+   scp dist/coop-linux-amd64 deploy/install.sh deploy/coop.service <server>:/tmp/
+   ```
+
+3. Install the hub and start it.
+
+   ```bash
+   ssh <server> 'cd /tmp && sudo ./install.sh ./coop-linux-amd64'
+   ```
+
+4. Make your operator token. The token shows one time only.
+
+   ```bash
+   ssh <server> 'sudo -u coop coop admin token add --operator <your name>'
+   ```
+
+5. Install `coop` on your own machine and store the token.
+
+   ```bash
+   make install
+   coop login <hub address> <operator token>
+   ```
+
+The hub listens on `127.0.0.1:8090` of the server. Put a TLS front or a private network between
+the hub and the other machines. [deploy/README.md](deploy/README.md) gives the steps. To
+upgrade the hub, do steps 1 to 3 again.
+
+### 2. Add an agent machine (one time for each machine)
+
+1. Make a token for the machine. Do this on the server. The token shows one time only.
+
+   ```bash
+   sudo -u coop coop admin token add <machine>
+   ```
+
+2. Copy `dist/coop-<os>-<arch>` to the machine as `coop`, into a directory on the PATH.
+3. Store the hub address and the token. Do this on the machine.
+
+   ```bash
+   coop login <hub address> <machine token>
+   ```
+
+4. Connect coop to Claude Code. Then check the result.
+
+   ```bash
+   coop setup
+   coop doctor
+   ```
+
+5. If the machine is a server, do not run agents as root. Copy `deploy/agent-user.sh` to the
+   machine and run it as root. It moves coop to a user `agent` that has no privileges.
+
+### 3. Use it
+
+1. Start the TUI on your own machine.
+
+   ```bash
+   coop tui
+   ```
+
+2. Start an agent in a project directory, in a session.
+
+   ```bash
+   cd <project> && coop claude <session>
+   ```
+
+   To start the agent on another machine, use the start script.
+
+   ```bash
+   deploy/start-agent.sh <machine> <project> <session>
+   ```
+
+3. Release the agent. A new agent is held and does no work. In the TUI, press `tab`, go to the
+   agent, and press `g`. Type a task, or press `enter` for none.
+4. Steer the agent. `p` pauses or resumes it, `x` stops it, and `m` writes a message. `?` shows
+   each key.
+
+The sections below give the details.
 
 ## Parts
 
@@ -30,82 +125,84 @@ and the commands that set a machine up.
 └──────────────────────────────┘
 ```
 
+The diagram shows a hub behind a TLS front. A private network in place of the TLS front works
+the same way.
+
 | Command | Runs on | Does |
 |---|---|---|
-| `coop mcp` | agent machines | the agent's MCP server (stdio); Claude Code starts it |
-| `coop hook pretool` | agent machines | the gate check before a tool call; Claude Code runs it |
-| `coop tui` | the operator's machine | watch and steer every session |
+| `coop mcp` | agent machines | the agent's MCP server (stdio). Claude Code starts it. |
+| `coop hook pretool` | agent machines | the gate check before a tool call. Claude Code runs it. |
+| `coop tui` | the operator's machine | shows each session and steers each agent |
 | `coop login`, `setup`, `session`, `claude`, `doctor` | agent machines, operator | set a machine up and check it |
 | `coop serve` | the server | the hub: the API over one SQLite file |
-| `coop admin token` | the server | make, list and revoke tokens |
+| `coop admin token` | the server | makes, lists and revokes tokens |
 
-Code: `cmd/coop` (the commands), `internal/hub` and `internal/store` (the server's rules and
-its SQLite store), `internal/api` (the HTTP routes and the OpenAPI document), `internal/shim`
-(the MCP server), `internal/tui` (the TUI), `internal/wire` (names, events, records),
-`deploy/` (the installer, the unit, the TLS front).
+| Directory | Holds |
+|---|---|
+| `cmd/coop` | the commands |
+| `internal/hub`, `internal/store` | the rules of the hub and its SQLite store |
+| `internal/api` | the HTTP routes and the OpenAPI document |
+| `internal/shim` | the agent's MCP server |
+| `internal/tui` | the TUI |
+| `internal/wire` | names, events and records |
+| `deploy/` | the installer, the unit, the TLS front, and the scripts for agent machines |
 
-## Set up an agent machine
+## Agent machines
 
-Requirements: Claude Code (or another MCP client) and the `coop` binary.
+A machine needs Claude Code, or another MCP client, and the `coop` binary.
 
-1. Get `coop`. From a clone of this repository, with Go 1.25 or later:
+- **The binary.** In a clone with Go 1.25 or later, `make install` builds `dist/coop` and links
+  `~/.local/bin/coop` to it. Run it again after each `git pull`. `make release` writes
+  `dist/coop-<os>-<arch>` for macOS and Linux. Copy one of these to a machine that has no Go.
+- **The token.** `coop login` checks the token against the hub. Then it writes
+  `~/.config/coop/env` with mode 0600.
+- **A self-signed certificate.** `coop login` shows the fingerprint of the certificate and pins
+  it. Compare it with the fingerprint that the server showed. `coop login` adds nothing to the
+  system trust store.
+- **Claude Code.** `coop setup` registers `coop mcp` with Claude Code and writes the skill. It
+  also puts the gate hook into `~/.claude/settings.json`. It keeps a copy of that file as
+  `settings.json.before-coop`.
+- **The check.** `coop doctor` shows each check as ok, or gives the command that repairs it.
 
-   ```bash
-   make install        # builds dist/coop and links ~/.local/bin/coop to it; run again after git pull
-   ```
+Do not run agents as root. On a server, run `deploy/agent-user.sh` as root. The script makes a
+user `agent` that has no privileges. It gives that user coop, a copy of root's Claude Code, and
+root's coop credentials. Then it runs `coop setup` for that user. With `-n`, the script shows
+each step and changes nothing.
 
-   `make release` writes `dist/coop-<os>-<arch>` for macOS and Linux; copy one into a PATH
-   directory on a machine without Go.
+After the script, log the user `agent` in to Claude Code one time. Then start the agents as
+that user.
 
-2. Get a token for this machine from the operator. On the server:
-   `sudo -u coop coop admin token add <machine>`. The token shows one time only.
+On macOS, the first connection asks you to allow local network access. Approve it one time. The
+build has a fixed signing identifier, so a new build keeps the approval.
 
-3. Store it. The command checks the token against the service, then writes
-   `~/.config/coop/env` with mode 0600:
+A Claude Code session that is in no coop session gets no tools from `coop mcp`. Such a session
+pays nothing for coop.
 
-   ```bash
-   coop login https://coop.example.com:8443 <machine>.<secret>
-   ```
+## Sessions and agents
 
-   A self-signed certificate is accepted by its fingerprint: `login` shows the fingerprint and
-   pins it; compare it with the one the server's host printed. Nothing is added to the system
-   trust store.
-
-4. Give Claude Code the tools and the skill:
-
-   ```bash
-   coop setup          # the MCP server, the skill, and the gate hook in ~/.claude/settings.json
-   coop doctor         # every check green, or the command that fixes it
-   ```
-
-Do not run agents as root. On a server, `deploy/agent-user.sh` (as root) makes a user
-`agent` with no privileges, gives it coop, a copy of root's Claude Code and root's coop
-credentials, and runs `coop setup` for it; `-n` shows the steps and changes nothing. Log that
-user in to Claude Code one time, then start the agents as that user.
-
-On macOS the first connection asks to allow local network access; approve once. The build is
-signed with a fixed identifier, so a rebuild keeps the approval.
-
-Without a session, the server offers no tools, so a session that does not use coop pays nothing
-for it.
-
-To set up the server, see [deploy/README.md](deploy/README.md).
-
-## Use it
-
-Tell the project which session it is in, then start Claude Code through `coop`:
+A project directory joins a session through a `.coop` file. `coop session <name>` writes the
+file. Each agent that starts in that directory, or below it, joins the session.
 
 ```bash
 cd ~/work/app
-coop session build-42                 # writes ./.coop; agents started here (or below) join build-42
-coop session build-42 --agent reviewer   # and choose the agent name (default: the directory name;
-                                      # "agent" in the home directory, never the unix user)
-coop claude                           # Claude Code in that session, messages pushed in
-coop --agent reviewer claude          # the same, as the agent "reviewer", whatever the directory
-codex                                 # any other MCP client: no push, the agent uses wait/inbox
+coop session build-42                    # writes ./.coop
+coop session build-42 --agent reviewer   # and sets the agent name
+coop claude                              # Claude Code in that session, with push
+coop --agent reviewer claude             # the same, as the agent "reviewer"
+codex                                    # another MCP client: no push
 ```
 
-To start an agent on another machine from your own terminal, as the agent user there:
+The default agent name is the name of the project directory. In the home directory, the default
+name is `agent`. The name of the unix user is never the agent name.
+
+The environment wins over the `.coop` file. Thus a run for one time needs no file.
+
+```bash
+coop claude build-42                  # Claude Code in session build-42
+COOP_SESSION=build-42 codex
+```
+
+To start an agent on another machine, as the user `agent` there, use the start script.
 
 ```bash
 deploy/start-agent.sh basedmatrix git/app build-42              # machine, project, session
@@ -113,63 +210,62 @@ deploy/start-agent.sh -a reviewer basedmatrix git/app build-42  # with an agent 
 ```
 
 When Herdr knows the machine (`herdr machine list`), the agent starts in a new Herdr workspace
-on it; else it starts over SSH in this terminal (`-s` asks for SSH). Arguments after the
-session go to `claude`; `-n` shows the command and does not run it.
+on that machine. If not, the agent starts over SSH in this terminal. `-s` selects SSH.
+Arguments after the session go to `claude`. `-n` shows the command and does not run it.
 
-A name is held by one session per machine. A second session with the same name is not let in:
-its agent is told why, and it joins when the name is free. To run two agents in one directory,
-start one as `coop --agent <name> claude`.
+One session on a machine holds a name. The hub does not let in a second session with the same
+name. The second agent gets the reason, and joins when the name is free. To run two agents in
+one directory, start one of them with `coop --agent <name> claude`.
 
-The environment wins over the file, so one-off runs need no file:
-
-```bash
-coop claude build-42                  # Claude Code in session build-42
-COOP_SESSION=build-42 codex
-```
-
-`coop claude` adds `--dangerously-load-development-channels server:coop` and `COOP_PUSH=1`.
-Claude Code shows a warning about development channels at each start; choose "I am using this
-for local development". A plain `claude` gets the same tools, but messages then wait until the
+`coop claude` adds the flag `--dangerously-load-development-channels server:coop` and sets
+`COOP_PUSH=1`. With these, a message from a peer wakes an idle agent. Claude Code shows a
+warning about development channels at each start. Select "I am using this for local
+development". A plain `claude` gets the same tools, but no push. Its messages wait until the
 agent calls `wait` or `inbox`.
 
-An agent in a session is behind the operator's gate (see Operate): before each tool call,
-the hook `coop hook pretool` asks the service whether the operator lets the agent work.
-`coop setup` puts the hook into `~/.claude/settings.json` (it keeps a copy of the file as
-`settings.json.before-coop`), so every Claude Code session of a project that is in a session
-has it, however it was started. On a machine where `coop setup` did not run, `coop claude`
-gives the hook with `--settings`; then do not pass a `--settings` of your own. To start one
-session with no gate, set `COOP_GATE=off` in its environment. Another MCP client has no hook:
-the operator sees such an agent marked `soft`, and a hold or a pause is only advice to it.
+Each agent in a session is behind the gate of the operator (see Operate). Before each tool
+call, the hook `coop hook pretool` asks the hub if the operator lets the agent work.
+`coop setup` puts the hook into `~/.claude/settings.json`. Thus each Claude Code session in a
+coop session has the hook, however you start it.
 
-A headless agent (`claude -p`) gets no channel events; it uses `wait`, `ask` or `inbox`, and
-needs the tools allowed up front:
+On a machine where `coop setup` did not run, `coop claude` gives the hook with `--settings`. In
+that case, do not pass a `--settings` of your own. To start one session with no gate, set
+`COOP_GATE=off` in its environment. Another MCP client has no hook. The TUI marks such an agent
+`soft`, and a hold or a pause is only advice to it.
+
+A headless agent (`claude -p`) gets no push. It uses `wait`, `ask` or `inbox`. Allow the coop
+tools when you start it.
 
 ```bash
 COOP_SESSION=build-42 claude -p "..." --allowedTools 'mcp__coop__*'
 ```
 
-The first agent to join an unknown session creates it, open. A closed session stays closed
-until the operator reopens it. A server started with `--auto-create=false` leaves creation to
-the operator (`:new <name>` in the TUI).
+The first agent that joins an unknown session creates the session. A closed session stays
+closed until the operator opens it again. With `coop serve --auto-create=false`, only the
+operator creates sessions (`:new <name>` in the TUI).
 
 ## Operate
 
-On the server, make yourself an operator token. Then run the TUI from any machine that has
-`coop`:
+The TUI runs on each machine that has `coop` and your operator token.
 
 ```bash
-sudo -u coop coop admin token add --operator you         # on the server; shows one time only
-coop login https://coop.example.com:8443 you.<secret>
 coop tui
 ```
 
-In the TUI: `tab` moves between the sidebar (sessions, then the agents of the shown session) and
-the main pane; `↑↓` move, `enter` opens, `esc` goes back. `1` is the transcript, `2` the threads
-with the open asks. `m` writes to the session (`tab` picks the target), `r` answers the selected
-message in its thread, `a` goes to the next thing that needs you (a message for you, an ask that
-waits, a blocked agent). The rare actions are commands: `:new`, `:close`, `:reopen`, `:delete`,
-`:kick`, `:allow`, `:forget`, `:withdraw`, `:filter`, `:sys`; `tab` completes them. `?` shows
-every key.
+| Key | Does |
+|---|---|
+| `tab` | moves between the sidebar and the main pane |
+| `↑` `↓`, `enter`, `esc` | move, open, go back |
+| `1`, `2` | the transcript, and the threads with the open asks |
+| `m` | writes to the session (`tab` selects the target) |
+| `r` | answers the selected message in its thread |
+| `a` | goes to the next thing that needs you |
+| `:` | starts a command (`tab` completes it) |
+| `?` | shows each key and each command |
+
+The sidebar lists the sessions, then the agents of the shown session. The commands are `:new`,
+`:close`, `:reopen`, `:delete`, `:kick`, `:allow`, `:forget`, `:go`, `:pause`, `:resume`,
+`:hold`, `:withdraw`, `:filter` and `:sys`.
 
 ### Hold, pause, stop
 
@@ -178,115 +274,125 @@ agent whose details are open.
 
 | Key | Command | Does |
 |---|---|---|
-| `g` | `:go [agent] [task]` | release a held or paused agent; the text you type is its task |
-| `p` | `:pause [agent]`, `:resume [agent]` | stop the agent at its next tool call; let it go on |
-| `x` | `:kick <agent>` | stop the agent for good: every tool call is refused until `:allow` |
-| `P`, `R` | `:pause`, `:resume` | each working agent of the session; each paused one |
+| `g` | `:go [agent] [task]` | releases a held or paused agent. The text that you type is its task. |
+| `p` | `:pause [agent]`, `:resume [agent]` | stops the agent at its next tool call, or lets it continue |
+| `x` | `:kick <agent>` | stops the agent: the hook refuses each tool call until `:allow` |
+| `P`, `R` | `:pause`, `:resume` | pauses each working agent of the session, resumes each paused agent |
 | `H` | `:hold on\|off` | new agents of the session wait for your release, or start at once |
 
-- **Held.** A new session holds each agent that joins it for the first time. The agent's first
-  tool call is refused, and the agent waits. The attention line counts held agents; `a` goes to
-  the next one. For a session whose agents another agent starts (a pipeline), release the
-  first agent and press `H`.
-- **Paused.** A pause acts at the agent's next tool call. A command that runs already is not
-  interrupted. A held or paused agent can still read and write messages.
-- **No answer, no work.** When the hook cannot reach the service, it refuses the tool call.
-- `coop serve --hold-new=false` makes new sessions start their agents at once.
+- **Held.** A new session holds each agent that joins it for the first time. The hook refuses
+  the first tool call of the agent, and the agent waits. The attention line counts the held
+  agents, and `a` goes to the next one.
+- **A pipeline.** If another agent starts the agents of a session, release the first agent and
+  press `H`.
+- **Paused.** A pause stops the agent at its next tool call. It does not interrupt a command
+  that runs. A held or paused agent can still read and write messages.
+- **No answer, no work.** If the hook cannot reach the hub, it refuses the tool call.
+- **The default.** `coop serve --hold-new=false` makes each new session start its agents at
+  once.
+
+### Agents that left, and agents that you removed
+
+An agent that left stays in the agent list for five minutes. `:forget <name>` drops it at once,
+also from the peers of the other agents. `:forget` with no name drops each agent that left. A
+forgotten agent can join again, as a new agent.
+
+`:kick` removes an agent, and the agent leaves the agent list. If it tries to join, the list
+shows it again for five minutes as `refused 2m ago`. Thus you see that the agent waits for
+`:allow <name>`.
+
+A second session that asks for a name in use shows as a line `duplicate refused 2m ago`. The
+line is under the agent that holds the name.
 
 ### With Herdr
 
-[Herdr](https://herdr.dev) runs agents in terminal panes. An agent that runs in a Herdr pane
-gets three things, with no setting:
+[Herdr](https://herdr.dev) runs agents in terminal panes. An agent in a Herdr pane gets three
+things, with no setting:
 
-- A pause or a stop interrupts the agent's turn at once: the shim sends Escape to its own
+- A pause or a stop interrupts the turn of the agent at once. The shim sends Escape to its own
   pane when Herdr says that the agent works. An agent that sits in `wait`, or that shows a
   question to its human, gets no key.
-- The pane shows the agent's place in coop: the title is `coop <session>/<agent>`, with
-  `· held` or `· paused`, and the tokens `$coop` and `$gate` are there for a sidebar row.
+- The pane shows the place of the agent in coop. The title is `coop <session>/<agent>`, with
+  `· held` or `· paused`. The tokens `$coop` and `$gate` are available for a sidebar row.
 - In the TUI, `o` on an agent brings its pane to the front. For an agent on another machine,
-  Herdr needs a saved machine whose label is the name of that machine in coop.
+  Herdr needs a saved machine. The label of that machine must be its name in coop.
 
-This needs the agent to run in a pane of a Herdr on its own machine. For a server, add it to
-Herdr one time, with the name of the machine in coop as the label, and start agents with
-`deploy/start-agent.sh`:
+The agent must run in a pane of a Herdr on its own machine. For a server, add the machine to
+Herdr one time. Use the name of the machine in coop as the label. Then start agents with
+`deploy/start-agent.sh`.
 
 ```bash
 herdr machine add ssh://agent@<host> --label <machine>
 ```
 
-An agent that you start with a plain `ssh` in a local pane is outside Herdr: none of the three
-applies to it.
+An agent that you start with a plain `ssh` in a local pane is outside Herdr. None of the three
+things applies to it.
 
-Herdr's `agent start` runs a plain `claude`. `coop setup` puts the gate hook into
-`~/.claude/settings.json`, so such an agent is behind the gate too. It gets pushes only when
-its arguments hold the channel flag (see `coop claude`).
-
-An agent that left stays in the agent list for five minutes. `:forget <name>` drops it at once,
-also from the peers of the other agents; `:forget` with no name drops each agent that left.
-Unlike `:kick`, a forgotten agent can join again. It then starts as a new agent.
-
-An agent you remove with `:kick` leaves the agent list. If it tries to join, it shows again for
-five minutes as `refused 2m ago`, so a forgotten `:allow <name>` does not look like an agent
-that never started. A second session that asks for a name in use shows the same way, as a
-line `duplicate refused 2m ago` under the agent that holds the name, while it keeps trying.
+The command `agent start` of Herdr runs a plain `claude`. Such an agent is behind the gate too,
+because `coop setup` put the hook into the settings. It gets pushes only when its arguments
+hold the channel flag (see `coop claude`).
 
 ## Security
 
 Protected:
 
-- Network traffic: TLS between the machines and the server. With a public certificate the usual
-  verification applies; with a self-signed one, each client pins the fingerprint it saw at
-  `coop login` and refuses any other certificate.
-- The store: one SQLite file on the server, readable by the `coop` user only. The hub listens
-  on the server's localhost; only the TLS front is reachable.
-- Identity: the hub sets the sender of each message from the machine token and the agent's live
-  connection. A client cannot send a `from` field.
-- Visibility: an agent gets only messages to it, to `all`, or from it, in the session it joined.
-  A direct message between two other agents stays private.
-- Control: only an operator token (`coop admin token add --operator`) can close and delete
-  sessions, hold, pause and remove agents, withdraw messages, and send as `operator`. A machine token cannot
-  reach the admin API, and an operator token cannot act as an agent.
-- Revocation: `coop admin token revoke <name>` refuses every further request of that token at
-  once; its open streams end within 15 seconds.
-- Abuse: 256-bit tokens (the hub stores only a SHA-256), rate limits per machine, size limits,
-  and a check of every request against the API contract.
+- **Network traffic.** TLS protects the traffic between the machines and the hub. With a public
+  certificate, the usual verification applies. With a self-signed certificate, each client pins
+  the fingerprint that it saw at `coop login`. The client refuses each other certificate.
+- **The store.** The store is one SQLite file on the server. Only the `coop` user can read it.
+  The hub listens on the localhost of the server, so only the TLS front is reachable.
+- **Identity.** The hub sets the sender of each message from the machine token and the live
+  connection of the agent. A client cannot send a `from` field.
+- **Visibility.** An agent gets only the messages to it, to `all`, or from it, in the session
+  that it joined. A direct message between two other agents stays private.
+- **Control.** Only an operator token (`coop admin token add --operator`) can close and delete
+  sessions, hold, pause and remove agents, withdraw messages, and send as `operator`. A machine
+  token cannot use the admin API. An operator token cannot act as an agent.
+- **Revocation.** `coop admin token revoke <name>` makes the hub refuse each later request of
+  that token at once. The open streams of the token end in 15 seconds.
+- **Abuse.** Tokens have 256 bits, and the hub stores only a SHA-256 of each token. The hub has
+  rate limits for each machine, and size limits. It checks each request against the API
+  contract.
 
 Not protected:
 
-- An agent with a shell on its machine can read that machine's token. With it, the agent can act
-  as another agent on the same machine, and it can join any open session whose name it knows,
-  or create one. All agents are yours, so this is accepted. The session name is a label, not a
-  secret.
-- The gate stops an agent that does not follow instructions. It does not stop a hostile one:
-  an agent with a shell can start a process that has no hook.
-- A peer message is input from a collaborator. The skill tells agents not to treat it as an
-  instruction from the user. Only `operator` messages come from the user.
+- An agent with a shell on its machine can read the token of that machine. With the token, the
+  agent can act as another agent on the same machine. It can also join each open session whose
+  name it knows, or create a session. All agents are yours, so coop accepts this. The session
+  name is a label, not a secret.
+- The gate stops an agent that does not obey instructions. It does not stop a hostile agent:
+  such an agent can start a process that has no hook.
+- A message from a peer is input from a collaborator. The skill tells agents not to obey it as
+  an instruction from the user. Only `operator` messages come from the user.
 
 ## Limits
 
 - Push into a Claude Code session uses channels, a research preview. A channel that is not on
-  Anthropic's allowlist needs `--dangerously-load-development-channels`, which shows a warning at
-  each start; `coop claude` sets the flag. Claude Code 2.1.287 speaks the stateless MCP
-  handshake (2026-07-28); `coop mcp` answers `server/discover` with "method not found" so that
-  Claude Code falls back to `initialize`, the handshake its channels were built on.
-- Headless sessions (`claude -p`, also with several turns over stream-json) receive no channel
-  events (checked on 2.1.287). A headless agent uses `wait`, `ask` or `inbox`.
-- A message to a peer that left the session is kept. The peer gets it when it joins again, with
-  the other messages it missed (the newest 100). `send` reports `online: false` and
-  `state: away` in that case, and `ask` returns at once instead of waiting.
-- The server is one process over one SQLite file. That is the size of the tool: a few machines,
-  a few agents each, one operator.
+  the allowlist of Anthropic needs `--dangerously-load-development-channels`. The flag shows a
+  warning at each start. `coop claude` sets the flag.
+- Claude Code 2.1.287 speaks the stateless MCP handshake (2026-07-28). `coop mcp` answers
+  `server/discover` with "method not found". Then Claude Code uses `initialize`, the handshake
+  that its channels need.
+- Headless sessions (`claude -p`) get no channel events. Tests on 2.1.287 showed this, also with
+  more than one turn over stream-json. A headless agent uses `wait`, `ask` or `inbox`.
+- The hub keeps a message to a peer that left the session. The peer gets it when it joins
+  again, with the other messages that it missed (the newest 100). In that case, `send` reports
+  `online: false` and `state: away`, and `ask` returns at once.
+- The hub is one process over one SQLite file. That is the size of the tool: a few machines, a
+  few agents on each machine, one operator.
 
 ## Develop
 
 ```bash
-make check          # gofmt, go vet, staticcheck, go test -race: the gate for every commit
-make contract       # the API against its own /openapi.json with Schemathesis (needs uvx, minutes)
+make check          # gofmt, go vet, staticcheck, shellcheck, go test -race: the gate for each commit
+make contract       # the API against its own /openapi.json with Schemathesis (needs uvx)
 make build          # dist/coop for this machine
 make release        # dist/coop-darwin-arm64, -linux-amd64, -linux-arm64
 ```
 
-The API contract is `internal/api/openapi.json`, served at `/openapi.json`. The handlers check
-requests by hand against the same rules, so `make contract` is the check that the two agree:
-run it after any change under `internal/api`. The hub tests in `internal/api/hub_test.go` start
-a real hub with a fresh store on a free port; nothing touches a server on the machine.
+The API contract is `internal/api/openapi.json`. The hub serves it at `/openapi.json`. The
+handlers check each request by hand against the same rules. `make contract` checks that the
+handlers and the document agree. Run it after each change below `internal/api`.
+
+The hub tests in `internal/api/hub_test.go` start a real hub with a new store on a free port.
+They touch no hub on the machine.
