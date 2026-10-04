@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"unicode"
@@ -66,7 +67,9 @@ func ReadEnvFile(path string, warn func(string)) map[string]string {
 	if err != nil {
 		return map[string]string{}
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	// On Windows, Go gives a fixed mode (0666) that does not show the ACL of the file. The
+	// user profile ACL keeps the file private, so this check applies only on other systems.
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		warn(path + " is readable by other users; run: chmod 600 " + path)
 		return map[string]string{}
 	}
