@@ -466,7 +466,7 @@ func (v *Session) applyEvent(e *wire.Event) {
 			q.Question = m
 		}
 	case wire.EventKick:
-		v.insertItem(Item{Seq: e.Seq, At: e.At, SID: e.SID, Sys: &Sys{Who: e.Target, Text: "removed by the operator"}})
+		v.insertItem(Item{Seq: e.Seq, At: e.At, SID: e.SID, Sys: &Sys{Who: e.Target, Text: "removed by " + actor(e.By)}})
 	case wire.EventRedact:
 		v.redacted[e.ID] = true
 		if m := v.Msgs[e.ID]; m != nil {
@@ -523,14 +523,26 @@ func (v *Session) applyEvent(e *wire.Event) {
 		case "gate":
 			switch x.Gate {
 			case wire.GateHeld:
-				sys("is held until the operator releases it")
+				if x.By != "" {
+					sys("held by " + actor(x.By))
+				} else {
+					sys("is held until the operator releases it")
+				}
 			case wire.GatePaused:
-				sys("paused by the operator")
+				sys("paused by " + actor(x.By))
 			default:
-				sys("released by the operator")
+				sys("released by " + actor(x.By))
 			}
 		}
 	}
+}
+
+// actor names who made an admin change: the operator, or the orchestrator token by.
+func actor(by string) string {
+	if by == "" {
+		return "the operator"
+	}
+	return "the orchestrator " + by
 }
 
 // hasReplyFrom reports whether a reply to id from `from` is known.

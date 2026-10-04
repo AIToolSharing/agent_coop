@@ -3756,6 +3756,307 @@
       }
     },
     "/v1/admin/sessions/{sid}": {
+      "get": {
+        "summary": "A session with its agents: state, note and gate of each",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9_-]{1,64}$"
+            },
+            "required": true,
+            "name": "sid",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9_-]{1,64}$"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "open",
+                        "closed"
+                      ]
+                    },
+                    "title": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "closed_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "hold": {
+                      "type": "boolean"
+                    },
+                    "agents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                          },
+                          "online": {
+                            "type": "boolean"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "working",
+                              "blocked",
+                              "done",
+                              "idle",
+                              "left"
+                            ]
+                          },
+                          "note": {
+                            "type": "string",
+                            "maxLength": 500
+                          },
+                          "gate": {
+                            "type": "string",
+                            "enum": [
+                              "run",
+                              "held",
+                              "paused"
+                            ]
+                          },
+                          "waiting_on": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "operator"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                              }
+                            ]
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "orchestrator"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "online",
+                          "state",
+                          "gate"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "session",
+                    "status",
+                    "created_at",
+                    "hold",
+                    "agents"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed: not in a session, session closed, or removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown session or peer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "summary": "Delete a closed session with all its messages",
         "security": [
@@ -3882,6 +4183,641 @@
           },
           "409": {
             "description": "Conflict with the session state: name taken, ambiguous peer, or yourself",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/sessions/{sid}/messages": {
+      "get": {
+        "summary": "Read every message of a session, also those between two agents",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9_-]{1,64}$"
+            },
+            "required": true,
+            "name": "sid",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,15}$"
+            },
+            "required": false,
+            "name": "after",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every message of the session, oldest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "messages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^[1-9][0-9]{0,15}$"
+                          },
+                          "from": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "operator"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                              }
+                            ]
+                          },
+                          "to": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "all"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "operator"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                              }
+                            ]
+                          },
+                          "text": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 8000
+                          },
+                          "reply_to": {
+                            "type": "string",
+                            "pattern": "^[1-9][0-9]{0,15}$"
+                          },
+                          "sent_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "from",
+                          "to",
+                          "text",
+                          "sent_at"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "messages"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed: not in a session, session closed, or removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown session or peer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Send a message as the operator",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9_-]{1,64}$"
+            },
+            "required": true,
+            "name": "sid",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "to": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "all"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^(?!(?:operator|all)(?:@|$))[a-z0-9_-]{1,64}(?:@[a-z0-9_-]{1,64})?$"
+                      }
+                    ]
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8000
+                  },
+                  "reply_to": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,15}$"
+                  }
+                },
+                "required": [
+                  "to",
+                  "text"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,15}$"
+                    },
+                    "to": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "all"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                        }
+                      ]
+                    },
+                    "sent_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "to",
+                    "sent_at"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed: not in a session, session closed, or removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown session or peer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict with the session state: name taken, ambiguous peer, or yourself",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthorized",
+                        "forbidden",
+                        "not_found",
+                        "conflict",
+                        "ambiguous",
+                        "too_large",
+                        "invalid",
+                        "rate_limited",
+                        "unavailable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Invalid input",
             "content": {
               "application/json": {
                 "schema": {
@@ -5389,347 +6325,6 @@
           },
           "409": {
             "description": "Conflict with the session state: name taken, ambiguous peer, or yourself",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "enum": [
-                        "unauthorized",
-                        "forbidden",
-                        "not_found",
-                        "conflict",
-                        "ambiguous",
-                        "too_large",
-                        "invalid",
-                        "rate_limited",
-                        "unavailable"
-                      ]
-                    },
-                    "message": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "message"
-                  ],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Invalid input",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "enum": [
-                        "unauthorized",
-                        "forbidden",
-                        "not_found",
-                        "conflict",
-                        "ambiguous",
-                        "too_large",
-                        "invalid",
-                        "rate_limited",
-                        "unavailable"
-                      ]
-                    },
-                    "message": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "message"
-                  ],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limit",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "enum": [
-                        "unauthorized",
-                        "forbidden",
-                        "not_found",
-                        "conflict",
-                        "ambiguous",
-                        "too_large",
-                        "invalid",
-                        "rate_limited",
-                        "unavailable"
-                      ]
-                    },
-                    "message": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "message"
-                  ],
-                  "additionalProperties": false
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/admin/sessions/{sid}/messages": {
-      "post": {
-        "summary": "Send a message as the operator",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "pattern": "^[a-z0-9_-]{1,64}$"
-            },
-            "required": true,
-            "name": "sid",
-            "in": "path"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "to": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "enum": [
-                          "all"
-                        ]
-                      },
-                      {
-                        "type": "string",
-                        "pattern": "^(?!(?:operator|all)(?:@|$))[a-z0-9_-]{1,64}(?:@[a-z0-9_-]{1,64})?$"
-                      }
-                    ]
-                  },
-                  "text": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 8000
-                  },
-                  "reply_to": {
-                    "type": "string",
-                    "pattern": "^[1-9][0-9]{0,15}$"
-                  }
-                },
-                "required": [
-                  "to",
-                  "text"
-                ],
-                "additionalProperties": false
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Sent",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "pattern": "^[1-9][0-9]{0,15}$"
-                    },
-                    "to": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "all"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
-                        }
-                      ]
-                    },
-                    "sent_at": {
-                      "type": "string",
-                      "format": "date-time"
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "to",
-                    "sent_at"
-                  ],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "enum": [
-                        "unauthorized",
-                        "forbidden",
-                        "not_found",
-                        "conflict",
-                        "ambiguous",
-                        "too_large",
-                        "invalid",
-                        "rate_limited",
-                        "unavailable"
-                      ]
-                    },
-                    "message": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "message"
-                  ],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Not allowed: not in a session, session closed, or removed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "enum": [
-                        "unauthorized",
-                        "forbidden",
-                        "not_found",
-                        "conflict",
-                        "ambiguous",
-                        "too_large",
-                        "invalid",
-                        "rate_limited",
-                        "unavailable"
-                      ]
-                    },
-                    "message": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "message"
-                  ],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown session or peer",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "enum": [
-                        "unauthorized",
-                        "forbidden",
-                        "not_found",
-                        "conflict",
-                        "ambiguous",
-                        "too_large",
-                        "invalid",
-                        "rate_limited",
-                        "unavailable"
-                      ]
-                    },
-                    "message": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "message"
-                  ],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict with the session state: name taken, ambiguous peer, or yourself",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "enum": [
-                        "unauthorized",
-                        "forbidden",
-                        "not_found",
-                        "conflict",
-                        "ambiguous",
-                        "too_large",
-                        "invalid",
-                        "rate_limited",
-                        "unavailable"
-                      ]
-                    },
-                    "message": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "message"
-                  ],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "Invalid input",
             "content": {
               "application/json": {
                 "schema": {

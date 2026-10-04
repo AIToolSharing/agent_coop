@@ -120,6 +120,9 @@ type StreamQuery struct {
 	Gated bool
 	// HerdrPane is the Herdr pane that the agent runs in, or "".
 	HerdrPane string
+	// Role is the role of the token that joins: machine or orchestrator. The API sets it from
+	// the token, never from the query.
+	Role string
 }
 
 // Message is a message as an agent gets it.
@@ -341,6 +344,8 @@ type Conn struct {
 	gated bool
 	// herdrPane is the Herdr pane that the agent runs in, or "".
 	herdrPane string
+	// orchestrator: the agent joined with an orchestrator token.
+	orchestrator bool
 	// quiet is the sequence of a gate record that the agent gets no notice of, or 0.
 	quiet int64
 	// sent holds the ids of the messages written to the stream, for redact notices.
@@ -434,8 +439,10 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 		// A new process of an agent the hub knows gets what the agent missed.
 		startSeq = known.SeenSeq + 1
 	}
-	// An agent that the hub does not know starts held when the session holds new agents.
-	gate := gateOf(gateInput{Known: isKnown, Gate: known.Gate, Hold: row.Record.Hold})
+	// An agent that the hub does not know starts held when the session holds new agents. An
+	// orchestrator does not: it releases the others.
+	trusted := q.Role == wire.RoleOrchestrator
+	gate := gateOf(gateInput{Known: isKnown, Gate: known.Gate, Hold: row.Record.Hold, Trusted: trusted})
 	key := wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: me})
 	old := h.conns[key]
 	if old != nil && old.instance != q.Instance {
@@ -451,7 +458,7 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 		joinedAt: h.now(), resumed: old != nil,
 		out:   make(chan item, 256),
 		state: "idle", sent: map[string]bool{},
-		gate: gate, gated: q.Gated, herdrPane: q.HerdrPane,
+		gate: gate, gated: q.Gated, herdrPane: q.HerdrPane, orchestrator: trusted,
 		status: row.Record.Status, reason: "disconnected", done: make(chan struct{}),
 	}
 	h.conns[key] = c
@@ -494,7 +501,7 @@ func (h *Hub) Run(ctx context.Context, j *Joined, sink Sink) {
 		if err == nil && j.hold {
 			// The first join in a session that holds new agents: record the hold. The agent
 			// gets no notice of it: the joined event tells it the gate.
-			c.quiet, err = h.recordGateLocked(c.sid, me, wire.GateHeld)
+			c.quiet, err = h.recordGateLocked(c.sid, me, wire.GateHeld, "")
 		}
 		if err != nil {
 			h.mu.Unlock()
@@ -689,6 +696,9 @@ func (c *Conn) presence() wire.PresenceRecord {
 		Host: c.host, Cwd: c.cwd, Client: c.client, State: c.state, Note: c.note,
 		JoinedAt: c.joinedAt, Gated: c.gated, HerdrPane: c.herdrPane,
 	}
+	if c.orchestrator {
+		r.Role = wire.RoleOrchestrator
+	}
 	if c.waiting != nil {
 		w := *c.waiting
 		r.Waiting = &w
@@ -861,6 +871,92 @@ func (h *Hub) History(machine, sid string, q HistoryQuery) ([]Message, error) {
 
 // --- The admin API: the operator token ---------------------------------------------------------
 
+// AgentView is one agent of a session as the operator sees it.
+type AgentView struct {
+	Name      string `json:"name"`
+	Online    bool   `json:"online"`
+	State     string `json:"state"`
+	Note      string `json:"note,omitempty"`
+	Gate      string `json:"gate"`
+	WaitingOn string `json:"waiting_on,omitempty"`
+	Role      string `json:"role,omitempty"`
+}
+
+// AdminSessionView is a session with each agent in it or known to it, except removed ones.
+type AdminSessionView struct {
+	wire.SessionInfo
+	Agents []AgentView `json:"agents"`
+}
+
+// AdminSession gives a session and its agents, by name: the live ones with their presence,
+// the others with what they reported last.
+func (h *Hub) AdminSession(sid string) (AdminSessionView, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	row, ok, err := h.st.Session(sid)
+	if err != nil {
+		return AdminSessionView{}, storeErr(err)
+	}
+	if !ok {
+		return AdminSessionView{}, errf("not_found", "no session %s", sid)
+	}
+	agents := []AgentView{}
+	for _, c := range h.inSessionLocked(sid) {
+		a := AgentView{Name: c.me.String(), Online: true, State: c.state, Note: c.note, Gate: c.gate}
+		if c.waiting != nil {
+			a.WaitingOn = c.waiting.On
+		}
+		if c.orchestrator {
+			a.Role = wire.RoleOrchestrator
+		}
+		agents = append(agents, a)
+	}
+	away, err := h.awayLocked(sid)
+	if err != nil {
+		return AdminSessionView{}, storeErr(err)
+	}
+	for _, k := range away {
+		agents = append(agents, AgentView{Name: k.Agent, State: k.State, Note: k.Note, Gate: k.Gate})
+	}
+	sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
+	return AdminSessionView{SessionInfo: wire.SessionInfo{Session: sid, SessionRecord: row.Record}, Agents: agents}, nil
+}
+
+// AllMessagesQuery pages through the messages of a session. With After, it gives the first
+// Limit messages after that id; without, the newest Limit.
+type AllMessagesQuery struct {
+	After int64
+	Limit int
+}
+
+// AllMessages gives the messages of a session, each one, also those between two agents,
+// oldest first. The operator, an orchestrator and a reporter read them.
+func (h *Hub) AllMessages(sid string, q AllMessagesQuery) ([]Message, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.requireSessionLocked(sid); err != nil {
+		return nil, err
+	}
+	last, err := h.st.LastSeq()
+	if err != nil {
+		return nil, storeErr(err)
+	}
+	events, err := h.st.Events(sid, q.After+1, last, wire.EventMsg)
+	if err != nil {
+		return nil, storeErr(err)
+	}
+	if q.After > 0 {
+		events = events[:min(len(events), q.Limit)]
+	} else {
+		events = events[max(0, len(events)-q.Limit):]
+	}
+	msgs := make([]Message, 0, len(events))
+	for i := range events {
+		msgs = append(msgs, toMessage(&events[i]))
+	}
+	return msgs, nil
+}
+
 func (h *Hub) ListSessions() ([]wire.SessionInfo, error) {
 	rows, err := h.st.Sessions()
 	if err != nil {
@@ -935,7 +1031,9 @@ func (h *Hub) DeleteSession(sid string) error {
 	return nil
 }
 
-func (h *Hub) Kick(sid string, target wire.Address) error {
+// Kick removes an agent from a session. by is the orchestrator token that does it, or "" for
+// the operator.
+func (h *Hub) Kick(sid string, target wire.Address, by string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if err := h.requireSessionLocked(sid); err != nil {
@@ -947,7 +1045,7 @@ func (h *Hub) Kick(sid string, target wire.Address) error {
 		return storeErr(err)
 	}
 	h.feedAll("kick", kickOut{Kind: "kick", Key: kickKey(sid, target.String()), Revision: rev, Record: &wire.KickRecord{At: at}}, "")
-	_, err = h.publishLocked(wire.Event{Kind: wire.EventKick, SID: sid, Target: target.String(), At: at}, false, nil)
+	_, err = h.publishLocked(wire.Event{Kind: wire.EventKick, SID: sid, Target: target.String(), At: at, By: by}, false, nil)
 	return storeErr(err)
 }
 
@@ -1000,18 +1098,21 @@ type gateInput struct {
 	Known  bool   // the agent joined the session before
 	Gate   string // the gate of a known agent
 	Hold   bool   // the session holds an agent that joins for the first time
+	// Trusted: the agent is an orchestrator. The operator can pause or stop it, but the
+	// session does not hold it at its first join.
+	Trusted bool
 }
 
 // gateOf gives the gate of an agent: removed, or run, held or paused. An agent that did not
-// join yet is held when the session holds new agents. Thus a tool call that comes before the
-// join does not get through.
+// join yet is held when the session holds new agents, unless it is an orchestrator. Thus a
+// tool call that comes before the join does not get through.
 func gateOf(in gateInput) string {
 	switch {
 	case in.Kicked:
 		return GateRemoved
 	case in.Known:
 		return in.Gate
-	case in.Hold:
+	case in.Hold && !in.Trusted:
 		return wire.GateHeld
 	}
 	return wire.GateRun
@@ -1028,14 +1129,14 @@ func gateNotice(gate string) string {
 // Gate answers an agent's question before a tool call: may I work? The answer is run, held,
 // paused or removed. The agent does not have to be in the session: a session that does not
 // exist yet holds new agents when the hub does.
-func (h *Hub) Gate(machine, sid, agent string) (string, error) {
+func (h *Hub) Gate(machine, sid, agent, role string) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if !h.act.take(machine) {
 		return "", errf("rate_limited", "too many updates")
 	}
 	me := wire.Address{Agent: agent, Machine: machine}.String()
-	in := gateInput{Hold: h.opt.HoldNew}
+	in := gateInput{Hold: h.opt.HoldNew, Trusted: role == wire.RoleOrchestrator}
 	var err error
 	if in.Kicked, err = h.st.Kicked(sid, me); err != nil {
 		return "", storeErr(err)
@@ -1055,20 +1156,21 @@ func (h *Hub) Gate(machine, sid, agent string) (string, error) {
 
 // recordGateLocked stores the gate of a known agent and appends the record of the change. The
 // agent, when it is in the session, gets the record as a notice.
-func (h *Hub) recordGateLocked(sid, agent, gate string) (seq int64, err error) {
+func (h *Hub) recordGateLocked(sid, agent, gate, by string) (seq int64, err error) {
 	if _, err := h.st.SetGate(sid, agent, gate); err != nil {
 		return 0, storeErr(err)
 	}
 	seq, err = h.publishLocked(wire.Event{Kind: wire.EventActivity, SID: sid, From: agent, Activity: &wire.Activity{
-		Kind: "gate", Gate: gate, At: h.now(),
+		Kind: "gate", Gate: gate, At: h.now(), By: by,
 	}}, false, nil)
 	return seq, storeErr(err)
 }
 
 // SetGate sets the gate of one agent of a session, or of each agent that is not removed when
 // target is nil: run lets it work, paused and held stop its tool calls. An agent that has that
-// gate already gets no record.
-func (h *Hub) SetGate(sid string, target *wire.Address, gate string) error {
+// gate already gets no record. by is the orchestrator token that sets it, or "" for the
+// operator.
+func (h *Hub) SetGate(sid string, target *wire.Address, gate, by string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if err := h.requireSessionLocked(sid); err != nil {
@@ -1106,7 +1208,7 @@ func (h *Hub) SetGate(sid string, target *wire.Address, gate string) error {
 				c.gate = gate
 			}
 		}
-		if _, err := h.recordGateLocked(sid, k.Agent, gate); err != nil {
+		if _, err := h.recordGateLocked(sid, k.Agent, gate, by); err != nil {
 			return err
 		}
 	}

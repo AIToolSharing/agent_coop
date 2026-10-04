@@ -94,6 +94,8 @@ func New(h *hub.Hub, log func(format string, args ...any)) *Server {
 	s.add("POST", "/v1/sessions/{sid}/trace", kindAgent, s.trace)
 	s.add("GET", "/v1/sessions/{sid}", kindAgent, s.view)
 	s.add("GET", "/v1/admin/sessions", kindRead, s.adminSessions)
+	s.add("GET", "/v1/admin/sessions/{sid}", kindRead, s.adminSession)
+	s.add("GET", "/v1/admin/sessions/{sid}/messages", kindRead, s.adminMessages)
 	s.add("POST", "/v1/admin/sessions", kindAct, s.adminCreate)
 	s.add("POST", "/v1/admin/sessions/{sid}/close", kindAct, s.adminClose)
 	s.add("POST", "/v1/admin/sessions/{sid}/reopen", kindAct, s.adminReopen)
@@ -343,6 +345,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, owner hub.Owner,
 		writeHubError(w, err)
 		return
 	}
+	q.Role = owner.Role
 	joined, err := s.hub.Join(owner.Name, sid, q, r.Header.Get("Last-Event-ID"))
 	if err != nil {
 		writeHubError(w, err)
@@ -396,7 +399,7 @@ func (s *Server) gate(w http.ResponseWriter, r *http.Request, owner hub.Owner, s
 		writeHubError(w, err)
 		return
 	}
-	gate, err := s.hub.Gate(owner.Name, sid, agent)
+	gate, err := s.hub.Gate(owner.Name, sid, agent, owner.Role)
 	if err != nil {
 		writeHubError(w, err)
 		return
@@ -494,7 +497,43 @@ func (s *Server) adminDelete(w http.ResponseWriter, _ *http.Request, _ hub.Owner
 	s.done(w, s.hub.DeleteSession(sid))
 }
 
-func (s *Server) adminKick(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
+// actor is what the record of an admin change names: the orchestrator token, or "" for the
+// operator.
+func actor(owner hub.Owner) string {
+	if owner.Role == wire.RoleOrchestrator {
+		return owner.Name
+	}
+	return ""
+}
+
+func (s *Server) adminSession(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
+	if _, err := query(r.URL.Query()); err != nil {
+		writeHubError(w, err)
+		return
+	}
+	v, err := s.hub.AdminSession(sid)
+	if err != nil {
+		writeHubError(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
+func (s *Server) adminMessages(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
+	q, err := parseAllMessagesQuery(r.URL.Query())
+	if err != nil {
+		writeHubError(w, err)
+		return
+	}
+	msgs, err := s.hub.AllMessages(sid, q)
+	if err != nil {
+		writeHubError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"messages": msgs})
+}
+
+func (s *Server) adminKick(w http.ResponseWriter, r *http.Request, owner hub.Owner, sid string) {
 	b, ok := body(w, r)
 	if !ok {
 		return
@@ -504,7 +543,7 @@ func (s *Server) adminKick(w http.ResponseWriter, r *http.Request, _ hub.Owner, 
 		writeHubError(w, err)
 		return
 	}
-	s.done(w, s.hub.Kick(sid, target))
+	s.done(w, s.hub.Kick(sid, target, actor(owner)))
 }
 
 func (s *Server) adminUnkick(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
@@ -533,7 +572,7 @@ func (s *Server) adminForget(w http.ResponseWriter, r *http.Request, _ hub.Owner
 	s.done(w, s.hub.Forget(sid, target))
 }
 
-func (s *Server) adminGate(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
+func (s *Server) adminGate(w http.ResponseWriter, r *http.Request, owner hub.Owner, sid string) {
 	b, ok := body(w, r)
 	if !ok {
 		return
@@ -543,7 +582,7 @@ func (s *Server) adminGate(w http.ResponseWriter, r *http.Request, _ hub.Owner, 
 		writeHubError(w, err)
 		return
 	}
-	s.done(w, s.hub.SetGate(sid, target, gate))
+	s.done(w, s.hub.SetGate(sid, target, gate, actor(owner)))
 }
 
 func (s *Server) adminHold(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {

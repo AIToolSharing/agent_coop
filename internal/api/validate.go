@@ -188,6 +188,30 @@ func parseHistoryQuery(q url.Values) (hub.HistoryQuery, error) {
 	return h, nil
 }
 
+// parseAllMessagesQuery reads the paging of GET /v1/admin/sessions/{sid}/messages: after, a
+// message id, and limit, 1 to 200 (default 50).
+func parseAllMessagesQuery(q url.Values) (hub.AllMessagesQuery, error) {
+	m, err := query(q, "after", "limit")
+	if err != nil {
+		return hub.AllMessagesQuery{}, err
+	}
+	r := hub.AllMessagesQuery{Limit: 50}
+	if after, ok := m["after"]; ok {
+		if !wire.IsID(after) {
+			return r, invalid("after: not a message id")
+		}
+		r.After, _ = strconv.ParseInt(after, 10, 64)
+	}
+	if limit, ok := m["limit"]; ok {
+		n, err := strconv.Atoi(limit)
+		if err != nil || n < 1 || n > 200 {
+			return r, invalid("limit: an integer from 1 to 200")
+		}
+		r.Limit = n
+	}
+	return r, nil
+}
+
 // parseAgentBody reads a body that holds only the agent name.
 func parseAgentBody(body []byte) (string, error) {
 	var b struct {

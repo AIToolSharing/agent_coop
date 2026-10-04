@@ -115,6 +115,9 @@ func event() *rapid.Generator[wire.Event] {
 			e.Kind = wire.EventKick
 			e.Target = address().Draw(t, "target").String()
 			e.At = iso.Draw(t, "at")
+			if rapid.Bool().Draw(t, "by orchestrator") {
+				e.By = token.Draw(t, "by")
+			}
 		case 2:
 			e.Kind = wire.EventRedact
 			e.ID = id.Draw(t, "id")
@@ -159,6 +162,9 @@ func event() *rapid.Generator[wire.Event] {
 			case 6:
 				a.Kind = "gate"
 				a.Gate = rapid.SampledFrom([]string{"run", "held", "paused"}).Draw(t, "gate")
+				if rapid.Bool().Draw(t, "gate by orchestrator") {
+					a.By = token.Draw(t, "gate by")
+				}
 			default:
 				a.Kind = "wait_end"
 				a.Result = rapid.SampledFrom([]string{"message", "timeout", "cancelled"}).Draw(t, "result")
@@ -222,6 +228,10 @@ func TestDecodeMatchesTheTypeScriptWireFormat(t *testing.T) {
 		{"coop.build-42.ops", `{"kind":"what"}`},
 		{"nope.build-42.ops", `{"kind":"redact","id":"1","at":"2026-09-30T12:00:45.000Z"}`},
 		{"coop.build-42.evt.mac-1.alice", `not json`},
+		// by names a token: no address, no other text. A message or a redact has no by.
+		{"coop.build-42.ops", `{"kind":"kick","target":"bob@vps-2","at":"2026-09-30T12:01:00.000Z","by":"pm@orch"}`},
+		{"coop.build-42.ops", `{"kind":"redact","id":"1","at":"2026-09-30T12:00:45.000Z","by":"orch"}`},
+		{"coop.build-42.evt.mac-1.alice", `{"kind":"gate","gate":"run","at":"2026-09-30T12:00:45.000Z","by":"Orch"}`},
 	} {
 		if _, ok := wire.DecodeEvent(bad.subject, []byte(bad.payload), 1); ok {
 			t.Errorf("accepted %s %s", bad.subject, bad.payload)

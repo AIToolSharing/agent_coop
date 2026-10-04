@@ -195,6 +195,9 @@ type PresenceRecord struct {
 	Gated bool `json:"gated,omitempty"`
 	// HerdrPane is the Herdr pane that the agent runs in, for example w1:p3; "" for none.
 	HerdrPane string `json:"herdr_pane,omitempty"`
+	// Role is RoleOrchestrator for an agent that may also act for the operator; "" for an
+	// agent of a machine token.
+	Role string `json:"role,omitempty"`
 }
 
 // Gates: whether the operator lets an agent work.
@@ -235,6 +238,8 @@ type Event struct {
 	ID string
 	// Kick and redact.
 	At string
+	// Kick: the orchestrator token that removed the agent; "" for the operator.
+	By string
 	// Activity fields.
 	Activity *Activity
 }
@@ -261,6 +266,8 @@ type Activity struct {
 	Result string `json:"result,omitempty"`
 	// gate: run held paused. The hub writes it when the gate of the agent changes.
 	Gate string `json:"gate,omitempty"`
+	// By is the orchestrator token that changed the gate; "" for the operator and the hub.
+	By string `json:"by,omitempty"`
 }
 
 type msgPayload struct {
@@ -279,6 +286,7 @@ type opsPayload struct {
 	Target  string `json:"target,omitempty"`
 	ID      string `json:"id,omitempty"`
 	At      string `json:"at,omitempty"`
+	By      string `json:"by,omitempty"`
 }
 
 // EncodeEvent gives the subject and the payload that carry e. The inverse of DecodeEvent.
@@ -296,7 +304,7 @@ func EncodeEvent(e Event) (subject string, payload []byte, err error) {
 		payload, err = json.Marshal(msgPayload{To: e.To, Text: e.Text, ReplyTo: e.ReplyTo, SentAt: e.SentAt})
 		return BuildSubject(Subject{Kind: "msg", SID: e.SID, From: from}), payload, err
 	case EventKick:
-		payload, err = json.Marshal(opsPayload{Kind: "kick", Target: e.Target, At: e.At})
+		payload, err = json.Marshal(opsPayload{Kind: "kick", Target: e.Target, At: e.At, By: e.By})
 		return BuildSubject(Subject{Kind: "ops", SID: e.SID}), payload, err
 	case EventRedact:
 		payload, err = json.Marshal(opsPayload{Kind: "redact", ID: e.ID, At: e.At})
@@ -367,17 +375,17 @@ func DecodeEvent(subject string, payload []byte, seq int64) (Event, bool) {
 		}
 		switch p.Kind {
 		case "msg":
-			if !isRecipient(p.To) || !validText(p.Text) || !optionalID(p.ReplyTo) || !IsTime(p.SentAt) || p.Target != "" || p.ID != "" || p.At != "" {
+			if !isRecipient(p.To) || !validText(p.Text) || !optionalID(p.ReplyTo) || !IsTime(p.SentAt) || p.Target != "" || p.ID != "" || p.At != "" || p.By != "" {
 				return Event{}, false
 			}
 			return Event{Kind: EventMsg, Seq: seq, SID: s.SID, From: Operator, To: p.To, Text: p.Text, ReplyTo: p.ReplyTo, SentAt: p.SentAt}, true
 		case "kick":
-			if _, ok := ParseAddress(p.Target); !ok || !IsTime(p.At) || p.To != "" || p.Text != "" || p.ID != "" {
+			if _, ok := ParseAddress(p.Target); !ok || !IsTime(p.At) || p.To != "" || p.Text != "" || p.ID != "" || p.By != "" && !IsToken(p.By) {
 				return Event{}, false
 			}
-			return Event{Kind: EventKick, Seq: seq, SID: s.SID, Target: p.Target, At: p.At}, true
+			return Event{Kind: EventKick, Seq: seq, SID: s.SID, Target: p.Target, At: p.At, By: p.By}, true
 		case "redact":
-			if !IsID(p.ID) || !IsTime(p.At) || p.To != "" || p.Text != "" || p.Target != "" {
+			if !IsID(p.ID) || !IsTime(p.At) || p.To != "" || p.Text != "" || p.Target != "" || p.By != "" {
 				return Event{}, false
 			}
 			return Event{Kind: EventRedact, Seq: seq, SID: s.SID, ID: p.ID, At: p.At}, true
@@ -421,7 +429,7 @@ func validActivity(a Activity) bool {
 		// The operator dropped an agent that left from the lists. The hub writes it.
 		return true
 	case "gate":
-		return IsGate(a.Gate)
+		return IsGate(a.Gate) && (a.By == "" || IsToken(a.By))
 	}
 	return false
 }

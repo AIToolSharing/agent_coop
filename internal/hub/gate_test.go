@@ -13,13 +13,15 @@ import (
 func TestGateOfLetsAnAgentWorkOnlyWhenNothingStopsIt(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		in := gateInput{
-			Kicked: rapid.Bool().Draw(rt, "kicked"),
-			Known:  rapid.Bool().Draw(rt, "known"),
-			Gate:   rapid.SampledFrom([]string{wire.GateRun, wire.GateHeld, wire.GatePaused}).Draw(rt, "gate"),
-			Hold:   rapid.Bool().Draw(rt, "hold"),
+			Kicked:  rapid.Bool().Draw(rt, "kicked"),
+			Known:   rapid.Bool().Draw(rt, "known"),
+			Gate:    rapid.SampledFrom([]string{wire.GateRun, wire.GateHeld, wire.GatePaused}).Draw(rt, "gate"),
+			Hold:    rapid.Bool().Draw(rt, "hold"),
+			Trusted: rapid.Bool().Draw(rt, "trusted"),
 		}
 		got := gateOf(in)
-		mayWork := !in.Kicked && (in.Known && in.Gate == wire.GateRun || !in.Known && !in.Hold)
+		// An orchestrator is not held at its first join, but a pause or a stop holds it too.
+		mayWork := !in.Kicked && (in.Known && in.Gate == wire.GateRun || !in.Known && (!in.Hold || in.Trusted))
 		if (got == wire.GateRun) != mayWork {
 			rt.Fatalf("gateOf(%+v) = %q, may work = %v", in, got, mayWork)
 		}
