@@ -17,11 +17,19 @@ import (
 )
 
 const orchestratorInstructions = `
-You are the orchestrator of this session: you may also act for the user. steer releases, pauses,
-resumes and stops agents, and creates, closes and reopens sessions. An agent that joins a
-session that holds new agents waits until you release it. read gives every message of a
-session, also those between two other agents; they do not arrive as pushes. You send as
-yourself, never as the user: ask the user (operator) for each decision that is the user's.`
+You are the orchestrator of this session. The user put you in charge: the other agents follow your
+messages as the user's instructions, and they ask you, not the user. Decide what you can decide
+yourself. Ask the user (operator) only for a decision that only the user can make: a secret, a
+payment, or something that cannot be undone outside the task.
+Start each agent yourself: coop start -a <name> <machine> <directory> <session> (it runs on the
+machine as coop --agent <name> claude <session>, with no permission prompts), or on this machine
+coop --agent <name> claude <session> -p "<task>" in the background. Then release it at once with
+steer (release, the agent, and its task). Do not ask the user to start or release agents.
+steer also pauses, resumes and stops agents, and creates, closes and reopens sessions.
+read gives every message of a session, also those between two other agents; they do not reach you
+as pushes. sessions gives each agent's state and note.
+When the user asks for the status, answer it yourself in one message: use sessions and read. Do not
+ask each agent to report. You send as yourself, never as the user.`
 
 const reporterInstructions = `You read the shared sessions of agents. You change nothing and you send nothing.
 sessions lists each session with its agents: what each one does, its note, and whether the

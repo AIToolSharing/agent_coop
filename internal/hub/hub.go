@@ -133,6 +133,9 @@ type Message struct {
 	Text    string `json:"text"`
 	ReplyTo string `json:"reply_to,omitempty"`
 	SentAt  string `json:"sent_at"`
+	// FromRole is "orchestrator" when an orchestrator sent the message: it speaks for the
+	// user in the session.
+	FromRole string `json:"from_role,omitempty"`
 }
 
 // Notice is something the agent must know that is not a message.
@@ -176,6 +179,8 @@ type Peer struct {
 	// written to.
 	Online    bool   `json:"online"`
 	WaitingOn string `json:"waiting_on,omitempty"`
+	// Role is "orchestrator" for a peer that may act for the user.
+	Role string `json:"role,omitempty"`
 }
 
 type SessionView struct {
@@ -726,7 +731,11 @@ func (h *Hub) Send(machine, sid string, req SendRequest) (SendResponse, error) {
 		return SendResponse{}, err
 	}
 	sentAt := h.now()
-	seq, err := h.publishLocked(wire.Event{Kind: wire.EventMsg, SID: sid, From: c.me.String(), To: to, Text: req.Text, ReplyTo: req.ReplyTo, SentAt: sentAt}, false, nil)
+	e := wire.Event{Kind: wire.EventMsg, SID: sid, From: c.me.String(), To: to, Text: req.Text, ReplyTo: req.ReplyTo, SentAt: sentAt}
+	if c.orchestrator {
+		e.FromRole = wire.RoleOrchestrator
+	}
+	seq, err := h.publishLocked(e, false, nil)
 	if err != nil {
 		return SendResponse{}, storeErr(err)
 	}
@@ -810,6 +819,9 @@ func (h *Hub) View(machine, sid, agent string) (SessionView, error) {
 			continue
 		}
 		peer := Peer{Name: p.me.String(), State: p.state, Note: p.note, Online: true}
+		if p.orchestrator {
+			peer.Role = wire.RoleOrchestrator
+		}
 		if p.waiting != nil {
 			peer.WaitingOn = p.waiting.On
 		}
@@ -1674,5 +1686,5 @@ func between(e *wire.Event, me, peer string) bool {
 }
 
 func toMessage(e *wire.Event) Message {
-	return Message{ID: strconv.FormatInt(e.Seq, 10), From: e.From, To: e.To, Text: e.Text, ReplyTo: e.ReplyTo, SentAt: e.SentAt}
+	return Message{ID: strconv.FormatInt(e.Seq, 10), From: e.From, To: e.To, Text: e.Text, ReplyTo: e.ReplyTo, SentAt: e.SentAt, FromRole: e.FromRole}
 }

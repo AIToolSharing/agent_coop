@@ -232,6 +232,8 @@ type Event struct {
 	Text    string
 	ReplyTo string
 	SentAt  string
+	// FromRole is RoleOrchestrator for a message of an orchestrator; "" else.
+	FromRole string
 	// Kick field.
 	Target string
 	// Redact field.
@@ -275,6 +277,7 @@ type msgPayload struct {
 	Text    string `json:"text"`
 	ReplyTo string `json:"reply_to,omitempty"`
 	SentAt  string `json:"sent_at"`
+	Role    string `json:"role,omitempty"`
 }
 
 type opsPayload struct {
@@ -301,7 +304,7 @@ func EncodeEvent(e Event) (subject string, payload []byte, err error) {
 		if !ok {
 			return "", nil, fmt.Errorf("wire: bad sender %q", e.From)
 		}
-		payload, err = json.Marshal(msgPayload{To: e.To, Text: e.Text, ReplyTo: e.ReplyTo, SentAt: e.SentAt})
+		payload, err = json.Marshal(msgPayload{To: e.To, Text: e.Text, ReplyTo: e.ReplyTo, SentAt: e.SentAt, Role: e.FromRole})
 		return BuildSubject(Subject{Kind: "msg", SID: e.SID, From: from}), payload, err
 	case EventKick:
 		payload, err = json.Marshal(opsPayload{Kind: "kick", Target: e.Target, At: e.At, By: e.By})
@@ -364,10 +367,10 @@ func DecodeEvent(subject string, payload []byte, seq int64) (Event, bool) {
 	switch s.Kind {
 	case "msg":
 		var p msgPayload
-		if !strict(payload, &p) || !isRecipient(p.To) || !validText(p.Text) || !optionalID(p.ReplyTo) || !IsTime(p.SentAt) {
+		if !strict(payload, &p) || !isRecipient(p.To) || !validText(p.Text) || !optionalID(p.ReplyTo) || !IsTime(p.SentAt) || p.Role != "" && p.Role != RoleOrchestrator {
 			return Event{}, false
 		}
-		return Event{Kind: EventMsg, Seq: seq, SID: s.SID, From: s.From.String(), To: p.To, Text: p.Text, ReplyTo: p.ReplyTo, SentAt: p.SentAt}, true
+		return Event{Kind: EventMsg, Seq: seq, SID: s.SID, From: s.From.String(), To: p.To, Text: p.Text, ReplyTo: p.ReplyTo, SentAt: p.SentAt, FromRole: p.Role}, true
 	case "ops":
 		var p opsPayload
 		if !strict(payload, &p) {

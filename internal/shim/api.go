@@ -21,11 +21,14 @@ type message struct {
 	Text    string `json:"text"`
 	ReplyTo string `json:"reply_to,omitempty"`
 	SentAt  string `json:"sent_at"`
+	// FromRole is "orchestrator" for a message of the orchestrator: it speaks for the user.
+	FromRole string `json:"from_role,omitempty"`
 }
 
 func (m message) valid() bool {
 	return wire.IsID(m.ID) && (m.From == wire.Operator || isAddress(m.From)) && isTo(m.To) &&
-		validText(m.Text) && optionalID(m.ReplyTo) && wire.IsTime(m.SentAt)
+		validText(m.Text) && optionalID(m.ReplyTo) && wire.IsTime(m.SentAt) &&
+		(m.FromRole == "" || m.FromRole == wire.RoleOrchestrator && isAddress(m.From))
 }
 
 // Notice kinds.
@@ -114,13 +117,16 @@ type peer struct {
 	Note      string `json:"note,omitempty"`
 	Online    bool   `json:"online"`
 	WaitingOn string `json:"waiting_on,omitempty"`
+	// Role is "orchestrator" for the peer that speaks for the user.
+	Role string `json:"role,omitempty"`
 }
 
 var agentStates = []string{"working", "blocked", "done", "idle"}
 
 func (p peer) valid() bool {
 	return isAddress(p.Name) && slices.Contains(agentStates, p.State) && utf8.RuneCountInString(p.Note) <= 500 &&
-		(p.WaitingOn == "" || p.WaitingOn == wire.Operator || isAddress(p.WaitingOn))
+		(p.WaitingOn == "" || p.WaitingOn == wire.Operator || isAddress(p.WaitingOn)) &&
+		(p.Role == "" || p.Role == wire.RoleOrchestrator)
 }
 
 type sessionView struct {

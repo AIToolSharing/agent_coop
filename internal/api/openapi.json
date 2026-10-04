@@ -936,6 +936,12 @@
                           "sent_at": {
                             "type": "string",
                             "format": "date-time"
+                          },
+                          "from_role": {
+                            "type": "string",
+                            "enum": [
+                              "orchestrator"
+                            ]
                           }
                         },
                         "required": [
@@ -2283,6 +2289,12 @@
                                 "type": "string",
                                 "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                               }
+                            ]
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "orchestrator"
                             ]
                           }
                         },
@@ -4388,6 +4400,12 @@
                           "sent_at": {
                             "type": "string",
                             "format": "date-time"
+                          },
+                          "from_role": {
+                            "type": "string",
+                            "enum": [
+                              "orchestrator"
+                            ]
                           }
                         },
                         "required": [

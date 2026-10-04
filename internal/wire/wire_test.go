@@ -111,6 +111,9 @@ func event() *rapid.Generator[wire.Event] {
 				e.ReplyTo = id.Draw(t, "reply_to")
 			}
 			e.SentAt = iso.Draw(t, "sent_at")
+			if e.From != wire.Operator && rapid.Bool().Draw(t, "from orchestrator") {
+				e.FromRole = wire.RoleOrchestrator
+			}
 		case 1:
 			e.Kind = wire.EventKick
 			e.Target = address().Draw(t, "target").String()

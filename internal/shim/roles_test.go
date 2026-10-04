@@ -110,6 +110,16 @@ func TestTheOrchestratorSteersTheSessionWithItsTools(t *testing.T) {
 	if msgs, _ := m["messages"].([]any); len(msgs) == 0 || !strings.Contains(fmt.Sprint(msgs), "Write .pipeline/research.md") || !strings.Contains(fmt.Sprint(msgs), "pm@orch") {
 		t.Fatalf("worker got %v", m)
 	}
+	// The worker knows that the task is from the orchestrator, and who the orchestrator is.
+	if !strings.Contains(fmt.Sprint(m["messages"]), "from_role:orchestrator") {
+		t.Fatalf("the task is not marked as the orchestrator's: %v", m)
+	}
+	if peers := fmt.Sprint(w1.json("status", nil)["peers"]); !strings.Contains(peers, "name:pm@orch") || !strings.Contains(peers, "role:orchestrator") {
+		t.Fatalf("the worker's peers do not mark the orchestrator: %s", peers)
+	}
+	if !strings.Contains(w1.cs.InitializeResult().Instructions, `from_role="orchestrator"`) {
+		t.Fatal("the agent instructions do not say what a message of the orchestrator is")
+	}
 	if s := w1.json("status", nil); s["gate"] != "run" {
 		t.Fatalf("worker after the release %v", s)
 	}

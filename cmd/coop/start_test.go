@@ -31,13 +31,13 @@ const machines = "id1\tbasedmatrix\tssh://agent@vps\tdefault\tenabled\nid2\toffl
 
 func TestStartGoesToHerdrWhenHerdrKnowsTheMachine(t *testing.T) {
 	p, err := planStart(startOpts{machine: "basedmatrix", dir: "git/app", session: "build-42", user: "agent", claudeArgs: []string{"--model", "opus"}}, machines, true)
-	if err != nil || !p.herdr || p.cwd != "~/git/app" || p.label != "build-42/app" || p.command != "coop claude build-42 --model opus" {
+	if err != nil || !p.herdr || p.cwd != "~/git/app" || p.label != "build-42/app" || p.command != "coop claude build-42 --permission-mode bypassPermissions --model opus" {
 		t.Fatalf("%+v %v", p, err)
 	}
 	// The home directory, an absolute path, a path with "~/", and an agent name.
 	for dir, cwd := range map[string]string{".": "~", "/srv/app": "/srv/app", "~/git/app": "~/git/app"} {
 		p, _ := planStart(startOpts{machine: "basedmatrix", dir: dir, session: "build-42", agent: "reviewer"}, machines, true)
-		if p.cwd != cwd || p.label != "build-42/reviewer" || p.command != "coop --agent reviewer claude build-42" {
+		if p.cwd != cwd || p.label != "build-42/reviewer" || p.command != "coop --agent reviewer claude build-42 --permission-mode bypassPermissions" {
 			t.Errorf("%s: %+v", dir, p)
 		}
 	}
@@ -52,7 +52,7 @@ func TestStartUsesSSHWhenAskedOrWhenHerdrDoesNotHaveTheMachine(t *testing.T) {
 	} {
 		o.dir, o.session, o.agent, o.user, o.claudeArgs = "~/my project", "build-42", "reviewer", "agent", []string{"-p", prompt}
 		p, err := planStart(o, machines, true)
-		want := []string{"ssh", "-t", "-l", "agent", o.machine, "bash -lc " + shellQuote("cd 'my project' && exec coop --agent reviewer claude build-42 -p "+shellQuote(prompt))}
+		want := []string{"ssh", "-t", "-l", "agent", o.machine, "bash -lc " + shellQuote("cd 'my project' && exec coop --agent reviewer claude build-42 --permission-mode bypassPermissions -p "+shellQuote(prompt))}
 		if err != nil || p.herdr || strings.Join(p.ssh, "\n") != strings.Join(want, "\n") {
 			t.Errorf("%s: %+v %v\nwant %q", o.machine, p, err, want)
 		}
@@ -74,6 +74,16 @@ func TestStartRefusesBadNames(t *testing.T) {
 	} {
 		if _, err := planStart(o, machines, true); err == nil {
 			t.Errorf("%+v: no error", o)
+		}
+	}
+}
+
+// A mode in the arguments wins: the agent gets only that one.
+func TestStartKeepsAPermissionModeOfTheArguments(t *testing.T) {
+	for _, args := range [][]string{{"--permission-mode", "auto"}, {"--permission-mode=plan"}, {"--dangerously-skip-permissions"}} {
+		p, _ := planStart(startOpts{machine: "basedmatrix", dir: "app", session: "s", claudeArgs: args}, machines, true)
+		if strings.Contains(p.command, "bypassPermissions") || !strings.HasSuffix(p.command, shellJoin(args)) {
+			t.Errorf("%q: %s", args, p.command)
 		}
 	}
 }

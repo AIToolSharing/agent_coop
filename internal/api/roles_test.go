@@ -242,10 +242,16 @@ func TestAnOrchestratorRunsASessionForTheOperator(t *testing.T) {
 	if msg.ID == "" {
 		t.Fatal("no id")
 	}
-	if e := h.events(sid); e[len(e)-1].From != "pm@orch" {
-		t.Fatalf("the message is from %q, want pm@orch", e[len(e)-1].From)
+	if e := h.events(sid); e[len(e)-1].From != "pm@orch" || e[len(e)-1].FromRole != wire.RoleOrchestrator {
+		t.Fatalf("the message is %+v, want from pm@orch with the role orchestrator", e[len(e)-1])
 	}
 	wantStatus(t, 403)(oadm.send(sid, "all", "I am the user", ""))
+	// Agents and readers see that the message is the orchestrator's.
+	if msgs := parse[struct {
+		Messages []apiMessage `json:"messages"`
+	}](t, wantStatus(t, 200)(orch.history(sid, "pm", ""))).Messages; len(msgs) == 0 || msgs[len(msgs)-1].FromRole != wire.RoleOrchestrator {
+		t.Fatalf("history of pm: %+v, want the last message marked as the orchestrator's", msgs)
+	}
 	// The operator can still stop the orchestrator.
 	opAdm := admin{h.base, h.roleToken("matt", wire.RoleOperator)}
 	wantStatus(t, 204)(opAdm.gate(sid, "pm@orch", "paused"))

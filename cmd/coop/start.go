@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -29,6 +30,9 @@ The session comes from the command line, so the directory needs no .coop file.
   -u <user>    the unix user for SSH (default: agent, or COOP_AGENT_USER)
   -n           show what would run, and run nothing
 Arguments after the session go to claude, for example --model opus or -p "<prompt>".
+The agent runs with --permission-mode bypassPermissions: no permission prompts, because nobody
+sits at its terminal. coop's gate still holds, pauses and stops it. Give --permission-mode to
+choose another mode.
 
 When Herdr knows the machine (herdr machine list), the agent starts in a new Herdr workspace
 there: a pause then stops its turn at once, and the TUI's o goes to its pane. Else it starts
@@ -99,7 +103,16 @@ func planStart(o startOpts, machines string, tty bool) (startPlan, error) {
 	if o.agent != "" {
 		coop = append(coop, "--agent", o.agent)
 	}
-	coop = append(append(coop, "claude", o.session), o.claudeArgs...)
+	coop = append(coop, "claude", o.session)
+	// An agent that coop start places has no person at its terminal to answer a permission
+	// prompt. coop's gate holds, pauses and stops it instead. Arguments that set the mode
+	// win.
+	if !slices.ContainsFunc(o.claudeArgs, func(a string) bool {
+		return a == "--permission-mode" || strings.HasPrefix(a, "--permission-mode=") || a == "--dangerously-skip-permissions"
+	}) {
+		coop = append(coop, "--permission-mode", "bypassPermissions")
+	}
+	coop = append(coop, o.claudeArgs...)
 	command := shellJoin(coop)
 	if !o.sshOnly && herdrKnows(machines, o.machine) {
 		cwd := "~/" + dir

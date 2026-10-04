@@ -604,6 +604,8 @@ type apiMessage struct {
 	Text    string `json:"text"`
 	ReplyTo string `json:"reply_to"`
 	SentAt  string `json:"sent_at"`
+	// FromRole is "orchestrator" for a message of an orchestrator.
+	FromRole string `json:"from_role"`
 }
 
 func (m *apiMessage) UnmarshalJSON(b []byte) error {
@@ -618,6 +620,7 @@ func (m *apiMessage) UnmarshalJSON(b []byte) error {
 		rule{validText(m.Text), "text"},
 		rule{m.ReplyTo == "" || wire.IsID(m.ReplyTo), "reply_to"},
 		rule{wire.IsTime(m.SentAt), "sent_at"},
+		rule{m.FromRole == "" || m.FromRole == wire.RoleOrchestrator, "from_role"},
 	)
 }
 
