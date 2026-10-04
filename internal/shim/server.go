@@ -43,6 +43,9 @@ type Options struct {
 	Role string
 	// Admin reaches the admin API with the token of Role.
 	Admin *admin.Client
+	// NudgeGap is the shortest time between two nudges of an orchestrator. Zero means one
+	// minute.
+	NudgeGap time.Duration
 	// Push advertises the channel capability and pushes incoming items into the session.
 	Push bool
 	// Gated says that the agent's tool calls go through the operator's gate (`coop claude`).
@@ -257,6 +260,8 @@ type shim struct {
 	link     link
 	client   *hubClient
 	inbox    *inbox
+	// nudge schedules the orchestrator's nudges; nil for another role.
+	nudge *nudger
 }
 
 // Serve runs the MCP server until the MCP client goes away or ctx ends.
@@ -312,6 +317,7 @@ func Serve(ctx context.Context, o Options) error {
 		if orchestrator {
 			s.addReaderTools(server)
 			addTool(s, server, "steer", s.steer)
+			addTool(s, server, "agenda", s.agenda)
 		}
 	default:
 		// No session: no tools. The agent then has nothing to call, so a task costs nothing.
@@ -334,6 +340,11 @@ func Serve(ctx context.Context, o Options) error {
 
 	err := server.Run(ctx, tr)
 	cancel()
+	s.mu.Lock()
+	if s.nudge != nil {
+		s.nudge.stop()
+	}
+	s.mu.Unlock()
 	s.mu.Lock()
 	s.closed = true
 	s.mu.Unlock()
@@ -409,10 +420,17 @@ func (s *shim) start(client *mcp.Implementation) {
 	}
 	s.client = newHubClient(s.o.URL, s.o.Token, s.o.Session, join)
 	s.client.httpc = s.o.HTTPClient
-	s.inbox = newInbox(inboxOptions{
-		push:   s.o.Push,
-		onPush: s.pushItem,
-	})
+	opts := inboxOptions{push: s.o.Push, onPush: s.pushItem}
+	if s.o.Role == wire.RoleOrchestrator {
+		// The orchestrator's scheduler: no push for each item, one nudge for all of them.
+		gap := s.o.NudgeGap
+		if gap <= 0 {
+			gap = defaultNudgeGap
+		}
+		s.nudge = &nudger{gap: gap, now: time.Now, fire: s.sendNudge}
+		opts = inboxOptions{onQueued: s.nudge.queued}
+	}
+	s.inbox = newInbox(opts)
 	c, b := s.client, s.inbox
 	s.mu.Unlock()
 	s.goRun(func() {
@@ -734,6 +752,9 @@ func (s *shim) takeInbox() (any, error) {
 	_, inbox, _, err := s.joined()
 	if err != nil {
 		return nil, err
+	}
+	if s.nudge != nil {
+		s.nudge.read()
 	}
 	v := view(inbox.take())
 	v.Dropped = inbox.dropped()

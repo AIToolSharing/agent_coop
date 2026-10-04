@@ -51,6 +51,8 @@ type inboxOptions struct {
 	onDelivered func(id, via string)
 	// cap is the queue size; the oldest items go first when it is full. Zero means 1000.
 	cap int
+	// onQueued, when set, is called after an item went to the queue.
+	onQueued func()
 }
 
 // askResult ends an ask: the answer, or the asked peer left. A timeout is the zero value.
@@ -175,6 +177,16 @@ func (b *inbox) accept(it item) {
 		b.queue = slices.Clone(b.queue[n-b.o.cap:])
 	}
 	b.mu.Unlock()
+	if b.o.onQueued != nil {
+		b.o.onQueued()
+	}
+}
+
+// peek gives a copy of the queue, oldest first. The queue does not change.
+func (b *inbox) peek() []item {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.queue)
 }
 
 // take gives everything queued, oldest first. The queue is then empty.

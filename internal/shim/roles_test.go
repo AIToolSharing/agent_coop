@@ -78,7 +78,7 @@ func toolNamesOf(t *testing.T, a *testAgent) []string {
 func TestTheOrchestratorSteersTheSessionWithItsTools(t *testing.T) {
 	r := startRealHub(t)
 	o := start(t, r.options(wire.RoleOrchestrator, "pipe-1", "pm"))
-	if got := strings.Join(toolNamesOf(t, o), " "); got != "ask history inbox read send sessions set_state status steer wait" {
+	if got := strings.Join(toolNamesOf(t, o), " "); got != "agenda ask history inbox read send sessions set_state status steer wait" {
 		t.Fatalf("orchestrator tools: %s", got)
 	}
 	if !strings.Contains(o.cs.InitializeResult().Instructions, "You are the orchestrator") {
@@ -225,5 +225,90 @@ func TestTheReporterOnlyReads(t *testing.T) {
 		if strings.HasPrefix(a.Name, "rep@") {
 			t.Fatalf("the reporter joined: %+v", v.Agents)
 		}
+	}
+}
+
+// The user's complaint: messages from the user and from each agent stop the orchestrator's
+// work again and again. It gets one nudge for all that waits, no second one until it reads
+// its agenda, and the agenda gives the items in the order to handle them.
+func TestTheOrchestratorGetsOneNudgeAndAnAgenda(t *testing.T) {
+	r := startRealHub(t)
+	oo := r.options(wire.RoleOrchestrator, "pipe-1", "pm")
+	oo.Push, oo.NudgeGap = true, 300*time.Millisecond
+	o := start(t, oo)
+	joined(t, o)
+	if !slices.Contains(toolNamesOf(t, o), "agenda") {
+		t.Fatal("no agenda tool")
+	}
+	w1 := start(t, r.options(wire.RoleMachine, "pipe-1", "w1"))
+	joined(t, w1)
+	w2 := start(t, r.options(wire.RoleMachine, "pipe-1", "w2"))
+	joined(t, w2)
+	o.json("steer", map[string]any{"action": "release"})
+
+	nudges := func() (n int, last push) {
+		for _, p := range o.pushes() {
+			if p.Meta["kind"] == "message" {
+				t.Fatalf("the orchestrator got a message as a push: %+v", p)
+			}
+			if p.Meta["notice"] == "agenda" {
+				n, last = n+1, p
+			}
+		}
+		return n, last
+	}
+	w1.json("send", map[string]any{"to": "pm", "text": "DONE .pipeline/research.md"})
+	eventually(t, "one nudge", func() bool { n, _ := nudges(); return n == 1 })
+	// More items: no second nudge while the agenda is not read.
+	w2.json("send", map[string]any{"to": "pm", "text": "API changed: see T2"})
+	if _, err := r.op.Send(context.Background(), "pipe-1", "pm@orch", "How far are you?", ""); err != nil {
+		t.Fatal(err)
+	}
+	asked := w2.async("ask", map[string]any{"to": "pm", "text": "May I change the users table?", "timeout_s": 600})
+	eventually(t, "w2 waits on the orchestrator", func() bool {
+		for _, p := range o.json("sessions", map[string]any{"session": "pipe-1"})["sessions"].([]any)[0].(map[string]any)["agents"].([]any) {
+			if a := p.(map[string]any); a["name"] == "w2@mac-1" && a["waiting_on"] == "pm@orch" {
+				return true
+			}
+		}
+		return false
+	})
+	time.Sleep(2 * oo.NudgeGap)
+	if n, last := nudges(); n != 1 || !strings.Contains(last.Content, "call agenda") {
+		t.Fatalf("%d nudges, last %+v; want 1", n, last)
+	}
+
+	// The agenda: the user first, then the question of the agent that waits, then the rest.
+	a := o.json("agenda", nil)
+	b, _ := json.Marshal(a)
+	got := string(b)
+	for _, want := range []string{`"from_user":[{`, `How far are you?`, `"questions":[{`, `May I change the users table?`, `"waiting_on_you":["w2@mac-1"]`, `DONE .pipeline/research.md`, `API changed: see T2`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("agenda lacks %s:\n%s", want, got)
+		}
+	}
+	if strings.Index(got, "May I change") < strings.Index(got, `"questions"`) || strings.Index(got, "DONE .pipeline") < strings.Index(got, `"messages"`) {
+		t.Errorf("an item is in the wrong group:\n%s", got)
+	}
+	// The answer reaches the agent that asked.
+	qid := a["questions"].([]any)[0].(map[string]any)["id"].(string)
+	if qs := a["questions"].([]any); len(qs) != 1 {
+		t.Fatalf("questions %v, want only the question of w2, not its earlier message", qs)
+	}
+	o.json("send", map[string]any{"to": "w2", "text": "Yes.", "reply_to": qid})
+	if res := decodeResult(t, asked); !strings.Contains(fmt.Sprint(res), "Yes.") {
+		t.Fatalf("ask %v", res)
+	}
+	// After the agenda is read, a new item nudges again, after the gap.
+	w1.json("send", map[string]any{"to": "pm", "text": "DONE T1"})
+	eventually(t, "a second nudge", func() bool { n, _ := nudges(); return n == 2 })
+	// An empty agenda with wait_s waits for the next item.
+	o.json("agenda", nil)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		w1.json("send", map[string]any{"to": "pm", "text": "DONE T2"})
+	}()
+	if a := o.json("agenda", map[string]any{"wait_s": 300}); !strings.Contains(fmt.Sprint(a["messages"]), "DONE T2") {
+		t.Fatalf("agenda with wait_s: %v", a)
 	}
 }

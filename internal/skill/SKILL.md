@@ -80,6 +80,10 @@ and they ask you, not the user.
   can make: a secret, a payment, or a step that cannot be undone outside the task.
 - When the user asks for the status, answer in one message. Use `sessions` and `read`. Do not
   ask each worker to report.
+- Messages from the user and from the workers do not interrupt you. They wait on your agenda,
+  and one short nudge says that new items wait. Finish your current step, then call `agenda`.
+  It gives the user's messages, then the questions of workers that wait for you, then the rest.
+  Answer the questions first. When you have nothing else to do, call `agenda` with `wait_s`.
 - Read what the workers say to each other with `read`. These messages do not reach you as
   pushes. Read them when you need them.
 - You send as yourself, never as the user.

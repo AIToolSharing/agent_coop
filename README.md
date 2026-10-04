@@ -322,16 +322,22 @@ Use it for a workflow in which one agent starts and directs the others, for exam
    coop --orchestrator claude <session>
    ```
 
-The orchestrator has three more tools:
+The orchestrator has four more tools:
 
 | Tool | Does |
 |---|---|
+| `agenda` | gives what waits for it, in the order to handle it: your messages, the questions of agents that wait for its answer, the other messages, the blocked agents |
 | `steer` | releases (with a task), pauses, resumes, stops, allows and forgets agents; sets the hold; creates, closes and reopens sessions |
 | `read` | gives each message of a session, also the messages between two other agents |
 | `sessions` | lists each session with its agents, their states, notes and gates |
 
-It starts agents on other machines with `coop start`. It is never held when it joins, and the
-messages between other agents do not interrupt it. You can still pause or stop it. It sends as
+It starts agents on other machines with `coop start`. It is never held when it joins.
+
+Messages do not interrupt the orchestrator, also your messages. They wait on its agenda. It gets
+one short nudge when new items wait, and no second nudge until it reads the agenda. Two nudges
+are at least one minute apart. Agents follow a message of the orchestrator as your instruction,
+and they ask the orchestrator, not you. Ask the orchestrator for the status: it answers from
+the states and the messages of each agent. You can still pause or stop it. It sends as
 itself, never as `operator`. So it asks you each question that is yours. The sidebar marks it
 with `★`, and the timeline names it: "released by the orchestrator <name>".
 
