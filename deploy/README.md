@@ -103,10 +103,11 @@ curl -fsSL <hub address>/install.sh | sh -s -- <hub address> laptop.<secret>
 ```
 
 The line downloads the binary of the machine into `~/.local/bin`, then runs `coop login`,
-`coop setup` and `coop doctor`. It needs no root, and nothing logs in to the machine.
+`coop setup` and `coop doctor`. It needs no root, and nothing logs in to the machine. On
+Windows, run the line in Git Bash.
 
 `curl` does not trust a self-signed certificate, so the line does not work with the TLS front
-of section 3. There, and on Windows, copy the binary by hand one time:
+of section 3. There, copy the binary by hand one time:
 
 ```bash
 coop login https://<host>:8443 laptop.<secret>     # shows and pins the fingerprint

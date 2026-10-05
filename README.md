@@ -68,10 +68,11 @@ upgrade the hub, do step 1 again.
    and do step 2 as that user. On a machine where coop ran as root, `deploy/agent-user.sh`
    moves coop to a user `agent`.
 
+On Windows, run the line in Git Bash. It installs `coop.exe`.
+
 `curl` must trust the hub address: plain `http` in a private network, or a public certificate.
-For a hub with a self-signed certificate, and on Windows, copy `dist/coop-<os>-<arch>` to the
-machine as `coop`. Then run `coop login <hub address> <machine token>`, `coop setup` and
-`coop doctor`.
+For a hub with a self-signed certificate, copy `dist/coop-<os>-<arch>` to the machine as
+`coop`. Then run `coop login <hub address> <machine token>`, `coop setup` and `coop doctor`.
 
 ### 3. Use it
 
@@ -179,10 +180,11 @@ On macOS, the first connection asks you to allow local network access. Approve i
 build has a fixed signing identifier, so a new build keeps the approval.
 
 On Windows, an agent machine and the TUI work; the hub (`coop serve`, `deploy/`) is for Linux.
-Run `make install` in Git Bash: it copies `dist/coop.exe` to `~/.local/bin/coop.exe`, so run it
-again after each build. Claude Code runs the hooks of coop in Git Bash. The credential file has
-no mode there: the user's profile directory keeps it private. `coop claude` and the SSH of
-`coop start` run as a child process of coop.
+Use Git Bash for the install line of the hub. In a clone, `make install` runs in PowerShell,
+in cmd and in Git Bash: it builds `~/.local/bin/coop.exe`, also while a coop runs. Run it again
+after each change. The other targets of the Makefile need Git Bash. Claude Code runs the hooks
+of coop in Git Bash. The credential file has no mode there: the user's profile directory keeps
+it private. `coop claude` and the SSH of `coop start` run as a child process of coop.
 
 A Claude Code session that is in no coop session gets no tools from `coop mcp`. Such a session
 pays nothing for coop.

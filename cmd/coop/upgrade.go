@@ -55,7 +55,8 @@ func download(ctx context.Context, client *http.Client, base, token, dir string)
 		_ = json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&e)
 		return "", fmt.Errorf("%s did not give %s: %s", base, binaryName(), cmp.Or(e.Message, res.Status))
 	}
-	f, err := os.CreateTemp(dir, ".coop-new-*")
+	// The new file has the extension of the binary: Windows starts only a program that has it.
+	f, err := os.CreateTemp(dir, ".coop-new-*"+filepath.Ext(binaryName()))
 	if err != nil {
 		return "", fmt.Errorf("cannot write to %s, the directory of coop: %w", dir, err)
 	}
@@ -127,8 +128,12 @@ func cmdUpgrade(args []string, stdout, stderr io.Writer) int {
 	}
 	if runtime.GOOS == "windows" {
 		// Windows does not replace a program that runs, but it lets the program get a new name.
-		_ = os.Remove(exe + ".old")
-		if err := os.Rename(exe, exe+".old"); err != nil {
+		// The old file goes at a later upgrade, when nothing runs it.
+		olds, _ := filepath.Glob(exe + ".old*")
+		for _, old := range olds {
+			_ = os.Remove(old)
+		}
+		if err := os.Rename(exe, fmt.Sprintf("%s.old.%d", exe, os.Getpid())); err != nil {
 			return fail(err)
 		}
 	}
