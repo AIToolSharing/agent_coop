@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -52,8 +53,8 @@ func TestPretoolFollowsTheGate(t *testing.T) {
 		"removed": gate.Text("removed"),
 	} {
 		cfg, asked := gateHub(t, gateAnswer(g))
-		if got := pretool(ctx, bash, map[string]string{}, cfg, http.DefaultClient); got != want || *asked != 1 {
-			t.Errorf("gate %s: reason %q, want %q; asked %d times", g, got, want, *asked)
+		if got, err := pretool(ctx, bash, map[string]string{}, cfg, http.DefaultClient); got != want || err != nil || *asked != 1 {
+			t.Errorf("gate %s: reason %q (%v), want %q; asked %d times", g, got, err, want, *asked)
 		}
 		if g != "run" && want == "" {
 			t.Errorf("gate %s has no text", g)
@@ -80,8 +81,8 @@ func TestPretoolAsksOnlyWhenTheGateApplies(t *testing.T) {
 		"not set up":     {hookInput{ToolName: "Bash"}, none, config.Config{Session: "build-42", Agent: "alice"}},
 		"gate off":       {hookInput{ToolName: "Bash"}, map[string]string{"COOP_GATE": "off"}, cfg},
 	} {
-		if got := pretool(ctx, c.in, c.env, c.cfg, http.DefaultClient); got != "" {
-			t.Errorf("%s: refused with %q", name, got)
+		if got, err := pretool(ctx, c.in, c.env, c.cfg, http.DefaultClient); got != "" || err != nil {
+			t.Errorf("%s: refused with %q (%v)", name, got, err)
 		}
 	}
 	if *asked != 0 {
@@ -89,49 +90,57 @@ func TestPretoolAsksOnlyWhenTheGateApplies(t *testing.T) {
 	}
 	// Another server's tool, and a call with no tool name, need the gate.
 	for _, in := range []hookInput{{ToolName: "mcp__github__create_issue"}, {}} {
-		if got := pretool(ctx, in, none, cfg, http.DefaultClient); got != gate.Text("held") {
+		if got, _ := pretool(ctx, in, none, cfg, http.DefaultClient); got != gate.Text("held") {
 			t.Errorf("%+v: reason %q, want the hold text", in, got)
 		}
 	}
 }
 
-// Claude Code runs a tool call whose hook fails or runs out of time. So every failure of the
-// question must end in a refusal: the operator could not stop a call that slips through.
-func TestPretoolRefusesWhenTheHubGivesNoAnswer(t *testing.T) {
+// A hub that is down is not a reason to stop the agent. Every failure of the question lets
+// the call run, and the error says why.
+func TestPretoolLetsTheCallRunWhenTheHubGivesNoAnswer(t *testing.T) {
 	ctx := context.Background()
 	bash := hookInput{ToolName: "Bash"}
 	for name, answer := range map[string]func(http.ResponseWriter, map[string]string){
 		"error status": func(w http.ResponseWriter, _ map[string]string) { w.WriteHeader(503) },
+		"bad gateway":  func(w http.ResponseWriter, _ map[string]string) { w.WriteHeader(502) },
 		"rate limit":   func(w http.ResponseWriter, _ map[string]string) { w.WriteHeader(429) },
 		"not json":     func(w http.ResponseWriter, _ map[string]string) { _, _ = io.WriteString(w, "<html>") },
 		"unknown gate": gateAnswer("maybe"),
 		"empty gate":   gateAnswer(""),
 	} {
 		cfg, _ := gateHub(t, answer)
-		if got := pretool(ctx, bash, map[string]string{}, cfg, http.DefaultClient); got != gate.Unknown {
-			t.Errorf("%s: reason %q, want the unknown text", name, got)
+		if got, err := pretool(ctx, bash, map[string]string{}, cfg, http.DefaultClient); got != "" || err == nil || errors.Is(err, errAuth) {
+			t.Errorf("%s: reason %q, error %v", name, got, err)
+		}
+	}
+	// A refused token is an error of its own: the user must fix it.
+	for _, status := range []int{401, 403} {
+		cfg, _ := gateHub(t, func(w http.ResponseWriter, _ map[string]string) { w.WriteHeader(status) })
+		if got, err := pretool(ctx, bash, map[string]string{}, cfg, http.DefaultClient); got != "" || !errors.Is(err, errAuth) {
+			t.Errorf("%d: reason %q, error %v", status, got, err)
 		}
 	}
 	// A hub of a version before the gate has no such route: nobody can hold the agent there,
-	// so the call passes. Without this, a new client would stop all work on an old hub.
+	// so the call passes with no error.
 	old, _ := gateHub(t, func(w http.ResponseWriter, _ map[string]string) {
 		w.WriteHeader(404)
 		_, _ = io.WriteString(w, `{"error":"not_found","message":"no such route"}`)
 	})
-	if got := pretool(ctx, bash, map[string]string{}, old, http.DefaultClient); got != "" {
-		t.Errorf("a hub with no gate: refused with %q", got)
+	if got, err := pretool(ctx, bash, map[string]string{}, old, http.DefaultClient); got != "" || err != nil {
+		t.Errorf("a hub with no gate: refused with %q (%v)", got, err)
 	}
 	// A hub that is not there.
 	cfg := config.Config{URL: "http://127.0.0.1:1", Token: "mac.1", Session: "build-42", Agent: "alice"}
-	if got := pretool(ctx, bash, map[string]string{}, cfg, http.DefaultClient); got != gate.Unknown {
-		t.Errorf("no hub: reason %q", got)
+	if got, err := pretool(ctx, bash, map[string]string{}, cfg, http.DefaultClient); got != "" || err == nil {
+		t.Errorf("no hub: reason %q, error %v", got, err)
 	}
 	// A hub that does not answer in time: the caller's deadline ends the wait.
 	slow, _ := gateHub(t, func(http.ResponseWriter, map[string]string) { time.Sleep(300 * time.Millisecond) })
 	short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
-	if got := pretool(short, bash, map[string]string{}, slow, http.DefaultClient); got != gate.Unknown {
-		t.Errorf("slow hub: reason %q", got)
+	if got, err := pretool(short, bash, map[string]string{}, slow, http.DefaultClient); got != "" || err == nil {
+		t.Errorf("slow hub: reason %q, error %v", got, err)
 	}
 }
 
@@ -183,8 +192,8 @@ func TestHookOutputAndSettingsAreWhatClaudeCodeReads(t *testing.T) {
 	}
 }
 
-func TestHookCommandAnswersOnStdoutAndExitsZero(t *testing.T) {
-	cfg, _ := gateHub(t, gateAnswer("paused"))
+// setHookEnv gives `coop hook` the hub of cfg, as Claude Code gives it the environment.
+func setHookEnv(t *testing.T, cfg config.Config) {
 	t.Setenv("COOP_URL", cfg.URL)
 	t.Setenv("COOP_TOKEN", cfg.Token)
 	t.Setenv("COOP_SESSION", cfg.Session)
@@ -194,6 +203,41 @@ func TestHookCommandAnswersOnStdoutAndExitsZero(t *testing.T) {
 	t.Setenv("CLAUDE_PROJECT_DIR", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
+}
+
+// A hub that is down must not stop Claude Code. A hub that refuses connections, one that never
+// answers, and nginx in front of a stopped hub: the gate hook lets the call run, says so in
+// one line on stderr, exits 0, and does not wait long. A refused token is visible (exit 1,
+// which Claude Code shows and does not block on).
+func TestHookGoesOnWithoutTheHub(t *testing.T) {
+	hang := make(chan struct{})
+	silent := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-hang }))
+	t.Cleanup(silent.Close)
+	t.Cleanup(func() { close(hang) })
+	badGateway, _ := gateHub(t, func(w http.ResponseWriter, _ map[string]string) { w.WriteHeader(502) })
+	for name, url := range map[string]string{"no hub": "http://127.0.0.1:1", "silent hub": silent.URL, "bad gateway": badGateway.URL} {
+		setHookEnv(t, config.Config{URL: url, Token: "mac.1", Session: "build-42", Agent: "alice"})
+		var out, errOut bytes.Buffer
+		start := time.Now()
+		code := cmdHook([]string{"pretool"}, strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"ls"}}`), &out, &errOut)
+		took := time.Since(start)
+		line := errOut.String()
+		if code != 0 || out.Len() != 0 || !strings.HasPrefix(line, "coop hub unreachable, continuing without coop") || strings.Count(line, "\n") != 1 || took > hookDeadline+time.Second {
+			t.Errorf("%s: code %d stdout %q stderr %q after %v", name, code, out.String(), line, took)
+		}
+	}
+	refused, _ := gateHub(t, func(w http.ResponseWriter, _ map[string]string) { w.WriteHeader(401) })
+	setHookEnv(t, refused)
+	var out, errOut bytes.Buffer
+	code := cmdHook([]string{"pretool"}, strings.NewReader(`{"tool_name":"Bash"}`), &out, &errOut)
+	if line := errOut.String(); code != 1 || out.Len() != 0 || !strings.Contains(line, "refused the token") || strings.Count(line, "\n") != 1 {
+		t.Errorf("refused token: code %d stdout %q stderr %q", code, out.String(), line)
+	}
+}
+
+func TestHookCommandAnswersOnStdoutAndExitsZero(t *testing.T) {
+	cfg, _ := gateHub(t, gateAnswer("paused"))
+	setHookEnv(t, cfg)
 	run := func(stdin string) (int, string) {
 		var out, errOut bytes.Buffer
 		code := cmdHook([]string{"pretool"}, strings.NewReader(stdin), &out, &errOut)

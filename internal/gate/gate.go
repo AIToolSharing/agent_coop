@@ -40,8 +40,3 @@ func Text(gate string) string {
 
 // Released is the text of the notice that ends a hold or a pause.
 const Released = "The user released you. You may work now."
-
-// Unknown is the reason of a denied tool call when the gate cannot be read. The agent must
-// not work then: a tool call that the operator cannot stop is the failure the gate prevents.
-const Unknown = "The message service is unreachable, so it is not known whether the user lets you work. " +
-	"Do not work. Try the same call again in a minute."
