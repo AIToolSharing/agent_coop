@@ -4,15 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
 	"github.com/AIToolSharing/agent_coop/internal/gate"
+	"pgregory.net/rapid"
 )
 
 // gateHub answers the gate question with one gate, and counts the questions.
@@ -52,8 +56,8 @@ func TestPretoolFollowsTheGate(t *testing.T) {
 		"removed": gate.Text("removed"),
 	} {
 		cfg, asked := gateHub(t, gateAnswer(g))
-		if got := pretool(ctx, bash, map[string]string{}, cfg, http.DefaultClient); got != want || *asked != 1 {
-			t.Errorf("gate %s: reason %q, want %q; asked %d times", g, got, want, *asked)
+		if got, err := pretool(ctx, bash, map[string]string{}, cfg, http.DefaultClient, t.TempDir()); got != want || err != nil || *asked != 1 {
+			t.Errorf("gate %s: reason %q (%v), want %q; asked %d times", g, got, err, want, *asked)
 		}
 		if g != "run" && want == "" {
 			t.Errorf("gate %s has no text", g)
@@ -80,8 +84,8 @@ func TestPretoolAsksOnlyWhenTheGateApplies(t *testing.T) {
 		"not set up":     {hookInput{ToolName: "Bash"}, none, config.Config{Session: "build-42", Agent: "alice"}},
 		"gate off":       {hookInput{ToolName: "Bash"}, map[string]string{"COOP_GATE": "off"}, cfg},
 	} {
-		if got := pretool(ctx, c.in, c.env, c.cfg, http.DefaultClient); got != "" {
-			t.Errorf("%s: refused with %q", name, got)
+		if got, err := pretool(ctx, c.in, c.env, c.cfg, http.DefaultClient, t.TempDir()); got != "" || err != nil {
+			t.Errorf("%s: refused with %q (%v)", name, got, err)
 		}
 	}
 	if *asked != 0 {
@@ -89,50 +93,166 @@ func TestPretoolAsksOnlyWhenTheGateApplies(t *testing.T) {
 	}
 	// Another server's tool, and a call with no tool name, need the gate.
 	for _, in := range []hookInput{{ToolName: "mcp__github__create_issue"}, {}} {
-		if got := pretool(ctx, in, none, cfg, http.DefaultClient); got != gate.Text("held") {
+		if got, _ := pretool(ctx, in, none, cfg, http.DefaultClient, t.TempDir()); got != gate.Text("held") {
 			t.Errorf("%+v: reason %q, want the hold text", in, got)
 		}
 	}
 }
 
-// Claude Code runs a tool call whose hook fails or runs out of time. So every failure of the
-// question must end in a refusal: the operator could not stop a call that slips through.
-func TestPretoolRefusesWhenTheHubGivesNoAnswer(t *testing.T) {
+// A hub that is down is not a reason to stop an agent that the hub did not refuse before.
+// Every failure of the question lets the call run, and the error says why.
+func TestPretoolLetsTheCallRunWhenTheHubGivesNoAnswer(t *testing.T) {
 	ctx := context.Background()
 	bash := hookInput{ToolName: "Bash"}
 	for name, answer := range map[string]func(http.ResponseWriter, map[string]string){
 		"error status": func(w http.ResponseWriter, _ map[string]string) { w.WriteHeader(503) },
+		"bad gateway":  func(w http.ResponseWriter, _ map[string]string) { w.WriteHeader(502) },
 		"rate limit":   func(w http.ResponseWriter, _ map[string]string) { w.WriteHeader(429) },
 		"not json":     func(w http.ResponseWriter, _ map[string]string) { _, _ = io.WriteString(w, "<html>") },
 		"unknown gate": gateAnswer("maybe"),
 		"empty gate":   gateAnswer(""),
 	} {
 		cfg, _ := gateHub(t, answer)
-		if got := pretool(ctx, bash, map[string]string{}, cfg, http.DefaultClient); got != gate.Unknown {
-			t.Errorf("%s: reason %q, want the unknown text", name, got)
+		if got, err := pretool(ctx, bash, map[string]string{}, cfg, http.DefaultClient, t.TempDir()); got != "" || err == nil || errors.Is(err, errAuth) {
+			t.Errorf("%s: reason %q, error %v", name, got, err)
+		}
+	}
+	// A refused token is an error of its own: the user must fix it.
+	for _, status := range []int{401, 403} {
+		cfg, _ := gateHub(t, func(w http.ResponseWriter, _ map[string]string) { w.WriteHeader(status) })
+		if got, err := pretool(ctx, bash, map[string]string{}, cfg, http.DefaultClient, t.TempDir()); got != "" || !errors.Is(err, errAuth) {
+			t.Errorf("%d: reason %q, error %v", status, got, err)
 		}
 	}
 	// A hub of a version before the gate has no such route: nobody can hold the agent there,
-	// so the call passes. Without this, a new client would stop all work on an old hub.
+	// so the call passes with no error.
 	old, _ := gateHub(t, func(w http.ResponseWriter, _ map[string]string) {
 		w.WriteHeader(404)
 		_, _ = io.WriteString(w, `{"error":"not_found","message":"no such route"}`)
 	})
-	if got := pretool(ctx, bash, map[string]string{}, old, http.DefaultClient); got != "" {
-		t.Errorf("a hub with no gate: refused with %q", got)
+	if got, err := pretool(ctx, bash, map[string]string{}, old, http.DefaultClient, t.TempDir()); got != "" || err != nil {
+		t.Errorf("a hub with no gate: refused with %q (%v)", got, err)
 	}
 	// A hub that is not there.
 	cfg := config.Config{URL: "http://127.0.0.1:1", Token: "mac.1", Session: "build-42", Agent: "alice"}
-	if got := pretool(ctx, bash, map[string]string{}, cfg, http.DefaultClient); got != gate.Unknown {
-		t.Errorf("no hub: reason %q", got)
+	if got, err := pretool(ctx, bash, map[string]string{}, cfg, http.DefaultClient, t.TempDir()); got != "" || err == nil {
+		t.Errorf("no hub: reason %q, error %v", got, err)
 	}
 	// A hub that does not answer in time: the caller's deadline ends the wait.
 	slow, _ := gateHub(t, func(http.ResponseWriter, map[string]string) { time.Sleep(300 * time.Millisecond) })
 	short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
-	if got := pretool(short, bash, map[string]string{}, slow, http.DefaultClient); got != gate.Unknown {
-		t.Errorf("slow hub: reason %q", got)
+	if got, err := pretool(short, bash, map[string]string{}, slow, http.DefaultClient, t.TempDir()); got != "" || err == nil {
+		t.Errorf("slow hub: reason %q, error %v", got, err)
 	}
+}
+
+// noAnswer are the ways in which a hub gives no answer to the gate question.
+var noAnswer = map[string]func(http.ResponseWriter){
+	"error status":  func(w http.ResponseWriter) { w.WriteHeader(503) },
+	"refused token": func(w http.ResponseWriter) { w.WriteHeader(401) },
+	"not json":      func(w http.ResponseWriter) { _, _ = io.WriteString(w, "<html>") },
+}
+
+// stepHub is a hub whose answer to each question the test sets: a gate, or a key of noAnswer.
+type stepHub struct {
+	srv  *httptest.Server
+	step atomic.Pointer[string]
+}
+
+func (h *stepHub) set(step string) { h.step.Store(&step) }
+
+func newStepHub(t *testing.T) *stepHub {
+	t.Helper()
+	h := &stepHub{}
+	h.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		step := *h.step.Load()
+		if fail, ok := noAnswer[step]; ok {
+			fail(w)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"gate": step})
+	}))
+	t.Cleanup(h.srv.Close)
+	return h
+}
+
+// When the hub gives no answer, its last answer decides. An agent that the user holds, paused
+// or removed stays refused: a hub that stops (each deploy starts it again) must release no
+// agent. An agent that worked, or that the hub never answered, works on.
+func TestPretoolFollowsTheLastAnswerWhenTheHubGivesNoAnswer(t *testing.T) {
+	for name, c := range map[string]struct {
+		steps []string // the answers of the hub in order; the last one is no answer
+		want  string   // the gate that decides the last call
+	}{
+		"held, then the hub stops":           {[]string{"held", "error status"}, "held"},
+		"paused, then the hub stops":         {[]string{"paused", "error status"}, "paused"},
+		"removed, then the hub stops":        {[]string{"removed", "error status"}, "removed"},
+		"run, then the hub stops":            {[]string{"run", "error status"}, "run"},
+		"the hub never answered":             {[]string{"error status"}, "run"},
+		"held, then run, then the hub stops": {[]string{"held", "run", "error status"}, "run"},
+		"held, then a refused token":         {[]string{"held", "refused token"}, "held"},
+		"paused, and the hub stays away":     {[]string{"paused", "error status", "not json", "error status"}, "paused"},
+	} {
+		hub := newStepHub(t)
+		cfg := config.Config{URL: hub.srv.URL, Token: "mac.1", Session: "build-42", Agent: "alice"}
+		memory := t.TempDir()
+		var got string
+		var err error
+		for _, step := range c.steps {
+			hub.set(step)
+			got, err = pretool(context.Background(), hookInput{ToolName: "Bash"}, map[string]string{}, cfg, http.DefaultClient, memory)
+		}
+		want := ""
+		if c.want != "run" {
+			want = gate.Text(c.want) + gate.NoAnswer
+		}
+		if got != want || err == nil {
+			t.Errorf("%s: reason %q (%v), want %q and an error", name, got, err, want)
+		}
+	}
+}
+
+// The model of the hook's memory: for each agent of each session of each hub, the last answer
+// of the hub. An answer decides its own call. No answer leaves the decision to the last
+// answer, and the error says that there was none.
+func TestPretoolAgreesWithTheModelOfTheLastAnswer(t *testing.T) {
+	hubs := []*stepHub{newStepHub(t), newStepHub(t)}
+	steps := []string{"run", "held", "paused", "removed"}
+	for k := range noAnswer {
+		steps = append(steps, k)
+	}
+	slices.Sort(steps)
+	rapid.Check(t, func(rt *rapid.T) {
+		memory := t.TempDir()
+		last := map[string]string{}
+		for i := range rapid.IntRange(1, 12).Draw(rt, "calls") {
+			hub := rapid.IntRange(0, 1).Draw(rt, "hub")
+			cfg := config.Config{
+				URL: hubs[hub].srv.URL, Token: "mac.1",
+				Session: rapid.SampledFrom([]string{"s1", "s2"}).Draw(rt, "session"),
+				Agent:   rapid.SampledFrom([]string{"alice", "bob"}).Draw(rt, "agent"),
+			}
+			step := rapid.SampledFrom(steps).Draw(rt, "step")
+			hubs[hub].set(step)
+			got, err := pretool(context.Background(), hookInput{ToolName: "Bash"}, map[string]string{}, cfg, http.DefaultClient, memory)
+
+			key := cfg.URL + " " + cfg.Session + " " + cfg.Agent
+			_, failed := noAnswer[step]
+			want := gate.Text(step)
+			if failed {
+				want = ""
+				if gate.Text(last[key]) != "" {
+					want = gate.Text(last[key]) + gate.NoAnswer
+				}
+			} else {
+				last[key] = step
+			}
+			if got != want || (err != nil) != failed || errors.Is(err, errAuth) != (step == "refused token") {
+				rt.Fatalf("call %d, %s in %s on hub %d, step %q after %q: reason %q (%v), want %q", i, cfg.Agent, cfg.Session, hub, step, last[key], got, err, want)
+			}
+		}
+	})
 }
 
 func TestHookOutputAndSettingsAreWhatClaudeCodeReads(t *testing.T) {
@@ -183,8 +303,8 @@ func TestHookOutputAndSettingsAreWhatClaudeCodeReads(t *testing.T) {
 	}
 }
 
-func TestHookCommandAnswersOnStdoutAndExitsZero(t *testing.T) {
-	cfg, _ := gateHub(t, gateAnswer("paused"))
+// setHookEnv gives `coop hook` the hub of cfg, as Claude Code gives it the environment.
+func setHookEnv(t *testing.T, cfg config.Config) {
 	t.Setenv("COOP_URL", cfg.URL)
 	t.Setenv("COOP_TOKEN", cfg.Token)
 	t.Setenv("COOP_SESSION", cfg.Session)
@@ -194,6 +314,82 @@ func TestHookCommandAnswersOnStdoutAndExitsZero(t *testing.T) {
 	t.Setenv("CLAUDE_PROJECT_DIR", t.TempDir())
 	setHome(t, t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
+}
+
+// A hub that is down must not stop Claude Code. A hub that refuses connections, one that never
+// answers, and nginx in front of a stopped hub: the gate hook lets the call run, says so in
+// one line on stderr, exits 0, and does not wait long. A refused token is visible (exit 1,
+// which Claude Code shows and does not block on).
+func TestHookGoesOnWithoutTheHub(t *testing.T) {
+	hang := make(chan struct{})
+	silent := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-hang }))
+	t.Cleanup(silent.Close)
+	t.Cleanup(func() { close(hang) })
+	badGateway, _ := gateHub(t, func(w http.ResponseWriter, _ map[string]string) { w.WriteHeader(502) })
+	for name, url := range map[string]string{"no hub": "http://127.0.0.1:1", "silent hub": silent.URL, "bad gateway": badGateway.URL} {
+		setHookEnv(t, config.Config{URL: url, Token: "mac.1", Session: "build-42", Agent: "alice"})
+		var out, errOut bytes.Buffer
+		start := time.Now()
+		code := cmdHook([]string{"pretool"}, strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"ls"}}`), &out, &errOut)
+		took := time.Since(start)
+		line := errOut.String()
+		if code != 0 || out.Len() != 0 || !strings.HasPrefix(line, "coop hub unreachable, continuing without coop") || strings.Count(line, "\n") != 1 || took > hookDeadline+time.Second {
+			t.Errorf("%s: code %d stdout %q stderr %q after %v", name, code, out.String(), line, took)
+		}
+	}
+	refused, _ := gateHub(t, func(w http.ResponseWriter, _ map[string]string) { w.WriteHeader(401) })
+	setHookEnv(t, refused)
+	var out, errOut bytes.Buffer
+	code := cmdHook([]string{"pretool"}, strings.NewReader(`{"tool_name":"Bash"}`), &out, &errOut)
+	if line := errOut.String(); code != 1 || out.Len() != 0 || !strings.Contains(line, "refused the token") || strings.Count(line, "\n") != 1 {
+		t.Errorf("refused token: code %d stdout %q stderr %q", code, out.String(), line)
+	}
+}
+
+// The whole hook, as Claude Code runs it. The user holds an agent. Then the hub gives no
+// answer, then it refuses the token: the agent stays refused, with the reason on stdout and
+// exit 0. After the release, a hub that gives no answer does not refuse the agent. A hub that
+// is not there (no connection) has the same result as one that answers with an error.
+func TestHookKeepsAnAgentWhereTheUserPutItWhenTheHubStops(t *testing.T) {
+	hub := newStepHub(t)
+	setHookEnv(t, config.Config{URL: hub.srv.URL, Token: "mac.1", Session: "build-42", Agent: "alice"})
+	run := func() (int, string, string) {
+		var out, errOut bytes.Buffer
+		code := cmdHook([]string{"pretool"}, strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"ls"}}`), &out, &errOut)
+		return code, out.String(), errOut.String()
+	}
+	held := gate.Text("held")
+	for i, c := range []struct {
+		step     string
+		code     int
+		out, err string // stdout, and the start of stderr
+	}{
+		{"held", 0, string(denyOutput(held)), ""},
+		{"error status", 0, string(denyOutput(held + gate.NoAnswer)), ""},
+		{"refused token", 0, string(denyOutput(held + gate.NoAnswer)), ""},
+		{"run", 0, "", ""},
+		{"error status", 0, "", "coop hub unreachable, continuing without coop"},
+		{"refused token", 1, "", "coop hub: the hub refused the token"},
+		{"paused", 0, string(denyOutput(gate.Text("paused"))), ""},
+	} {
+		hub.set(c.step)
+		code, out, errOut := run()
+		if code != c.code || out != c.out || !strings.HasPrefix(errOut, c.err) || (c.err == "") != (errOut == "") {
+			t.Errorf("call %d (%s): code %d stdout %q stderr %q, want code %d stdout %q stderr %q...", i, c.step, code, out, errOut, c.code, c.out, c.err)
+		}
+	}
+	// The hub stops while the agent is paused.
+	hub.srv.Close()
+	start := time.Now()
+	code, out, errOut := run()
+	if took := time.Since(start); code != 0 || out != string(denyOutput(gate.Text("paused")+gate.NoAnswer)) || errOut != "" || took > hookDeadline+time.Second {
+		t.Errorf("no hub: code %d stdout %q stderr %q after %v", code, out, errOut, took)
+	}
+}
+
+func TestHookCommandAnswersOnStdoutAndExitsZero(t *testing.T) {
+	cfg, _ := gateHub(t, gateAnswer("paused"))
+	setHookEnv(t, cfg)
 	run := func(stdin string) (int, string) {
 		var out, errOut bytes.Buffer
 		code := cmdHook([]string{"pretool"}, strings.NewReader(stdin), &out, &errOut)

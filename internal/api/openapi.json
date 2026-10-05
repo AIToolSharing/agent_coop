@@ -185,7 +185,7 @@
           {
             "schema": {
               "type": "string",
-              "pattern": "^(?!(?:operator|all)$)[a-z0-9_-]{1,64}$"
+              "pattern": "^(?!(?:operator|all|any)$)[a-z0-9_-]{1,64}$"
             },
             "required": true,
             "name": "agent",
@@ -504,11 +504,11 @@
                 "properties": {
                   "agent": {
                     "type": "string",
-                    "pattern": "^(?!(?:operator|all)$)[a-z0-9_-]{1,64}$"
+                    "pattern": "^(?!(?:operator|all|any)$)[a-z0-9_-]{1,64}$"
                   },
                   "to": {
                     "type": "string",
-                    "pattern": "^(?:all|operator|(?!(?:operator|all)(?:@|$))[a-z0-9_-]{1,64}(?:@[a-z0-9_-]{1,64})?)$"
+                    "pattern": "^(?:all|any|operator|(?!(?:operator|all|any)(?:@|$))[a-z0-9_-]{1,64}(?:@[a-z0-9_-]{1,64})?)$"
                   },
                   "text": {
                     "type": "string",
@@ -558,7 +558,7 @@
                         },
                         {
                           "type": "string",
-                          "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                          "pattern": "^(?!(?:operator|all|any)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                         }
                       ]
                     },
@@ -694,7 +694,7 @@
             }
           },
           "409": {
-            "description": "Conflict with the session state: name taken, ambiguous peer, or yourself",
+            "description": "Conflict with the session state: name taken, ambiguous peer, yourself, or a send to any when no peer can take work",
             "content": {
               "application/json": {
                 "schema": {
@@ -851,7 +851,7 @@
           {
             "schema": {
               "type": "string",
-              "pattern": "^(?!(?:operator|all)$)[a-z0-9_-]{1,64}$"
+              "pattern": "^(?!(?:operator|all|any)$)[a-z0-9_-]{1,64}$"
             },
             "required": true,
             "name": "agent",
@@ -860,7 +860,7 @@
           {
             "schema": {
               "type": "string",
-              "pattern": "^(?!(?:operator|all)(?:@|$))[a-z0-9_-]{1,64}(?:@[a-z0-9_-]{1,64})?$"
+              "pattern": "^(?!(?:operator|all|any)(?:@|$))[a-z0-9_-]{1,64}(?:@[a-z0-9_-]{1,64})?$"
             },
             "required": false,
             "name": "with",
@@ -905,7 +905,7 @@
                               },
                               {
                                 "type": "string",
-                                "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                                "pattern": "^(?!(?:operator|all|any)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                               }
                             ]
                           },
@@ -925,7 +925,7 @@
                               },
                               {
                                 "type": "string",
-                                "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                                "pattern": "^(?!(?:operator|all|any)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                               }
                             ]
                           },
@@ -1211,7 +1211,7 @@
                       },
                       "agent": {
                         "type": "string",
-                        "pattern": "^(?!(?:operator|all)$)[a-z0-9_-]{1,64}$"
+                        "pattern": "^(?!(?:operator|all|any)$)[a-z0-9_-]{1,64}$"
                       },
                       "state": {
                         "type": "string",
@@ -1245,7 +1245,7 @@
                       },
                       "agent": {
                         "type": "string",
-                        "pattern": "^(?!(?:operator|all)$)[a-z0-9_-]{1,64}$"
+                        "pattern": "^(?!(?:operator|all|any)$)[a-z0-9_-]{1,64}$"
                       },
                       "from": {
                         "anyOf": [
@@ -1257,7 +1257,7 @@
                           },
                           {
                             "type": "string",
-                            "pattern": "^(?!(?:operator|all)(?:@|$))[a-z0-9_-]{1,64}(?:@[a-z0-9_-]{1,64})?$"
+                            "pattern": "^(?!(?:operator|all|any)(?:@|$))[a-z0-9_-]{1,64}(?:@[a-z0-9_-]{1,64})?$"
                           }
                         ]
                       },
@@ -1289,7 +1289,7 @@
                       },
                       "agent": {
                         "type": "string",
-                        "pattern": "^(?!(?:operator|all)$)[a-z0-9_-]{1,64}$"
+                        "pattern": "^(?!(?:operator|all|any)$)[a-z0-9_-]{1,64}$"
                       },
                       "result": {
                         "type": "string",
@@ -1585,7 +1585,7 @@
                 "properties": {
                   "agent": {
                     "type": "string",
-                    "pattern": "^(?!(?:operator|all)$)[a-z0-9_-]{1,64}$"
+                    "pattern": "^(?!(?:operator|all|any)$)[a-z0-9_-]{1,64}$"
                   }
                 },
                 "required": [
@@ -1891,7 +1891,7 @@
                 "properties": {
                   "agent": {
                     "type": "string",
-                    "pattern": "^(?!(?:operator|all)$)[a-z0-9_-]{1,64}$"
+                    "pattern": "^(?!(?:operator|all|any)$)[a-z0-9_-]{1,64}$"
                   },
                   "branch": {
                     "type": "string",
@@ -2227,7 +2227,7 @@
           {
             "schema": {
               "type": "string",
-              "pattern": "^(?!(?:operator|all)$)[a-z0-9_-]{1,64}$"
+              "pattern": "^(?!(?:operator|all|any)$)[a-z0-9_-]{1,64}$"
             },
             "required": true,
             "name": "agent",
@@ -2255,7 +2255,7 @@
                     },
                     "me": {
                       "type": "string",
-                      "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                      "pattern": "^(?!(?:operator|all|any)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                     },
                     "peers": {
                       "type": "array",
@@ -2264,7 +2264,7 @@
                         "properties": {
                           "name": {
                             "type": "string",
-                            "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                            "pattern": "^(?!(?:operator|all|any)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                           },
                           "state": {
                             "type": "string",
@@ -2292,7 +2292,7 @@
                               },
                               {
                                 "type": "string",
-                                "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                                "pattern": "^(?!(?:operator|all|any)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                               }
                             ]
                           },
@@ -3832,7 +3832,7 @@
                         "properties": {
                           "name": {
                             "type": "string",
-                            "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                            "pattern": "^(?!(?:operator|all|any)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                           },
                           "online": {
                             "type": "boolean"
@@ -3869,7 +3869,7 @@
                               },
                               {
                                 "type": "string",
-                                "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                                "pattern": "^(?!(?:operator|all|any)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                               }
                             ]
                           },
@@ -4369,7 +4369,7 @@
                               },
                               {
                                 "type": "string",
-                                "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                                "pattern": "^(?!(?:operator|all|any)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                               }
                             ]
                           },
@@ -4389,7 +4389,7 @@
                               },
                               {
                                 "type": "string",
-                                "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                                "pattern": "^(?!(?:operator|all|any)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                               }
                             ]
                           },
@@ -4634,12 +4634,13 @@
                       {
                         "type": "string",
                         "enum": [
-                          "all"
+                          "all",
+                          "any"
                         ]
                       },
                       {
                         "type": "string",
-                        "pattern": "^(?!(?:operator|all)(?:@|$))[a-z0-9_-]{1,64}(?:@[a-z0-9_-]{1,64})?$"
+                        "pattern": "^(?!(?:operator|all|any)(?:@|$))[a-z0-9_-]{1,64}(?:@[a-z0-9_-]{1,64})?$"
                       }
                     ]
                   },
@@ -4684,7 +4685,7 @@
                         },
                         {
                           "type": "string",
-                          "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                          "pattern": "^(?!(?:operator|all|any)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                         }
                       ]
                     },
@@ -4806,7 +4807,7 @@
             }
           },
           "409": {
-            "description": "Conflict with the session state: name taken, ambiguous peer, or yourself",
+            "description": "Conflict with the session state: name taken, ambiguous peer, yourself, or a send to any when no peer can take work",
             "content": {
               "application/json": {
                 "schema": {
@@ -4972,7 +4973,7 @@
                 "properties": {
                   "target": {
                     "type": "string",
-                    "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                    "pattern": "^(?!(?:operator|all|any)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                   }
                 },
                 "required": [
@@ -5222,7 +5223,7 @@
                 "properties": {
                   "target": {
                     "type": "string",
-                    "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                    "pattern": "^(?!(?:operator|all|any)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                   }
                 },
                 "required": [
@@ -5472,7 +5473,7 @@
                 "properties": {
                   "target": {
                     "type": "string",
-                    "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                    "pattern": "^(?!(?:operator|all|any)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                   }
                 },
                 "required": [
@@ -5722,7 +5723,7 @@
                 "properties": {
                   "target": {
                     "type": "string",
-                    "pattern": "^(?!(?:operator|all)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
+                    "pattern": "^(?!(?:operator|all|any)@)[a-z0-9_-]{1,64}@[a-z0-9_-]{1,64}$"
                   },
                   "gate": {
                     "type": "string",

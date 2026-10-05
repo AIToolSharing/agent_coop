@@ -218,10 +218,13 @@ func TestComposeToAllToOneAgentAndWithAName(t *testing.T) {
 	contains(t, h.frame(), "to all (tab: next) ›")
 	h.keys("+hi", "enter")
 	h.keys("m", "tab")
+	contains(t, h.frame(), "to any (tab: next) ›")
+	h.keys("+go", "enter")
+	h.keys("m", "tab", "tab")
 	contains(t, h.frame(), "to alice@mac-1 (tab: next) ›")
 	h.keys("+yo", "enter")
 	h.keys("m", "+@bob hi", "enter")
-	want := []string{"send build-42 all hi", "send build-42 alice@mac-1 yo", "send build-42 bob@vps-2 hi"}
+	want := []string{"send build-42 all hi", "send build-42 any go", "send build-42 alice@mac-1 yo", "send build-42 bob@vps-2 hi"}
 	if fmt.Sprint(h.op.calls) != fmt.Sprint(want) {
 		t.Fatalf("calls %v", h.op.calls)
 	}

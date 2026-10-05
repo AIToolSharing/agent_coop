@@ -125,12 +125,12 @@ func secondsSchema(def int, description string) map[string]any {
 var schemas = map[string]map[string]any{
 	"status": objectSchema(nil, map[string]any{}),
 	"send": objectSchema([]string{"to", "text"}, map[string]any{
-		"to":       stringSchema(`A peer name (like "bob" or "bob@laptop"), "all" for everyone, or "operator" for the user`),
+		"to":       stringSchema(`A peer name (like "bob" or "bob@laptop"), "all" for everyone, "any" for the free peer on the least loaded machine (the result names it), or "operator" for the user`),
 		"text":     textSchema(fmt.Sprintf("The message, up to %d characters", wire.MaxText)),
 		"reply_to": stringSchema("The id of the message you answer"),
 	}),
 	"ask": objectSchema([]string{"to", "text"}, map[string]any{
-		"to":        stringSchema(`The peer to ask (like "bob" or "bob@laptop"), or "operator" for the user`),
+		"to":        stringSchema(`The peer to ask (like "bob" or "bob@laptop"), "any" for the free peer on the least loaded machine, or "operator" for the user`),
 		"text":      textSchema("The question"),
 		"timeout_s": secondsSchema(120, "How long to wait for the answer"),
 	}),
@@ -653,8 +653,8 @@ func (s *shim) status(ctx context.Context) (any, error) {
 }
 
 func (s *shim) send(ctx context.Context, in sendIn) (any, error) {
-	if in.To != wire.Broadcast && in.To != wire.Operator && !isPeer(in.To) {
-		return nil, invalid("to", `"all", "operator", or `+peerRule)
+	if in.To != wire.Broadcast && in.To != wire.Operator && in.To != wire.Any && !isPeer(in.To) {
+		return nil, invalid("to", `"all", "any", "operator", or `+peerRule)
 	}
 	if !optionalID(in.ReplyTo) {
 		return nil, invalid("reply_to", "a message id")
@@ -690,8 +690,8 @@ func await[T any](ctx context.Context, p *pending[T], d time.Duration) (T, bool)
 }
 
 func (s *shim) ask(ctx context.Context, in askIn) (any, error) {
-	if in.To != wire.Operator && !isPeer(in.To) {
-		return nil, invalid("to", `"operator" or `+peerRule)
+	if in.To != wire.Operator && in.To != wire.Any && !isPeer(in.To) {
+		return nil, invalid("to", `"any", "operator", or `+peerRule)
 	}
 	client, inbox, _, err := s.joined()
 	if err != nil {

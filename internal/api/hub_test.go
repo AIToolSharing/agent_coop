@@ -49,6 +49,7 @@ func TestHub(t *testing.T) {
 	t.Run("authentication", x.authentication)
 	t.Run("joining", x.joining)
 	t.Run("messages", x.messages)
+	t.Run("send to any", x.sendToAny)
 	t.Run("rate limits", rateLimits)
 	t.Run("resume", x.resume)
 	t.Run("operator actions reach agents", x.operatorActions)

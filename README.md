@@ -358,6 +358,60 @@ coop login <hub address> <reporter token>
 coop --reporter claude
 ```
 
+### Give work to a free agent: `any`
+
+A `send` or an `ask` to `any` goes to one agent. The hub picks the agent, and the result names
+it. In the TUI, `any` is a target of `m`.
+
+- **Free.** The hub picks an agent that is in the session now, that you do not hold or pause,
+  and whose state is not `working` or `blocked`. It never picks the sender, and never an
+  orchestrator.
+- **Least load.** Of the free agents, the one on the machine with the fewest working agents
+  gets the message. The count includes the agents of the other sessions. Machines with the
+  same load take turns.
+- **No free agent.** The send fails with a conflict (409), and the message lists each agent
+  with the reason. The hub keeps no such message for later.
+- **The state is a report.** An agent says that it works with the tool `set_state`. An agent
+  that does not report stays `idle`, and the hub gives it each task. The hub counts a task as
+  load only after the agent reports `working`.
+- **The name.** `any` is a reserved name, as `all` and `operator`. No agent can have it.
+
+### Workers: agents that wait for work as a service
+
+`deploy/coop-worker.sh` runs an agent as a service on an agent machine. In each round it
+starts the CLI of the agent headless. The agent waits for a message for up to five minutes,
+does what the message asks, answers the sender, and ends. Then the next round starts.
+A worker that waits is `idle`, so a send to `any` can pick it.
+
+1. On the machine, as the user `agent`, make the directory of the worker and name its session.
+
+   ```bash
+   mkdir -p ~/coop-workers/claude && cd ~/coop-workers/claude
+   coop session <session> --agent <name>
+   ```
+
+2. Copy `deploy/coop-worker.sh` and `deploy/coop-worker@.service` to the machine. As root,
+   install them and start the worker. The instance name is the kind of the agent.
+
+   ```bash
+   install -m 755 coop-worker.sh /usr/local/bin/coop-worker
+   install -m 644 coop-worker@.service /etc/systemd/system/
+   systemctl enable --now coop-worker@claude
+   ```
+
+3. Release the worker one time (`g` in the TUI), or set the hold of the session off (`H`). A
+   held worker cannot call its tools. One release is sufficient: the worker joins again in each
+   round under the same name.
+
+`deploy/coop-worker.run` is the same service for runit. `deploy/coop-worker.ps1` and
+`deploy/coop-worker-tasks.ps1` are the worker for Windows, as a task at logon.
+
+The kinds are `claude`, `codex`, `copilot` and `gemini`. Only the `claude` worker is behind
+your gate, because only `coop claude` gives the gate hook. The other kinds run with their tools
+allowed and no question, and a hold, a pause or a stop does not refuse their tool calls. Each
+peer of the session can make such a worker run commands. Use these kinds only in a session
+where you trust each agent.
+
 ### Hold, pause, stop
 
 You decide when an agent works. The keys act on the agent under the sidebar cursor, or on the
@@ -378,7 +432,12 @@ agent whose details are open.
   press `H`.
 - **Paused.** A pause stops the agent at its next tool call. It does not interrupt a command
   that runs. A held or paused agent can still read and write messages.
-- **No answer, no work.** If the hook cannot reach the hub, it refuses the tool call.
+- **No answer from the hub.** If the hook gets no answer from the hub, the last answer of the
+  hub decides. An agent that you hold, paused or stopped stays refused. Thus a restart of the
+  hub releases no agent. Each other agent works on, and the hook writes one line on stderr.
+  Thus a hub that is down does not stop your agents. An agent that the hub never answered has
+  no last answer: it works, also in a session that holds new agents. The hook keeps the last
+  answer in `~/.config/coop/gate/`.
 - **The default.** `coop serve --hold-new=false` makes each new session start its agents at
   once.
 

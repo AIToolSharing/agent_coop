@@ -12,7 +12,7 @@ var token = rapid.StringMatching(`^[a-z0-9_-]{1,64}$`)
 
 // An agent name: a token that is not a reserved word.
 func agentName() *rapid.Generator[string] {
-	return token.Filter(func(s string) bool { return s != "operator" && s != "all" })
+	return token.Filter(func(s string) bool { return s != "operator" && s != "all" && s != "any" })
 }
 
 func address() *rapid.Generator[wire.Address] {

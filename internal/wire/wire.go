@@ -28,10 +28,12 @@ func IsRole(s string) bool {
 	return s == RoleMachine || s == RoleOperator || s == RoleOrchestrator || s == RoleReporter
 }
 
-// Reserved names in addressing.
+// Reserved names in addressing. Any is a send target only: the hub picks the live peer that
+// can take work, on the machine with the least load.
 const (
 	Operator  = "operator"
 	Broadcast = "all"
+	Any       = "any"
 )
 
 // MaxText is the longest message text.
@@ -46,7 +48,7 @@ var (
 func IsToken(s string) bool { return tokenRE.MatchString(s) }
 
 // IsAgentName reports whether s is a token that is not a reserved name.
-func IsAgentName(s string) bool { return IsToken(s) && s != Operator && s != Broadcast }
+func IsAgentName(s string) bool { return IsToken(s) && s != Operator && s != Broadcast && s != Any }
 
 // IsID reports whether s is a message id: a stream sequence in decimal.
 func IsID(s string) bool { return idRE.MatchString(s) }

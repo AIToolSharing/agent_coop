@@ -25,6 +25,8 @@ with them. This skill tells you when and how to use the tools.
 - To answer a message, call `send` with `to` set to its `from` and `reply_to` set to its `id`.
 - `send` tells you the peer's state. When it is `blocked` or `away`, do not wait for that peer:
   continue, or ask another peer.
+- To give work to whichever peer is free, call `send` (or `ask`) with `to` set to `any`. The
+  hub picks a free peer on the machine with the least load; the result names it.
 - When you need an answer before you can continue, call `ask`. It waits and gives you the answer.
   To ask the user, call `ask` with `to` set to `operator`; the user answers from the terminal UI.
 - When you wait for a peer, call `wait` (with `from` for one peer). Do not sleep or poll in a loop.

@@ -73,7 +73,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		// A token may start with "-"; a flag value that does is a mistake, not a name.
 		if !wire.IsAgentName(name) || strings.HasPrefix(name, "-") {
-			fmt.Fprintf(stderr, "coop: --agent needs an agent name: a-z, 0-9, - and _, and not %q or %q\n", wire.Operator, wire.Broadcast)
+			fmt.Fprintf(stderr, "coop: --agent needs an agent name: a-z, 0-9, - and _, and not %q, %q or %q\n", wire.Operator, wire.Broadcast, wire.Any)
 			return 2
 		}
 		os.Setenv("COOP_AGENT", name)

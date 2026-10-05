@@ -1,0 +1,10 @@
+#!/bin/sh
+# A coop worker as a runit service: one directory for each agent kind, for example
+# /etc/sv/coop-worker-claude/run; enable it with ln -s /etc/sv/coop-worker-claude /var/service/
+# It runs as the user agent (deploy/agent-user.sh makes that user), as the systemd unit does.
+# For another user or another kind, change the values below.
+user=agent
+kind=claude
+home=/home/$user
+exec chpst -u "$user:$user" env HOME="$home" PATH="$home/.local/bin:/usr/local/bin:/usr/bin:/bin" \
+    /usr/local/bin/coop-worker "$home/coop-workers/$kind" "$kind" 2>&1

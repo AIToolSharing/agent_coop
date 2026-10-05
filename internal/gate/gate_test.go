@@ -39,7 +39,7 @@ func TestTextsTellTheAgentWhatToDoAndNameNoPartOfTheService(t *testing.T) {
 	if gate.Text("run") != "" || gate.Text("") != "" {
 		t.Error("run has a text")
 	}
-	for _, text := range []string{gate.Released, gate.Unknown} {
+	for _, text := range []string{gate.Released, gate.NoAnswer} {
 		if text == "" || forbiddenRE.MatchString(text) {
 			t.Errorf("%q", text)
 		}
