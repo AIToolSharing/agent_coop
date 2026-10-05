@@ -21,33 +21,21 @@ TUI, and the setup commands.
 ### 1. Deploy the hub (one time)
 
 Do these steps on your own machine, in a clone of this repository. You need Go 1.25 or later,
-and a Linux server with systemd.
+and a Linux server with systemd that you can log in to with SSH.
 
-1. Build the binaries.
-
-   ```bash
-   make release
-   ```
-
-2. Copy the binary and the installer to the server.
+1. Build the binaries, copy them to the server, install the hub and start it.
 
    ```bash
-   scp dist/coop-linux-amd64 deploy/install.sh deploy/coop.service <server>:/tmp/
+   make hub HOST=<server>
    ```
 
-3. Install the hub and start it.
-
-   ```bash
-   ssh <server> 'cd /tmp && sudo ./install.sh ./coop-linux-amd64'
-   ```
-
-4. Make your operator token. The token shows one time only.
+2. Make your operator token. The token shows one time only.
 
    ```bash
    ssh <server> 'sudo -u coop coop admin token add --operator <your name>'
    ```
 
-5. Install `coop` on your own machine and store the token.
+3. Install `coop` on your own machine and store the token.
 
    ```bash
    make install
@@ -56,7 +44,7 @@ and a Linux server with systemd.
 
 The hub listens on `127.0.0.1:8090` of the server. Put a TLS front or a private network between
 the hub and the other machines. [deploy/README.md](deploy/README.md) gives the steps. To
-upgrade the hub, do steps 1 to 3 again.
+upgrade the hub, do step 1 again.
 
 ### 2. Add an agent machine (one time for each machine)
 
@@ -66,22 +54,24 @@ upgrade the hub, do steps 1 to 3 again.
    sudo -u coop coop admin token add <machine>
    ```
 
-2. Copy `dist/coop-<os>-<arch>` to the machine as `coop`, into a directory on the PATH.
-3. Store the hub address and the token. Do this on the machine.
+2. Install coop. Do this on the machine, as the user that runs the agents.
 
    ```bash
-   coop login <hub address> <machine token>
+   curl -fsSL <hub address>/install.sh | sh -s -- <hub address> <machine token>
    ```
 
-4. Connect coop to Claude Code. Then check the result.
+   The machine downloads its binary from the hub into `~/.local/bin`. Then the line stores the
+   hub address and the token, connects coop to Claude Code, and checks the result. The machine
+   needs Claude Code. The line needs no root.
 
-   ```bash
-   coop setup
-   coop doctor
-   ```
+3. If the machine is a server, do not run agents as root. Make a user that has no privileges,
+   and do step 2 as that user. On a machine where coop ran as root, `deploy/agent-user.sh`
+   moves coop to a user `agent`.
 
-5. If the machine is a server, do not run agents as root. Copy `deploy/agent-user.sh` to the
-   machine and run it as root. It moves coop to a user `agent` that has no privileges.
+`curl` must trust the hub address: plain `http` in a private network, or a public certificate.
+For a hub with a self-signed certificate, and on Windows, copy `dist/coop-<os>-<arch>` to the
+machine as `coop`. Then run `coop login <hub address> <machine token>`, `coop setup` and
+`coop doctor`.
 
 ### 3. Use it
 
@@ -108,8 +98,9 @@ upgrade the hub, do steps 1 to 3 again.
 4. Steer the agent. `p` pauses or resumes it, `x` stops it, and `m` writes a message. `?` shows
    each key.
 
-To upgrade the hub and all machines to a new version, run `deploy/rollout.sh <hub> <agent
-machines>`. See [deploy/README.md](deploy/README.md), Upgrade.
+To upgrade to a new version, run `make hub HOST=<server>` on your own machine. Then run
+`coop upgrade` on each agent machine: the machine takes the version of its hub. In a clone, run
+`make install`. See [deploy/README.md](deploy/README.md), Upgrade.
 
 The sections below give the details.
 
@@ -152,16 +143,18 @@ the same way.
 | `internal/shim` | the agent's MCP server |
 | `internal/tui` | the TUI |
 | `internal/wire` | names, events and records |
-| `deploy/` | the installer, the unit, the TLS front, and the scripts for agent machines |
+| `deploy/` | the installer of the hub, the unit, the TLS front, and `agent-user.sh` for a server that ran coop as root |
 | `agents/` | [agent-pipeline](https://github.com/map588/agents), a workflow for the orchestrator (a git submodule) |
 
 ## Agent machines
 
 A machine needs Claude Code, or another MCP client, and the `coop` binary.
 
-- **The binary.** In a clone with Go 1.25 or later, `make install` builds `dist/coop` and links
-  `~/.local/bin/coop` to it. Run it again after each `git pull`. `make release` writes
-  `dist/coop-<os>-<arch>` for macOS and Linux. Copy one of these to a machine that has no Go.
+- **The binary.** A machine gets the binary from its hub. The install line puts it in
+  `~/.local/bin`, and `coop upgrade` takes each later version of the hub. In a clone with Go
+  1.25 or later, `make install` builds `dist/coop` and links `~/.local/bin/coop` to it. Run it
+  again after each `git pull`. `make release` writes `dist/coop-<os>-<arch>` for macOS, Linux
+  and Windows.
 - **The token.** `coop login` checks the token against the hub. Then it writes
   `~/.config/coop/env` with mode 0600.
 - **A self-signed certificate.** `coop login` shows the fingerprint of the certificate and pins
@@ -170,8 +163,9 @@ A machine needs Claude Code, or another MCP client, and the `coop` binary.
 - **Claude Code.** `coop setup` registers `coop mcp` with Claude Code and writes the skill. It
   also puts the gate hook and the activity hooks into `~/.claude/settings.json`. It keeps a
   copy of that file as `settings.json.before-coop`. Run `coop setup` again after an upgrade of
-  `coop`.
+  `coop`. `coop upgrade` does this for you.
 - **The check.** `coop doctor` shows each check as ok, or gives the command that repairs it.
+  It also compares the version of the machine with the version of the hub.
 
 Do not run agents as root. On a server, run `deploy/agent-user.sh` as root. The script makes a
 user `agent` that has no privileges. It gives that user coop, a copy of root's Claude Code, and
@@ -183,6 +177,12 @@ that user.
 
 On macOS, the first connection asks you to allow local network access. Approve it one time. The
 build has a fixed signing identifier, so a new build keeps the approval.
+
+On Windows, an agent machine and the TUI work; the hub (`coop serve`, `deploy/`) is for Linux.
+Run `make install` in Git Bash: it copies `dist/coop.exe` to `~/.local/bin/coop.exe`, so run it
+again after each build. Claude Code runs the hooks of coop in Git Bash. The credential file has
+no mode there: the user's profile directory keeps it private. `coop claude` and the SSH of
+`coop start` run as a child process of coop.
 
 A Claude Code session that is in no coop session gets no tools from `coop mcp`. Such a session
 pays nothing for coop.
@@ -494,7 +494,7 @@ Not protected:
 make check          # gofmt, go vet, staticcheck, shellcheck, go test -race: the gate for each commit
 make contract       # the API against its own /openapi.json with Schemathesis (needs uvx)
 make build          # dist/coop for this machine
-make release        # dist/coop-darwin-arm64, -linux-amd64, -linux-arm64
+make release        # dist/coop-darwin-arm64, -linux-amd64, -linux-arm64, -windows-amd64.exe
 ```
 
 The API contract is `internal/api/openapi.json`. The hub serves it at `/openapi.json`. The

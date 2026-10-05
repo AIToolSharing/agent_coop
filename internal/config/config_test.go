@@ -225,6 +225,7 @@ func TestPushIsOnOnlyForTheValue1(t *testing.T) {
 }
 
 func TestWarningsComeInTheOrderOfTheTypeScriptCode(t *testing.T) {
+	unixModes(t) // the first warning is about the mode
 	tr := tree(t)
 	cred := filepath.Join(tr.root, "env")
 	writeFile(t, cred, "COOP_TOKEN=m.s\n", 0o644)

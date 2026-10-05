@@ -2,9 +2,14 @@
 // session. `coop setup` writes it to ~/.claude/skills/coop/SKILL.md.
 package skill
 
-import _ "embed"
+import (
+	_ "embed"
+	"strings"
+)
 
-// Text is the skill file, with its front matter.
-//
 //go:embed SKILL.md
-var Text string
+var file string
+
+// Text is the skill file, with its front matter. A checkout with CRLF line endings (git on
+// Windows) gives the same text as one with LF.
+var Text = strings.ReplaceAll(file, "\r\n", "\n")

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -219,7 +220,8 @@ func TestInstallHookFileKeepsACopyAndTheMode(t *testing.T) {
 	info, _ := os.Stat(path)
 	copyText, _ := os.ReadFile(path + ".before-coop")
 	now, _ := os.ReadFile(path)
-	if info.Mode().Perm() != 0o600 || string(copyText) != userSettings || !hookInstalled(now, exeA) {
+	// Windows has no Unix file modes: only the copy and the hook are checked there.
+	if (info.Mode().Perm() != 0o600 && runtime.GOOS != "windows") || string(copyText) != userSettings || !hookInstalled(now, exeA) {
 		t.Fatalf("mode %v, copy equal %v, installed %v", info.Mode().Perm(), string(copyText) == userSettings, hookInstalled(now, exeA))
 	}
 	// A second run changes nothing. A later change keeps the first copy.

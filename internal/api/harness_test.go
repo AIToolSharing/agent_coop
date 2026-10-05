@@ -25,8 +25,12 @@ type limit struct {
 type limits struct{ join, msg, activity limit }
 
 // options of a test hub; autoCreate false means the operator creates sessions.
-// holdNew true means a session that the hub makes holds new agents.
-type options struct{ autoCreate, holdNew bool }
+// holdNew true means a session that the hub makes holds new agents. version is the version
+// that the hub reports, and dist is the directory of the binaries that it gives to devices.
+type options struct {
+	autoCreate, holdNew bool
+	version, dist       string
+}
 
 // testPing is the hub's ping and sweep interval in tests, so that a revoked token or a
 // changed session shows within a second.
@@ -80,7 +84,9 @@ func (h *harness) start() {
 		Ping:       testPing,
 		Limits:     hub.Limits{Join: conv(h.l.join), Msg: conv(h.l.msg), Activity: conv(h.l.activity)},
 	})
-	h.srv = &http.Server{Handler: coopapi.New(h.h, h.t.Logf)}
+	srv := coopapi.New(h.h, h.t.Logf)
+	srv.Version, srv.Dist = h.o.version, h.o.dist
+	h.srv = &http.Server{Handler: srv}
 	go func() { _ = h.srv.Serve(ln) }()
 	h.running = true
 }

@@ -59,6 +59,7 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 	data := fs.String("data", defaultDataDir(), "the directory of the database")
 	auto := fs.Bool("auto-create", true, "let the first agent that joins an unknown session create it")
 	hold := fs.Bool("hold-new", true, "a new session holds each agent that joins it for the first time, until the operator releases it")
+	dist := fs.String("dist", "", "the directory of the release binaries that the hub gives to devices (default: dist in the data directory)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -79,8 +80,15 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 	}
 	logf := func(format string, a ...any) { fmt.Fprintf(stderr, "coop serve: "+format+"\n", a...) }
 	h := coophub.New(st, coophub.Options{AutoCreate: *auto, HoldNew: *hold})
+	// A device installs and upgrades coop from its hub: the hub reports its version and gives
+	// the binaries of that version (deploy/install.sh puts them into the directory).
+	handler := api.New(h, logf)
+	handler.Version, handler.Dist = version, *dist
+	if handler.Dist == "" {
+		handler.Dist = filepath.Join(*data, "dist")
+	}
 	srv := &http.Server{
-		Handler:           api.New(h, logf),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 		// No WriteTimeout: the streams live for hours. Each stream write has its own deadline.

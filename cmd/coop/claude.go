@@ -109,8 +109,15 @@ func cmdClaude(args []string, stderr io.Writer) int {
 	env := launchEnv(environ(), session, launchRole, func(env map[string]string) config.Config {
 		return config.Load(env, config.DefaultEnvFile(), func(string) {}, cwd())
 	})
+	return replaceProcess(path, argv, env, stderr)
+}
+
+// replaceProcess runs the program at path in place of coop, for `coop claude` and for the SSH
+// of `coop start`. It returns only when the program does not start or, on Windows, with the
+// exit code of the program.
+func replaceProcess(path string, argv, env []string, stderr io.Writer) int {
 	if runtime.GOOS == "windows" {
-		// Windows has no exec(2): run Claude Code as a child on the same console and
+		// Windows has no exec(2): run the program as a child on the same console and
 		// return its exit code.
 		cmd := exec.Command(path, argv[1:]...)
 		cmd.Env, cmd.Stdin, cmd.Stdout, cmd.Stderr = env, os.Stdin, os.Stdout, os.Stderr
@@ -123,13 +130,13 @@ func cmdClaude(args []string, stderr io.Writer) int {
 			if errors.As(err, &exit) {
 				return exit.ExitCode()
 			}
-			fmt.Fprintln(stderr, "cannot start claude:", err)
+			fmt.Fprintf(stderr, "cannot start %s: %v\n", argv[0], err)
 			return 1
 		}
 		return 0
 	}
 	if err := syscall.Exec(path, argv, env); err != nil {
-		fmt.Fprintln(stderr, "cannot start claude:", err)
+		fmt.Fprintf(stderr, "cannot start %s: %v\n", argv[0], err)
 		return 1
 	}
 	return 0

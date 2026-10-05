@@ -11,7 +11,6 @@ import (
 	"path"
 	"slices"
 	"strings"
-	"syscall"
 
 	"github.com/AIToolSharing/agent_coop/internal/herdr"
 	"github.com/AIToolSharing/agent_coop/internal/wire"
@@ -218,9 +217,5 @@ func cmdStart(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	// The agent runs in this terminal: ssh takes the place of this process.
-	if err := syscall.Exec(bin, p.ssh, os.Environ()); err != nil {
-		fmt.Fprintln(stderr, "coop start:", err)
-		return 1
-	}
-	return 0
+	return replaceProcess(bin, p.ssh, os.Environ(), stderr)
 }

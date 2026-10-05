@@ -35,10 +35,12 @@ const usageText = `usage:
                                   watch and steer all sessions (operator token)
   coop setup                      register coop with Claude Code and install the skill
   coop doctor                     check the connection, the tokens, the session, the setup
+  coop upgrade                    take the version of the hub: download the binary of this
+                                  device from the hub, then run its setup
   coop mcp                        the MCP server Claude Code starts (stdio)
   coop hook pretool               the gate check Claude Code runs before a tool call
-  coop serve [--listen <addr>] [--data <dir>] [--auto-create=false] [--hold-new=false]
-                                  run the hub (the server)
+  coop serve [--listen <addr>] [--data <dir>] [--dist <dir>] [--auto-create=false]
+             [--hold-new=false]   run the hub (the server)
   coop admin token add [--role <role>] <name> | list | revoke <name>
                                   manage tokens on the hub's host
   coop version
@@ -102,6 +104,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdSetup(args[1:], stdout, stderr)
 	case "doctor":
 		return cmdDoctor(args[1:], stdout, stderr)
+	case "upgrade":
+		return cmdUpgrade(args[1:], stdout, stderr)
 	case "mcp":
 		return cmdMCP(args[1:], stderr)
 	case "hook":
