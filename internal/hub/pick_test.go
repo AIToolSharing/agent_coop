@@ -12,7 +12,7 @@ import (
 
 // pickHub is a hub with live connections and no store: pickLocked reads only those.
 func pickHub(clock *time.Time, conns ...*Conn) *Hub {
-	h := &Hub{conns: map[string]*Conn{}, opt: Options{Now: func() time.Time { return *clock }}}
+	h := &Hub{conns: map[string]*Conn{}, picked: map[string]time.Time{}, opt: Options{Now: func() time.Time { return *clock }}}
 	for _, c := range conns {
 		c.key = wire.BuildPresenceKey(wire.PresenceKey{SID: c.sid, Agent: c.me})
 		h.conns[c.key] = c
@@ -34,18 +34,23 @@ func TestPickLockedIsTheLeastLoadedFreePeer(t *testing.T) {
 		var clock time.Time
 		n := rapid.IntRange(0, 8).Draw(rt, "n")
 		var conns []*Conn
+		var picked []time.Time
 		for i := range n {
-			c := conn(
+			conns = append(conns, conn(
 				rapid.SampledFrom([]string{"s1", "s2"}).Draw(rt, fmt.Sprint("sid", i)),
 				fmt.Sprint("a", i),
 				rapid.SampledFrom([]string{"m1", "m2", "m3"}).Draw(rt, fmt.Sprint("machine", i)),
 				rapid.SampledFrom(states).Draw(rt, fmt.Sprint("state", i)),
 				rapid.SampledFrom(gates).Draw(rt, fmt.Sprint("gate", i)),
-			)
-			c.picked = time.Time{}.Add(time.Duration(rapid.IntRange(0, 3).Draw(rt, fmt.Sprint("picked", i))) * time.Second)
-			conns = append(conns, c)
+			))
+			picked = append(picked, time.Time{}.Add(time.Duration(rapid.IntRange(0, 3).Draw(rt, fmt.Sprint("picked", i)))*time.Second))
 		}
 		h := pickHub(&clock, conns...)
+		for i, c := range conns {
+			if !picked[i].IsZero() {
+				h.picked[c.key] = picked[i]
+			}
+		}
 		var me *wire.Address
 		if n > 0 && rapid.Bool().Draw(rt, "agent sends") {
 			me = &conns[rapid.IntRange(0, n-1).Draw(rt, "me")].me
@@ -67,7 +72,7 @@ func TestPickLockedIsTheLeastLoadedFreePeer(t *testing.T) {
 			if d := load[a.me.Machine] - load[b.me.Machine]; d != 0 {
 				return d
 			}
-			if d := a.picked.Compare(b.picked); d != 0 {
+			if d := h.picked[a.key].Compare(h.picked[b.key]); d != 0 {
 				return d
 			}
 			return slices.Compare([]string{a.key}, []string{b.key})
@@ -83,10 +88,29 @@ func TestPickLockedIsTheLeastLoadedFreePeer(t *testing.T) {
 		if err != nil || got != want[0] {
 			rt.Fatalf("picked %v (%v), want %s", got, err, want[0].me)
 		}
-		if !got.picked.Equal(clock) {
+		if !h.picked[got.key].Equal(clock) {
 			rt.Fatalf("the pick did not record its time")
 		}
 	})
+}
+
+// A worker that leaves after each task and joins again keeps its place in the turns: the time
+// of its last pick belongs to its address, not to its connection.
+func TestPickLockedKeepsTheTurnsAcrossRejoins(t *testing.T) {
+	var clock time.Time
+	h := pickHub(&clock, conn("s", "a", "m1", "idle", wire.GateRun), conn("s", "b", "m2", "idle", wire.GateRun))
+	clock = clock.Add(time.Second)
+	if c, _ := h.pickLocked("s", nil); c.me.Agent != "a" {
+		t.Fatalf("first pick %s, want a", c.me)
+	}
+	// a leaves and joins again as a new connection.
+	again := conn("s", "a", "m1", "idle", wire.GateRun)
+	again.key = h.conns[wire.BuildPresenceKey(wire.PresenceKey{SID: "s", Agent: again.me})].key
+	h.conns[again.key] = again
+	clock = clock.Add(time.Second)
+	if c, _ := h.pickLocked("s", nil); c.me.Agent != "b" {
+		t.Fatalf("second pick %s, want b: a had its turn", c.me)
+	}
 }
 
 func TestPickLockedTakesTurnsOnEqualLoad(t *testing.T) {
