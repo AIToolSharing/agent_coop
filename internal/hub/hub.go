@@ -234,6 +234,9 @@ type Hub struct {
 	feeds          map[*feed]struct{}
 	// refusedAt is when the hub last recorded a refused join, by presence key and reason.
 	refusedAt map[string]time.Time
+	// picked is when a send to `any` last chose an agent, by presence key. It outlives the
+	// connection: a worker that joins again for each task keeps its place in the turns.
+	picked map[string]time.Time
 	// traces is what each agent did at its terminal lately, by presence key. traceN numbers
 	// the items. boot names this run of the hub in the feed.
 	traces map[string]*traceLog
@@ -275,6 +278,7 @@ func New(st *store.Store, opt Options) *Hub {
 		conns:     map[string]*Conn{},
 		feeds:     map[*feed]struct{}{},
 		refusedAt: map[string]time.Time{},
+		picked:    map[string]time.Time{},
 	}
 }
 
@@ -353,8 +357,6 @@ type Conn struct {
 	herdrPane string
 	// orchestrator: the agent joined with an orchestrator token.
 	orchestrator bool
-	// picked is when a send to `any` last chose this agent; zero for never.
-	picked time.Time
 	// quiet is the sequence of a gate record that the agent gets no notice of, or 0.
 	quiet int64
 	// sent holds the ids of the messages written to the stream, for redact notices.
@@ -1622,7 +1624,7 @@ func (h *Hub) pickLocked(sid string, me *wire.Address) (*Conn, error) {
 			others = append(others, c.me.String()+" ("+why+")")
 			continue
 		}
-		if best == nil || load[c.me.Machine] < load[best.me.Machine] || load[c.me.Machine] == load[best.me.Machine] && c.picked.Before(best.picked) {
+		if best == nil || load[c.me.Machine] < load[best.me.Machine] || load[c.me.Machine] == load[best.me.Machine] && h.picked[c.key].Before(h.picked[best.key]) {
 			best = c
 		}
 	}
@@ -1633,7 +1635,7 @@ func (h *Hub) pickLocked(sid string, me *wire.Address) (*Conn, error) {
 		}
 		return nil, errf("not_found", "no peer in this session can take work now; peers: %s", list)
 	}
-	best.picked = h.opt.Now()
+	h.picked[best.key] = h.opt.Now()
 	return best, nil
 }
 
