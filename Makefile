@@ -40,11 +40,14 @@ release:
 	GOOS=linux  GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o dist/coop-linux-arm64  $(PKG)
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o dist/coop-windows-amd64.exe $(PKG)
 
+# The scripts of the hub's host, and the script that a device runs to install coop.
+SCRIPTS := deploy/*.sh internal/api/install.sh
+
 check:
 	test -z "$$(gofmt -l cmd internal deploy)"
 	go vet ./...
 	staticcheck ./...
-	@if command -v shellcheck >/dev/null; then echo shellcheck deploy/*.sh; shellcheck deploy/*.sh; else echo "shellcheck is not installed: the scripts in deploy/ are not checked"; fi
+	@if command -v shellcheck >/dev/null; then echo shellcheck $(SCRIPTS); shellcheck $(SCRIPTS); else echo "shellcheck is not installed: the scripts are not checked"; fi
 	go test -race ./...
 
 test:

@@ -39,6 +39,11 @@ type Server struct {
 	log func(format string, args ...any)
 	// routes by path pattern, in document order; each path has its methods.
 	routes []*route
+	// Version is the version of this hub, which whoami reports. Dist is the directory of the
+	// release binaries that the hub gives to devices at /dl/; "" gives none. Set both before
+	// the server starts.
+	Version string
+	Dist    string
 }
 
 type route struct {
@@ -151,6 +156,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/openapi.json" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(Document)
+		return
+	}
+	if s.install(w, r) {
 		return
 	}
 	segs := strings.Split(strings.TrimPrefix(r.URL.EscapedPath(), "/"), "/")
@@ -343,7 +351,7 @@ func (s *Server) whoami(w http.ResponseWriter, r *http.Request, owner hub.Owner,
 		writeHubError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]string{"name": owner.Name, "role": owner.Role})
+	writeJSON(w, 200, map[string]string{"name": owner.Name, "role": owner.Role, "version": s.Version})
 }
 
 // --- Agent routes ----------------------------------------------------------------------------

@@ -37,8 +37,8 @@ const usageText = `usage:
   coop doctor                     check the connection, the tokens, the session, the setup
   coop mcp                        the MCP server Claude Code starts (stdio)
   coop hook pretool               the gate check Claude Code runs before a tool call
-  coop serve [--listen <addr>] [--data <dir>] [--auto-create=false] [--hold-new=false]
-                                  run the hub (the server)
+  coop serve [--listen <addr>] [--data <dir>] [--dist <dir>] [--auto-create=false]
+             [--hold-new=false]   run the hub (the server)
   coop admin token add [--role <role>] <name> | list | revoke <name>
                                   manage tokens on the hub's host
   coop version

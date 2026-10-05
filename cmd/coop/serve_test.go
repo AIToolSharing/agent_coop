@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -93,5 +94,56 @@ func TestAdminTokens(t *testing.T) {
 		if code, _, errOut := call(bad...); code != 2 || !strings.Contains(errOut, "usage:") {
 			t.Fatalf("%v: %d %q", bad, code, errOut)
 		}
+	}
+}
+
+// A device installs coop from its hub: `coop serve` reports its version and gives the release
+// binaries of the directory dist in its data directory, or of --dist.
+func TestServeGivesItsVersionAndItsBinaries(t *testing.T) {
+	for name, flag := range map[string]bool{"dist in the data directory": false, "--dist": true} {
+		data := t.TempDir()
+		dist := filepath.Join(data, "dist")
+		args := []string{"--listen", "127.0.0.1:0", "--data", data}
+		if flag {
+			dist = t.TempDir()
+			args = append(args, "--dist", dist)
+		}
+		if err := os.MkdirAll(dist, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dist, "coop-linux-amd64"), []byte("the binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var out, errOut bytes.Buffer
+		if code := run([]string{"admin", "token", "add", "--data", data, "mac-1"}, &out, &errOut); code != 0 {
+			t.Fatalf("token: %d %s", code, errOut.String())
+		}
+		token := strings.TrimSpace(out.String())
+		ready := make(chan string, 1)
+		serveReady = func(addr string) { ready <- addr }
+		t.Cleanup(func() { serveReady = nil })
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan int, 1)
+		go func() { done <- serve(ctx, args, &errOut) }()
+		base := "http://" + <-ready
+		get := func(path string) (int, string) {
+			req, _ := http.NewRequest(http.MethodGet, base+path, nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			res, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer res.Body.Close()
+			body, _ := io.ReadAll(res.Body)
+			return res.StatusCode, string(body)
+		}
+		if status, body := get("/dl/coop-linux-amd64"); status != 200 || body != "the binary" {
+			t.Errorf("%s: the binary: %d %q", name, status, body)
+		}
+		if status, body := get("/v1/whoami"); status != 200 || !strings.Contains(body, `"version":"`+version+`"`) {
+			t.Errorf("%s: whoami: %d %s", name, status, body)
+		}
+		cancel()
+		<-done
 	}
 }

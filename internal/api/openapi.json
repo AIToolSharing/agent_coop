@@ -43,11 +43,16 @@
                         "orchestrator",
                         "reporter"
                       ]
+                    },
+                    "version": {
+                      "type": "string",
+                      "maxLength": 100
                     }
                   },
                   "required": [
                     "name",
-                    "role"
+                    "role",
+                    "version"
                   ],
                   "additionalProperties": false
                 }
