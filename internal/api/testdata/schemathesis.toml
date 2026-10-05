@@ -9,7 +9,7 @@ values = ["contract"]
 values = ["alice", "bob"]
 
 [dictionaries.recipients]
-values = ["all", "operator", "alice", "bob", "bob@mac-1"]
+values = ["all", "any", "operator", "alice", "bob", "bob@mac-1"]
 
 [dictionaries.peers]
 values = ["alice", "bob", "bob@mac-1"]
