@@ -235,7 +235,8 @@ type Hub struct {
 	// refusedAt is when the hub last recorded a refused join, by presence key and reason.
 	refusedAt map[string]time.Time
 	// picked is when a send to `any` last chose an agent, by presence key. It outlives the
-	// connection: a worker that joins again for each task keeps its place in the turns.
+	// connection: a worker that joins again for each task keeps its place in the turns. It
+	// ends when the operator forgets the agent or deletes the session.
 	picked map[string]time.Time
 	// traces is what each agent did at its terminal lately, by presence key. traceN numbers
 	// the items. boot names this run of the hub in the feed.
@@ -1043,6 +1044,11 @@ func (h *Hub) DeleteSession(sid string) error {
 	}
 	h.feedAll("session", sessionOut{Kind: "session", Session: sid, Revision: rev}, "")
 	h.dropSessionTraceLocked(sid)
+	for key := range h.picked {
+		if k, ok := wire.ParsePresenceKey(key); ok && k.SID == sid {
+			delete(h.picked, key)
+		}
+	}
 	for _, c := range h.inSessionLocked(sid) {
 		c.close("closed")
 	}
@@ -1098,7 +1104,9 @@ func (h *Hub) Forget(sid string, target wire.Address) error {
 	if err != nil || !known {
 		return storeErr(err)
 	}
-	h.dropTraceLocked(wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: target}))
+	key := wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: target})
+	h.dropTraceLocked(key)
+	delete(h.picked, key)
 	_, err = h.publishLocked(wire.Event{Kind: wire.EventActivity, SID: sid, From: target.String(), Activity: &wire.Activity{
 		Kind: "forgotten", At: h.now(),
 	}}, false, nil)
@@ -1609,8 +1617,8 @@ func busy(c *Conn) string {
 // least load. On a tie, the one that `any` chose longest ago wins, so equal machines take
 // turns. The caller holds the mutex.
 //
-// ponytail: the load is the count of working agents on the machine. Add a load figure to the
-// state report when the agents are not the only load of a machine.
+// The load is only the count of working agents, as the agents report it. When the agents are
+// not the only load of a machine, the state report needs a load figure.
 func (h *Hub) pickLocked(sid string, me *wire.Address) (*Conn, error) {
 	load := map[string]int{}
 	for _, c := range h.conns {
@@ -1637,7 +1645,9 @@ func (h *Hub) pickLocked(sid string, me *wire.Address) (*Conn, error) {
 		if len(others) > 0 {
 			list = strings.Join(others, ", ")
 		}
-		return nil, errf("not_found", "no peer in this session can take work now; peers: %s", list)
+		// A conflict with the state of the session, not a thing that is missing: the same send
+		// can pass a moment later.
+		return nil, errf("conflict", "no peer in this session can take work now; peers: %s", list)
 	}
 	h.picked[best.key] = h.opt.Now()
 	return best, nil

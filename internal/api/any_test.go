@@ -78,7 +78,7 @@ func (x *hubSuite) sendToAny(t *testing.T) {
 		}
 		b.none(t, isMsg, 200*time.Millisecond)
 		wantStatus(t, 204)(x.mac3.activity(sid, map[string]any{"kind": "state", "agent": "carol", "state": "blocked"}))
-		body := wantStatus(t, 404)(x.mac1.send(sid, "alice", "any", "please", ""))
+		body := wantStatus(t, 409)(x.mac1.send(sid, "alice", "any", "please", ""))
 		if m := parse[errBody](t, body).Message; m != "no peer in this session can take work now; peers: carol@mac-3 (blocked), bob@vps-2 (working)" {
 			t.Fatalf("message %q", m)
 		}
@@ -111,9 +111,11 @@ func (x *hubSuite) sendToAny(t *testing.T) {
 		}
 	})
 
-	t.Run("a held or paused peer and a peer that left get nothing; an empty session is 404", func(t *testing.T) {
+	t.Run("a held or paused peer and a peer that left get nothing; a session with no free peer is a conflict", func(t *testing.T) {
 		sid := x.session(t)
-		wantStatus(t, 404)(x.op.a.send(sid, "any", "task", ""))
+		if e := parse[errBody](t, wantStatus(t, 409)(x.op.a.send(sid, "any", "task", ""))); e.Error != "conflict" {
+			t.Fatalf("error %+v, want conflict", e)
+		}
 		a := x.mac1.stream(sid, "alice")
 		defer a.close()
 		b := x.vps2.stream(sid, "bob")
@@ -125,7 +127,7 @@ func (x *hubSuite) sendToAny(t *testing.T) {
 			t.Fatalf("to %q, want bob@vps-2", sent.To)
 		}
 		b.close()
-		body := wantStatus(t, 404)(x.op.a.send(sid, "any", "task", ""))
+		body := wantStatus(t, 409)(x.op.a.send(sid, "any", "task", ""))
 		if m := parse[errBody](t, body).Message; !strings.Contains(m, "alice@mac-1 (paused)") || strings.Contains(m, "bob") {
 			t.Fatalf("message %q", m)
 		}
@@ -152,9 +154,49 @@ func (x *hubSuite) sendToAny(t *testing.T) {
 		pm.none(t, isMsg, 200*time.Millisecond)
 		// When the only worker is busy, nobody takes the task: the orchestrator does not.
 		wantStatus(t, 204)(x.mac1.activity(sid, map[string]any{"kind": "state", "agent": "alice", "state": "working"}))
-		body := wantStatus(t, 404)(x.op.a.send(sid, "any", "task", ""))
+		body := wantStatus(t, 409)(x.op.a.send(sid, "any", "task", ""))
 		if m := parse[errBody](t, body).Message; m != "no peer in this session can take work now; peers: pm@boss (orchestrator), alice@mac-1 (working)" {
 			t.Fatalf("message %q", m)
+		}
+	})
+
+	t.Run("an agent that the operator forgot, and a session that was deleted, start the turns again", func(t *testing.T) {
+		sid := x.session(t)
+		pick := func() string {
+			t.Helper()
+			return parse[operatorSendResponse](t, wantStatus(t, 200)(x.op.a.send(sid, "any", "task", ""))).To
+		}
+		a := x.mac1.stream(sid, "alice")
+		b := x.vps2.stream(sid, "bob")
+		a.wait(t, nil)
+		b.wait(t, nil)
+		if got := pick(); got != "alice@mac-1" {
+			t.Fatalf("first pick %q, want alice@mac-1", got)
+		}
+		// alice leaves, and the operator forgets her. She joins again as a new agent: her turn
+		// of before does not count, and she comes before bob by her key, as at the start.
+		a.close()
+		b.wait(t, eventIs("notice"))
+		wantStatus(t, 204)(x.op.a.forget(sid, "alice@mac-1"))
+		a = x.mac1.stream(sid, "alice")
+		a.wait(t, nil)
+		if got := pick(); got != "alice@mac-1" {
+			t.Fatalf("pick after the forget %q, want alice@mac-1", got)
+		}
+		// The same for a session that the operator deleted and made again.
+		a.close()
+		b.close()
+		x.op.closeSession(t, sid)
+		wantStatus(t, 204)(x.op.a.delete(sid))
+		x.op.createSession(t, sid)
+		a = x.mac1.stream(sid, "alice")
+		defer a.close()
+		b = x.vps2.stream(sid, "bob")
+		defer b.close()
+		a.wait(t, nil)
+		b.wait(t, nil)
+		if got := pick(); got != "alice@mac-1" {
+			t.Fatalf("pick in the new session %q, want alice@mac-1", got)
 		}
 	})
 

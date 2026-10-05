@@ -694,7 +694,7 @@
             }
           },
           "409": {
-            "description": "Conflict with the session state: name taken, ambiguous peer, or yourself",
+            "description": "Conflict with the session state: name taken, ambiguous peer, yourself, or a send to any when no peer can take work",
             "content": {
               "application/json": {
                 "schema": {
@@ -4807,7 +4807,7 @@
             }
           },
           "409": {
-            "description": "Conflict with the session state: name taken, ambiguous peer, or yourself",
+            "description": "Conflict with the session state: name taken, ambiguous peer, yourself, or a send to any when no peer can take work",
             "content": {
               "application/json": {
                 "schema": {

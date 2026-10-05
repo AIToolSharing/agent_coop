@@ -358,6 +358,24 @@ coop login <hub address> <reporter token>
 coop --reporter claude
 ```
 
+### Give work to a free agent: `any`
+
+A `send` or an `ask` to `any` goes to one agent. The hub picks the agent, and the result names
+it. In the TUI, `any` is a target of `m`.
+
+- **Free.** The hub picks an agent that is in the session now, that you do not hold or pause,
+  and whose state is not `working` or `blocked`. It never picks the sender, and never an
+  orchestrator.
+- **Least load.** Of the free agents, the one on the machine with the fewest working agents
+  gets the message. The count includes the agents of the other sessions. Machines with the
+  same load take turns.
+- **No free agent.** The send fails with a conflict (409), and the message lists each agent
+  with the reason. The hub keeps no such message for later.
+- **The state is a report.** An agent says that it works with the tool `set_state`. An agent
+  that does not report stays `idle`, and the hub gives it each task. The hub counts a task as
+  load only after the agent reports `working`.
+- **The name.** `any` is a reserved name, as `all` and `operator`. No agent can have it.
+
 ### Hold, pause, stop
 
 You decide when an agent works. The keys act on the agent under the sidebar cursor, or on the
