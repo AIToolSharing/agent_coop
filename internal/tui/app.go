@@ -660,7 +660,7 @@ func (a *App) inputKey(k tea.KeyPressMsg, s screen) tea.Cmd {
 			return nil
 		}
 		if m.kind == "compose" && m.reply == nil && !m.release {
-			targets := []string{wire.Broadcast}
+			targets := []string{wire.Broadcast, wire.Any}
 			for _, ag := range s.v.AgentList() {
 				targets = append(targets, ag.Address)
 			}
@@ -938,6 +938,9 @@ func (a *App) submit(m mode, s screen) tea.Cmd {
 		if !direct(m.reply.to) {
 			return a.setStatus("no agent " + m.reply.to)
 		}
+	case m.to == wire.Any:
+		// The hub picks the recipient.
+		to = wire.Any
 	case m.to == wire.Broadcast && strings.HasPrefix(value, "@"):
 		name, rest, _ := strings.Cut(value[1:], " ")
 		rest = strings.TrimSpace(rest)

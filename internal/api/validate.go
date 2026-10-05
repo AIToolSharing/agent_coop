@@ -39,7 +39,7 @@ func isPeerInput(s string) bool {
 }
 
 func isRecipientInput(s string) bool {
-	return s == wire.Broadcast || s == wire.Operator || isPeerInput(s)
+	return s == wire.Broadcast || s == wire.Operator || s == wire.Any || isPeerInput(s)
 }
 
 func isWaitTargetInput(s string) bool { return s == wire.Operator || isPeerInput(s) }
@@ -299,7 +299,7 @@ func parseSend(body []byte) (hub.SendRequest, error) {
 	case !wire.IsAgentName(r.Agent):
 		return r, invalid("agent: not a valid agent name")
 	case !isRecipientInput(r.To):
-		return r, invalid("to: all, operator, or a peer")
+		return r, invalid("to: all, any, operator, or a peer")
 	case !isText(r.Text):
 		return r, invalid("text: 1 to 8000 characters")
 	case b.ReplyTo.set && !wire.IsID(r.ReplyTo):
@@ -483,8 +483,8 @@ func parseOperatorSend(body []byte) (hub.OperatorSendRequest, error) {
 	}
 	r := hub.OperatorSendRequest{To: b.To, Text: b.Text, ReplyTo: b.ReplyTo.val}
 	switch {
-	case r.To != wire.Broadcast && !isPeerInput(r.To):
-		return r, invalid("to: all or a peer")
+	case r.To != wire.Broadcast && r.To != wire.Any && !isPeerInput(r.To):
+		return r, invalid("to: all, any, or a peer")
 	case !isText(r.Text):
 		return r, invalid("text: 1 to 8000 characters")
 	case b.ReplyTo.set && !wire.IsID(r.ReplyTo):

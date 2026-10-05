@@ -353,6 +353,8 @@ type Conn struct {
 	herdrPane string
 	// orchestrator: the agent joined with an orchestrator token.
 	orchestrator bool
+	// picked is when a send to `any` last chose this agent; zero for never.
+	picked time.Time
 	// quiet is the sequence of a gate record that the agent gets no notice of, or 0.
 	quiet int64
 	// sent holds the ids of the messages written to the stream, for redact notices.
@@ -1262,7 +1264,8 @@ func (h *Hub) Redact(sid, id string) error {
 	return storeErr(err)
 }
 
-// OperatorSend sends as the operator: to all, or to a peer that is or was in the session.
+// OperatorSend sends as the operator: to all, to any (the hub picks the peer), or to a peer
+// that is or was in the session.
 func (h *Hub) OperatorSend(sid string, req OperatorSendRequest) (OperatorSendResponse, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -1270,7 +1273,13 @@ func (h *Hub) OperatorSend(sid string, req OperatorSendRequest) (OperatorSendRes
 		return OperatorSendResponse{}, err
 	}
 	to := wire.Broadcast
-	if req.To != wire.Broadcast {
+	if req.To == wire.Any {
+		c, err := h.pickLocked(sid, nil)
+		if err != nil {
+			return OperatorSendResponse{}, err
+		}
+		to = c.me.String()
+	} else if req.To != wire.Broadcast {
 		a, err := h.peerLocked(sid, req.To, nil, false)
 		if err != nil {
 			return OperatorSendResponse{}, err
@@ -1557,17 +1566,75 @@ func (h *Hub) awayLocked(sid string) ([]store.KnownRow, error) {
 	return out, nil
 }
 
-// recipientLocked resolves a `send` target: all, operator (the user), or a peer that is or
-// was in the session.
+// recipientLocked resolves a `send` target: all, operator (the user), any (the hub picks the
+// peer), or a peer that is or was in the session.
 func (h *Hub) recipientLocked(sid, input string, me wire.Address) (string, error) {
 	if input == wire.Broadcast || input == wire.Operator {
 		return input, nil
+	}
+	if input == wire.Any {
+		c, err := h.pickLocked(sid, &me)
+		if err != nil {
+			return "", err
+		}
+		return c.me.String(), nil
 	}
 	a, err := h.peerLocked(sid, input, &me, false)
 	if err != nil {
 		return "", err
 	}
 	return a.String(), nil
+}
+
+// busy reports an agent that cannot take work now: it works, it waits for someone, or the
+// operator holds or paused it (its tool calls are refused).
+func busy(c *Conn) string {
+	switch {
+	case c.gate != wire.GateRun:
+		return c.gate
+	case c.state == "working", c.state == "blocked":
+		return c.state
+	}
+	return ""
+}
+
+// pickLocked chooses the recipient of a send to `any`: a live peer of sid other than me (nil
+// for the operator) that is not busy. Of these, the one on the machine with the fewest working
+// agents, in every session, wins: that is the device with the least load. On a tie, the one
+// that `any` chose longest ago wins, so equal machines take turns. The caller holds the mutex.
+//
+// ponytail: the load is the count of working agents on the machine. Add a load figure to the
+// state report when the agents are not the only load of a machine.
+func (h *Hub) pickLocked(sid string, me *wire.Address) (*Conn, error) {
+	load := map[string]int{}
+	for _, c := range h.conns {
+		if c.state == "working" {
+			load[c.me.Machine]++
+		}
+	}
+	var best *Conn
+	var others []string
+	for _, c := range h.inSessionLocked(sid) {
+		if me != nil && c.me == *me {
+			continue
+		}
+		if why := busy(c); why != "" {
+			others = append(others, c.me.String()+" ("+why+")")
+			continue
+		}
+		if best == nil || load[c.me.Machine] < load[best.me.Machine] || load[c.me.Machine] == load[best.me.Machine] && c.picked.Before(best.picked) {
+			best = c
+		}
+	}
+	if best == nil {
+		list := "none"
+		if len(others) > 0 {
+			list = strings.Join(others, ", ")
+		}
+		return nil, errf("not_found", "no peer in this session can take work now; peers: %s", list)
+	}
+	best.picked = h.opt.Now()
+	return best, nil
 }
 
 // peerLocked turns a peer as a client writes it (`name` or `name@machine`) into an address. A
