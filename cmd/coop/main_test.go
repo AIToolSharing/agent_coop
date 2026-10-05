@@ -83,7 +83,7 @@ func TestProbeTokenTellsTheRole(t *testing.T) {
 
 func TestLoginStoresTheTokenUnderTheKeyOfItsRole(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	srv := hub(t, "op.1", "mac.2")
 	var out, errOut bytes.Buffer
@@ -199,7 +199,7 @@ func (f *fakeClaude) install(t *testing.T, exe string) {
 
 func TestSetupRegistersTheBinaryAndWritesTheSkill(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	f := &fakeClaude{}
 	f.install(t, "/opt/coop/coop")
@@ -242,7 +242,7 @@ func TestSetupRegistersTheBinaryAndWritesTheSkill(t *testing.T) {
 
 func TestDoctorReportsEachStep(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("COOP_SESSION", "")
 	t.Setenv("COOP_AGENT", "")
@@ -293,7 +293,7 @@ func TestMCPOptionsFollowTheConfiguration(t *testing.T) {
 
 func TestLoginPinsASelfSignedHubAndDoctorUsesThePin(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("COOP_SESSION", "")
 	t.Setenv("COOP_AGENT", "")
@@ -357,7 +357,7 @@ func TestGlobalAgentFlagSetsTheAgentName(t *testing.T) {
 // --orchestrator and --reporter go only with claude, and need the token of the role.
 func TestRoleFlagsGoWithClaudeAndNeedTheirToken(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	t.Setenv("COOP_ORCHESTRATOR_TOKEN", "")
 	t.Setenv("COOP_REPORTER_TOKEN", "")
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
@@ -374,4 +374,12 @@ func TestRoleFlagsGoWithClaudeAndNeedTheirToken(t *testing.T) {
 	if code := run([]string{"--reporter", "claude", "pipe-1"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "takes no session") {
 		t.Fatalf("reporter with a session: code %d stderr %q", code, errOut.String())
 	}
+}
+
+// setHome gives the test its own home directory: HOME on Unix, USERPROFILE on Windows. Without
+// the second one, a test on Windows writes into the home directory of the developer.
+func setHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 }

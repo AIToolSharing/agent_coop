@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -146,7 +147,7 @@ func TestBinaryFallsBackToTheLocalInstall(t *testing.T) {
 	if got := herdr.Binary(map[string]string{"HERDR_BIN_PATH": "/opt/herdr", "HOME": "/home/agent"}, there); got != "/opt/herdr" {
 		t.Errorf("with HERDR_BIN_PATH: %q", got)
 	}
-	if got := herdr.Binary(map[string]string{"HOME": "/home/agent"}, there); got != "/home/agent/.local/bin/herdr" {
+	if got := herdr.Binary(map[string]string{"HOME": "/home/agent"}, there); got != filepath.FromSlash("/home/agent/.local/bin/herdr") {
 		t.Errorf("not on the PATH, installed in the home directory: %q", got)
 	}
 	if got := herdr.Binary(map[string]string{"HOME": "/home/agent"}, gone); got != "herdr" {

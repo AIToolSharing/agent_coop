@@ -2,6 +2,7 @@ package main
 
 import (
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -14,8 +15,13 @@ func TestShellQuoteKeepsEachArgument(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("no sh")
 	}
+	chars := `[^\x00]{0,12}`
+	if runtime.GOOS == "windows" {
+		// The sh of Git for Windows drops a carriage return from its command line.
+		chars = `[^\x00\r]{0,12}`
+	}
 	rapid.Check(t, func(rt *rapid.T) {
-		args := rapid.SliceOfN(rapid.StringMatching(`[^\x00]{0,12}`), 1, 4).Draw(rt, "args")
+		args := rapid.SliceOfN(rapid.StringMatching(chars), 1, 4).Draw(rt, "args")
 		out, err := exec.Command("sh", "-c", "for a in "+shellJoin(args)+`; do printf '%s\0' "$a"; done`).Output()
 		if err != nil {
 			rt.Fatal(err)

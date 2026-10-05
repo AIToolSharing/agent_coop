@@ -192,7 +192,7 @@ func TestHookCommandAnswersOnStdoutAndExitsZero(t *testing.T) {
 	t.Setenv("COOP_CERT_SHA256", "")
 	t.Setenv("COOP_GATE", "")
 	t.Setenv("CLAUDE_PROJECT_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
+	setHome(t, t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
 	run := func(stdin string) (int, string) {
 		var out, errOut bytes.Buffer

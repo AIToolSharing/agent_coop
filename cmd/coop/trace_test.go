@@ -338,7 +338,7 @@ func TestHookCommandsReportToTheHubAndPrintNothing(t *testing.T) {
 	t.Setenv("COOP_CERT_SHA256", "")
 	t.Setenv("COOP_GATE", "")
 	t.Setenv("CLAUDE_PROJECT_DIR", project)
-	t.Setenv("HOME", t.TempDir())
+	setHome(t, t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
 	run := func(hook string, input map[string]any) {
 		t.Helper()
