@@ -59,19 +59,22 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 			fail(err.Error())
 		} else {
 			ok("the hub answers")
+			// The hub tells its version to a token that it accepts.
+			hubVersion, accepted := "", false
 			check := func(token, want, key string) {
 				if token == "" {
 					note("no " + want + " token (" + key + "): coop login " + cfg.URL + " <" + want + " token>")
 					return
 				}
-				role, err := probeToken(ctx, client, cfg.URL, token)
+				me, err := whoami(ctx, client, cfg.URL, token)
 				switch {
 				case err != nil:
 					fail(key + ": " + err.Error())
-				case role != want:
-					fail(key + " is a " + role + " token, not a " + want + " token")
+				case me.Role != want:
+					fail(key + " is a " + me.Role + " token, not a " + want + " token")
 				default:
 					ok(want + " token accepted")
+					hubVersion, accepted = me.Version, true
 				}
 			}
 			check(cfg.Token, wire.RoleMachine, "COOP_TOKEN")
@@ -82,6 +85,17 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 			}
 			if cfg.ReporterToken != "" {
 				check(cfg.ReporterToken, wire.RoleReporter, "COOP_REPORTER_TOKEN")
+			}
+			// The hub and its devices must have one version: a part drops a message that only a
+			// newer schema allows. A build from a clone is never equal, so this is a note.
+			switch {
+			case !accepted:
+			case hubVersion == version:
+				ok("coop " + version + ", the version of the hub")
+			case hubVersion == "":
+				note("the hub is older than this coop (" + version + "): upgrade the hub")
+			default:
+				note("this coop is " + version + ", the hub is " + hubVersion + ": run coop upgrade")
 			}
 		}
 	}

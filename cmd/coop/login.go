@@ -26,34 +26,45 @@ var roleKeys = map[string]string{
 	wire.RoleReporter:     "COOP_REPORTER_TOKEN",
 }
 
-// probeToken asks the hub what the token is: GET /v1/whoami gives its role, and 401 for a token
-// that the hub does not know.
-func probeToken(ctx context.Context, c *http.Client, base, token string) (role string, err error) {
+// hubIdentity is what the hub says of a token and of itself.
+type hubIdentity struct {
+	Role string `json:"role"`
+	// Version is the version of the hub: "" from a hub of a version that reports none.
+	Version string `json:"version"`
+}
+
+// whoami asks the hub what the token is: GET /v1/whoami gives its role and the version of the
+// hub, and 401 for a token that the hub does not know.
+func whoami(ctx context.Context, c *http.Client, base, token string) (hubIdentity, error) {
+	var me hubIdentity
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/whoami", nil)
 	if err != nil {
-		return "", err
+		return me, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	res, err := c.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("cannot reach %s: %w", base, err)
+		return me, fmt.Errorf("cannot reach %s: %w", base, err)
 	}
 	defer res.Body.Close()
-	var me struct {
-		Role string `json:"role"`
-	}
 	switch res.StatusCode {
 	case 200:
 		if err := json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&me); err != nil || !wire.IsRole(me.Role) {
-			return "", fmt.Errorf("%s gave no role for the token", base)
+			return me, fmt.Errorf("%s gave no role for the token", base)
 		}
-		return me.Role, nil
+		return me, nil
 	case 401:
-		return "", errBadToken
+		return me, errBadToken
 	case 404:
-		return "", fmt.Errorf("%s is a hub of an older version: upgrade it", base)
+		return me, fmt.Errorf("%s is a hub of an older version: upgrade it", base)
 	}
-	return "", fmt.Errorf("%s answered %d", base, res.StatusCode)
+	return me, fmt.Errorf("%s answered %d", base, res.StatusCode)
+}
+
+// probeToken gives the role of the token (whoami).
+func probeToken(ctx context.Context, c *http.Client, base, token string) (role string, err error) {
+	me, err := whoami(ctx, c, base, token)
+	return me.Role, err
 }
 
 // cmdLogin stores the hub address and a token in the credential file. The token's role decides
