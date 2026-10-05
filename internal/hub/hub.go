@@ -1588,10 +1588,13 @@ func (h *Hub) recipientLocked(sid, input string, me wire.Address) (string, error
 	return a.String(), nil
 }
 
-// busy reports an agent that cannot take work now: it works, it waits for someone, or the
-// operator holds or paused it (its tool calls are refused).
+// busy reports an agent that takes no work from a send to `any`, and why: it is an
+// orchestrator, which gives work and takes none; the operator holds or paused it (its tool
+// calls are refused); or it works, or it waits for someone.
 func busy(c *Conn) string {
 	switch {
+	case c.orchestrator:
+		return wire.RoleOrchestrator
 	case c.gate != wire.GateRun:
 		return c.gate
 	case c.state == "working", c.state == "blocked":
@@ -1601,9 +1604,10 @@ func busy(c *Conn) string {
 }
 
 // pickLocked chooses the recipient of a send to `any`: a live peer of sid other than me (nil
-// for the operator) that is not busy. Of these, the one on the machine with the fewest working
-// agents, in every session, wins: that is the device with the least load. On a tie, the one
-// that `any` chose longest ago wins, so equal machines take turns. The caller holds the mutex.
+// for the operator) that is not busy, and thus no orchestrator. Of these, the one on the
+// machine with the fewest working agents, in every session, wins: that is the device with the
+// least load. On a tie, the one that `any` chose longest ago wins, so equal machines take
+// turns. The caller holds the mutex.
 //
 // ponytail: the load is the count of working agents on the machine. Add a load figure to the
 // state report when the agents are not the only load of a machine.

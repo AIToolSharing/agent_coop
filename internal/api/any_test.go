@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
 // A send to `any` goes to one free peer: the hub picks the peer on the machine with the least
@@ -125,6 +127,33 @@ func (x *hubSuite) sendToAny(t *testing.T) {
 		b.close()
 		body := wantStatus(t, 404)(x.op.a.send(sid, "any", "task", ""))
 		if m := parse[errBody](t, body).Message; !strings.Contains(m, "alice@mac-1 (paused)") || strings.Contains(m, "bob") {
+			t.Fatalf("message %q", m)
+		}
+	})
+
+	t.Run("an orchestrator gives work to any and gets none", func(t *testing.T) {
+		sid := x.session(t)
+		boss := api{x.h.base, x.h.roleToken("boss", wire.RoleOrchestrator)}
+		pm := boss.stream(sid, "pm")
+		defer pm.close()
+		a := x.mac1.stream(sid, "alice")
+		defer a.close()
+		pm.wait(t, nil)
+		a.wait(t, nil)
+		// The orchestrator is free and comes first by its key, but alice gets each task.
+		for range 2 {
+			if sent := parse[operatorSendResponse](t, wantStatus(t, 200)(x.op.a.send(sid, "any", "task", ""))); sent.To != "alice@mac-1" {
+				t.Fatalf("to %q, want alice@mac-1", sent.To)
+			}
+		}
+		if sent := parse[sendResponse](t, wantStatus(t, 200)(boss.send(sid, "pm", "any", "task", ""))); sent.To != "alice@mac-1" {
+			t.Fatalf("the orchestrator's send went to %q, want alice@mac-1", sent.To)
+		}
+		pm.none(t, isMsg, 200*time.Millisecond)
+		// When the only worker is busy, nobody takes the task: the orchestrator does not.
+		wantStatus(t, 204)(x.mac1.activity(sid, map[string]any{"kind": "state", "agent": "alice", "state": "working"}))
+		body := wantStatus(t, 404)(x.op.a.send(sid, "any", "task", ""))
+		if m := parse[errBody](t, body).Message; m != "no peer in this session can take work now; peers: pm@boss (orchestrator), alice@mac-1 (working)" {
 			t.Fatalf("message %q", m)
 		}
 	})

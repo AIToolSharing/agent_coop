@@ -25,8 +25,8 @@ func conn(sid, agent, machine, state, gate string) *Conn {
 }
 
 // The pick is the reference rule: of the live peers of the session other than me that are not
-// busy, the one on the machine with the fewest working agents, then the one picked longest ago,
-// then the first by key.
+// busy and are no orchestrator, the one on the machine with the fewest working agents, then
+// the one picked longest ago, then the first by key.
 func TestPickLockedIsTheLeastLoadedFreePeer(t *testing.T) {
 	states := []string{"working", "blocked", "done", "idle"}
 	gates := []string{wire.GateRun, wire.GateHeld, wire.GatePaused}
@@ -43,6 +43,7 @@ func TestPickLockedIsTheLeastLoadedFreePeer(t *testing.T) {
 				rapid.SampledFrom(states).Draw(rt, fmt.Sprint("state", i)),
 				rapid.SampledFrom(gates).Draw(rt, fmt.Sprint("gate", i)),
 			))
+			conns[i].orchestrator = rapid.Bool().Draw(rt, fmt.Sprint("orchestrator", i))
 			picked = append(picked, time.Time{}.Add(time.Duration(rapid.IntRange(0, 3).Draw(rt, fmt.Sprint("picked", i)))*time.Second))
 		}
 		h := pickHub(&clock, conns...)
@@ -64,7 +65,7 @@ func TestPickLockedIsTheLeastLoadedFreePeer(t *testing.T) {
 		}
 		var want []*Conn
 		for _, c := range conns {
-			if c.sid == "s1" && (me == nil || c.me != *me) && c.gate == wire.GateRun && c.state != "working" && c.state != "blocked" {
+			if c.sid == "s1" && (me == nil || c.me != *me) && !c.orchestrator && c.gate == wire.GateRun && c.state != "working" && c.state != "blocked" {
 				want = append(want, c)
 			}
 		}
@@ -172,5 +173,27 @@ func TestPickLockedSkipsBusyHeldPausedOfflineAndMe(t *testing.T) {
 	h.conns[wire.BuildPresenceKey(wire.PresenceKey{SID: "s", Agent: free.me})] = free
 	if c, err := h.pickLocked("s", &me); err != nil || c != free {
 		t.Fatalf("picked %v (%v), want f@m3", c, err)
+	}
+}
+
+// An orchestrator gives work and takes none: a send to `any` never goes to it, also when it
+// is the only free agent, and when its machine has the least load.
+func TestPickLockedGivesNoWorkToAnOrchestrator(t *testing.T) {
+	var clock time.Time
+	boss := conn("s", "boss", "m1", "idle", wire.GateRun)
+	boss.orchestrator = true
+	worker := conn("s", "w", "m2", "working", wire.GateRun)
+	h := pickHub(&clock, boss, worker, conn("other", "x", "m2", "working", wire.GateRun))
+	_, err := h.pickLocked("s", nil)
+	if want := "no peer in this session can take work now; peers: boss@m1 (orchestrator), w@m2 (working)"; err == nil || err.Error() != want {
+		t.Fatalf("error %v\nwant  %s", err, want)
+	}
+	// The worker is free again, on the machine with the higher load: it gets the work.
+	worker.state = "done"
+	for range 2 {
+		clock = clock.Add(time.Second)
+		if c, err := h.pickLocked("s", nil); err != nil || c != worker {
+			t.Fatalf("picked %v (%v), want w@m2", c, err)
+		}
 	}
 }
