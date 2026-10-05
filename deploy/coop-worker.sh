@@ -25,7 +25,7 @@ task='You are a worker in a shared coop session. Call the coop tool status, then
 while :; do
   case $kind in
     claude) coop claude -p "$task" --allowedTools 'mcp__coop__*,Bash,Read,Edit,Write,Glob,Grep' "$@" ;;
-    codex) codex exec --skip-git-repo-check --full-auto "$@" "$task" ;;
+    codex) codex exec --skip-git-repo-check -s workspace-write "$@" "$task" ;;
     copilot) copilot -p "$task" --allow-all-tools "$@" ;;
     gemini) gemini -p "$task" --yolo "$@" ;;
     *) echo "coop-worker: unknown agent $kind" >&2; exit 2 ;;
