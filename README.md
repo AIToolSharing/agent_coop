@@ -378,7 +378,12 @@ agent whose details are open.
   press `H`.
 - **Paused.** A pause stops the agent at its next tool call. It does not interrupt a command
   that runs. A held or paused agent can still read and write messages.
-- **No answer, no work.** If the hook cannot reach the hub, it refuses the tool call.
+- **No answer from the hub.** If the hook gets no answer from the hub, the last answer of the
+  hub decides. An agent that you hold, paused or stopped stays refused. Thus a restart of the
+  hub releases no agent. Each other agent works on, and the hook writes one line on stderr.
+  Thus a hub that is down does not stop your agents. An agent that the hub never answered has
+  no last answer: it works, also in a session that holds new agents. The hook keeps the last
+  answer in `~/.config/coop/gate/`.
 - **The default.** `coop serve --hold-new=false` makes each new session start its agents at
   once.
 

@@ -40,3 +40,7 @@ func Text(gate string) string {
 
 // Released is the text of the notice that ends a hold or a pause.
 const Released = "The user released you. You may work now."
+
+// NoAnswer follows the text of a gate when that gate is the last answer for the agent and no
+// new answer comes: the agent stays where the user put it.
+const NoAnswer = " The message service gives no answer now, so this is its last answer."

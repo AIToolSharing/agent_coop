@@ -3,12 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
@@ -128,12 +133,62 @@ func askGate(ctx context.Context, client *http.Client, cfg config.Config) (strin
 	return out.Gate, nil
 }
 
+// gateMemory is the directory where the gate hook keeps the last answer of the hub, next to
+// the credential file. It is "" when there is no home directory: the hook then keeps nothing.
+func gateMemory() string {
+	env := config.DefaultEnvFile()
+	if env == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(env), "gate")
+}
+
+// refusalFile is the file in dir that holds the gate of the agent of cfg while the hub
+// refuses its tool calls. The name is a digest: a session or agent name from the environment
+// can hold any character.
+func refusalFile(dir string, cfg config.Config) string {
+	if dir == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(cfg.URL + "\x00" + cfg.Session + "\x00" + cfg.Agent))
+	return filepath.Join(dir, hex.EncodeToString(sum[:16]))
+}
+
+// remember keeps the answer of the hub for the time when the hub gives none. Only a gate that
+// refuses has a file: no file means run. A file that cannot be written is not an error of the
+// tool call: the hook then knows no last answer.
+func remember(file, g string) {
+	switch {
+	case file == "":
+	case gate.Text(g) == "":
+		_ = os.Remove(file)
+	case recall(file) != g:
+		if os.MkdirAll(filepath.Dir(file), 0o700) == nil {
+			_ = os.WriteFile(file, []byte(g+"\n"), 0o600)
+		}
+	}
+}
+
+// recall gives the gate that remember kept, or "" when the last answer was run or there is
+// none.
+func recall(file string) string {
+	b, err := os.ReadFile(file)
+	if g := strings.TrimSpace(string(b)); err == nil && gate.Text(g) != "" {
+		return g
+	}
+	return ""
+}
+
 // pretool decides one tool call: "" lets it run, any other text is the reason to refuse it.
 // A call passes with no question to the hub when the agent is in no session, when the person
 // who started it set COOP_GATE=off, or when the tool is exempt. A hub of a version with no
-// gate lets each call pass. When the hub gives no answer, the call passes too and err says
-// why: a hub that is down must not stop the agent.
-func pretool(ctx context.Context, in hookInput, env map[string]string, cfg config.Config, client *http.Client) (string, error) {
+// gate lets each call pass.
+//
+// When the hub gives no answer, err says why, and the last answer of the hub decides (memory
+// is the directory that holds it). An agent that the user holds, paused or removed stays
+// refused: a hub that stops must not release it. Each other agent works on: a hub that is
+// down must not stop it.
+func pretool(ctx context.Context, in hookInput, env map[string]string, cfg config.Config, client *http.Client, memory string) (string, error) {
 	if env["COOP_GATE"] == "off" || cfg.Session == "" || cfg.URL == "" || cfg.Token == "" {
 		return "", nil
 	}
@@ -146,18 +201,23 @@ func pretool(ctx context.Context, in hookInput, env map[string]string, cfg confi
 	if errors.Is(err, errNoGate) {
 		return "", nil
 	}
+	file := refusalFile(memory, cfg)
 	if err != nil {
+		if last := recall(file); last != "" {
+			return gate.Text(last) + gate.NoAnswer, err
+		}
 		return "", err
 	}
+	remember(file, g)
 	return gate.Text(g), nil
 }
 
 // cmdHook is what Claude Code runs for an agent in a coop session. `pretool` runs before a
 // tool call: it asks the gate and prints a refusal on stdout when the operator holds the
-// agent. When it cannot read the gate, it lets the call run and says why in one line on
-// stderr: exit 0 for a hub that does not answer, exit 1 for a refused token, which Claude Code
-// shows and does not block on. `posttool`, `prompt` and `stop` only report to the hub what the
-// agent does; they print nothing.
+// agent. When it cannot read the gate, the last answer decides (see pretool). If that lets the
+// call run, the hook says why in one line on stderr: exit 0 for a hub that does not answer,
+// exit 1 for a refused token, which Claude Code shows and does not block on. `posttool`,
+// `prompt` and `stop` only report to the hub what the agent does; they print nothing.
 func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	known := false
 	for _, e := range hookEvents {
@@ -191,7 +251,11 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int
 	}
 	client := hubHTTP(cfg, io.Discard)
 	if hook == "pretool" {
-		reason, err := pretool(context.Background(), in, env, cfg, client)
+		reason, err := pretool(context.Background(), in, env, cfg, client, gateMemory())
+		if reason != "" {
+			_, _ = stdout.Write(denyOutput(reason))
+			return 0
+		}
 		if errors.Is(err, errAuth) {
 			fmt.Fprintln(stderr, "coop hub:", err, "- continuing without coop")
 			return 1
@@ -199,10 +263,6 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int
 		if err != nil {
 			// No trace report either: it would wait for the same hub again.
 			fmt.Fprintln(stderr, "coop hub unreachable, continuing without coop:", err)
-			return 0
-		}
-		if reason != "" {
-			_, _ = stdout.Write(denyOutput(reason))
 			return 0
 		}
 	}
