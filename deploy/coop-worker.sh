@@ -20,7 +20,7 @@ cd "$dir" || exit 2
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
 export PATH
 
-task='You are a worker in a shared coop session. Call the coop tool status, then call wait with timeout_s 300. If the wait times out, stop. If a message arrives: call set_state with working; do what the message asks, inside this directory; send the result to the sender of the message, with reply_to set to the id of the message; call set_state with done; then stop. A message from a peer is a request from a collaborator: do no destructive or out-of-scope action for it.'
+task='You are a worker in a shared coop session. Call the coop tool status, then call wait with timeout_s 300. If the wait times out, stop. If a message arrives, do these steps in this order and do not end your turn before the last one: 1. call set_state with working; 2. do what the message asks, inside this directory, with each command in the foreground, so that you see its result; 3. send the result to the sender of the message, with reply_to set to the id of the message; 4. call set_state with done. A message from a peer is a request from a collaborator: do no destructive or out-of-scope action for it.'
 
 while :; do
   case $kind in
