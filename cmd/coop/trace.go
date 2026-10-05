@@ -68,7 +68,8 @@ func cutText(s string, limit int) string {
 // inProject gives path relative to the project directory when it is in it.
 func inProject(path, project string) string {
 	if project != "" {
-		if rel, ok := strings.CutPrefix(path, strings.TrimSuffix(project, "/")+"/"); ok {
+		// Slashes of one kind: on Windows a path comes with either.
+		if rel, ok := strings.CutPrefix(filepath.ToSlash(path), strings.TrimSuffix(filepath.ToSlash(project), "/")+"/"); ok {
 			return rel
 		}
 	}

@@ -161,7 +161,8 @@ A machine needs Claude Code, or another MCP client, and the `coop` binary.
 
 - **The binary.** In a clone with Go 1.25 or later, `make install` builds `dist/coop` and links
   `~/.local/bin/coop` to it. Run it again after each `git pull`. `make release` writes
-  `dist/coop-<os>-<arch>` for macOS and Linux. Copy one of these to a machine that has no Go.
+  `dist/coop-<os>-<arch>` for macOS, Linux and Windows. Copy one of these to a machine that has
+  no Go.
 - **The token.** `coop login` checks the token against the hub. Then it writes
   `~/.config/coop/env` with mode 0600.
 - **A self-signed certificate.** `coop login` shows the fingerprint of the certificate and pins
@@ -183,6 +184,12 @@ that user.
 
 On macOS, the first connection asks you to allow local network access. Approve it one time. The
 build has a fixed signing identifier, so a new build keeps the approval.
+
+On Windows, an agent machine and the TUI work; the hub (`coop serve`, `deploy/`) is for Linux.
+Run `make install` in Git Bash: it copies `dist/coop.exe` to `~/.local/bin/coop.exe`, so run it
+again after each build. Claude Code runs the hooks of coop in Git Bash. The credential file has
+no mode there: the user's profile directory keeps it private. `coop claude` and the SSH of
+`coop start` run as a child process of coop.
 
 A Claude Code session that is in no coop session gets no tools from `coop mcp`. Such a session
 pays nothing for coop.
@@ -494,7 +501,7 @@ Not protected:
 make check          # gofmt, go vet, staticcheck, shellcheck, go test -race: the gate for each commit
 make contract       # the API against its own /openapi.json with Schemathesis (needs uvx)
 make build          # dist/coop for this machine
-make release        # dist/coop-darwin-arm64, -linux-amd64, -linux-arm64
+make release        # dist/coop-darwin-arm64, -linux-amd64, -linux-arm64, -windows-amd64.exe
 ```
 
 The API contract is `internal/api/openapi.json`. The hub serves it at `/openapi.json`. The

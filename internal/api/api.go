@@ -227,6 +227,11 @@ type handler func(w http.ResponseWriter, r *http.Request, owner hub.Owner, sid s
 func (s *Server) guard(k kind, h handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > MaxBody {
+			// Read a body of up to 1 MiB before the answer. A connection that closes with
+			// unread data is reset, and a client on Windows then loses the 413 it has received.
+			if r.ContentLength <= 1<<20 {
+				_, _ = io.Copy(io.Discard, r.Body)
+			}
 			writeError(w, 413, "too_large", "body too large")
 			return
 		}

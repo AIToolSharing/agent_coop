@@ -4,12 +4,22 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
 	"pgregory.net/rapid"
 )
+
+// unixModes skips a test of Unix file modes on Windows: Go shows no such modes there, and
+// ReadEnvFile does not check them.
+func unixModes(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no Unix file modes")
+	}
+}
 
 func TestParseEnvExamples(t *testing.T) {
 	cases := []struct {
@@ -96,11 +106,13 @@ func TestParseEnvKeysAreNeverEmptyOrSplit(t *testing.T) {
 func TestDefaultEnvFileIsUnderHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // the home directory on Windows
 	if got, want := config.DefaultEnvFile(), filepath.Join(home, ".config", "coop", "env"); got != want {
 		t.Fatalf("DefaultEnvFile() = %q, want %q", got, want)
 	}
 	// Without HOME the path is empty, not relative to the working directory.
 	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
 	if got := config.DefaultEnvFile(); got != "" {
 		t.Fatalf("DefaultEnvFile() without HOME = %q, want empty", got)
 	}
@@ -136,6 +148,7 @@ func perm(t *testing.T, path string) os.FileMode {
 }
 
 func TestReadEnvFileRefusesAFileThatOthersCanUse(t *testing.T) {
+	unixModes(t)
 	for _, mode := range []os.FileMode{0o644, 0o640, 0o602, 0o601, 0o604} {
 		path := filepath.Join(t.TempDir(), "env")
 		writeFile(t, path, "COOP_TOKEN=m.s\n", mode)
@@ -181,10 +194,10 @@ func TestUpdateEnvFileCreatesAPrivateDirectoryAndFile(t *testing.T) {
 	if got, want := readFile(t, path), "COOP_TOKEN=laptop.s\nCOOP_URL=https://x\n"; got != want {
 		t.Fatalf("file = %q, want %q", got, want)
 	}
-	if p := perm(t, dir); p != 0o700 {
+	if p := perm(t, dir); p != 0o700 && runtime.GOOS != "windows" {
 		t.Errorf("directory mode %o, want 700", p)
 	}
-	if p := perm(t, path); p != 0o600 {
+	if p := perm(t, path); p != 0o600 && runtime.GOOS != "windows" {
 		t.Errorf("file mode %o, want 600", p)
 	}
 	// The shim reads back what login wrote.
@@ -212,7 +225,7 @@ func TestUpdateEnvFileMakesAnOpenFilePrivate(t *testing.T) {
 	if err := config.UpdateEnvFile(path, map[string]string{"COOP_TOKEN": "m.s"}); err != nil {
 		t.Fatal(err)
 	}
-	if p := perm(t, path); p != 0o600 {
+	if p := perm(t, path); p != 0o600 && runtime.GOOS != "windows" {
 		t.Fatalf("file mode %o, want 600", p)
 	}
 	if got, want := readFile(t, path), "COOP_TOKEN=m.s\nCOOP_URL=https://x\n"; got != want {
@@ -243,6 +256,7 @@ func TestUpdateEnvFileRefusesAPairThatDoesNotReadBack(t *testing.T) {
 }
 
 func TestUpdateEnvFileKeepsAFileItCannotRead(t *testing.T) {
+	unixModes(t)
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a file of mode 200")
 	}

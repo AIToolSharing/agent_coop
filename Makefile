@@ -1,20 +1,29 @@
 # coop: one Go binary for the hub, the shim and the operator's TUI.
-# `make build` builds for this machine into dist/coop. `make release` cross-compiles the three
+# `make build` builds for this machine into dist/coop. `make release` cross-compiles the
 # platforms the project runs on. `make check` is the gate every commit must pass.
+# On Windows, run make in Git Bash: the recipes use sh.
 
-BIN     := dist/coop
-PKG     := ./cmd/coop
+ifeq ($(OS),Windows_NT)
+EXE := .exe
+endif
+BIN     := dist/coop$(EXE)
+PKG    := ./cmd/coop
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
 .PHONY: build release check contract test clean install
 
 # install puts `coop` on the PATH as a link to the build, so `make build` updates it in place.
+# On Windows it copies the file, because a user cannot make a link there: run it after a build.
 BINDIR ?= $(HOME)/.local/bin
 install: build
 	mkdir -p $(BINDIR)
+ifdef EXE
+	cp $(BIN) $(BINDIR)/coop$(EXE)
+else
 	ln -sf $(abspath $(BIN)) $(BINDIR)/coop
-	@echo "installed $(BINDIR)/coop -> $(abspath $(BIN))"
+endif
+	@echo "installed $(BINDIR)/coop$(EXE) -> $(abspath $(BIN))"
 
 # On macOS an unsigned binary asks for local-network access on every rebuild. An ad-hoc
 # signature with a fixed identifier keeps one approval across rebuilds.
@@ -29,6 +38,7 @@ release:
 	@if [ "$$(uname)" = Darwin ]; then codesign -s - -f --identifier $(IDENTIFIER) dist/coop-darwin-arm64; fi
 	GOOS=linux  GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o dist/coop-linux-amd64  $(PKG)
 	GOOS=linux  GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o dist/coop-linux-arm64  $(PKG)
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o dist/coop-windows-amd64.exe $(PKG)
 
 check:
 	test -z "$$(gofmt -l cmd internal deploy)"
