@@ -1,0 +1,6 @@
+#!/bin/sh
+# A coop worker as a runit service: one directory per agent kind and user, for example
+# /etc/sv/coop-worker-claude.jose/run; enable it with ln -s /etc/sv/coop-worker-claude.jose /var/service/
+# Set the user, the home directory and the PATH that holds the agent's CLI for the host.
+exec chpst -u jose:jose env HOME=/home/jose PATH=/home/jose/.local/bin:/usr/local/bin:/usr/bin:/bin \
+    /usr/local/bin/coop-worker /home/jose/coop-workers/claude claude 2>&1

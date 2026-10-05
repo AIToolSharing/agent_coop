@@ -1,0 +1,19 @@
+# A coop worker as a systemd service: one instance per agent kind, as the user agent
+# (deploy/agent-user.sh makes that user).
+#   install -m 755 coop-worker.sh /usr/local/bin/coop-worker
+#   install -m 644 coop-worker@.service /etc/systemd/system/
+#   systemctl enable --now coop-worker@claude
+# The worker directory is /home/agent/coop-workers/<kind>, with the .coop file of its session.
+[Unit]
+Description=coop worker %i: takes tasks from a coop session
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=agent
+ExecStart=/usr/local/bin/coop-worker /home/agent/coop-workers/%i %i
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
