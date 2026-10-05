@@ -19,27 +19,32 @@ public authority the clients need no pin.
 
 ## 2. Install
 
-On a machine with the repository and Go, build the release binaries and copy the one for the
-server's platform to the server:
+On a machine with the repository and Go, one command builds the release binaries, copies them
+to the server and installs the hub there. The SSH login is root, or it has a `sudo` that asks
+for no password:
 
 ```bash
-make release                                   # dist/coop-linux-amd64, -linux-arm64, -darwin-arm64
-scp dist/coop-linux-amd64 deploy/install.sh deploy/coop.service <host>:/tmp/
+make hub HOST=<host>
 ```
 
-On the server:
+To do the same by hand, copy the files into one directory of the server and run the script:
 
 ```bash
-cd /tmp && sudo ./install.sh ./coop-linux-amd64
+make release                 # dist/coop-linux-amd64, -linux-arm64, -darwin-arm64, -windows-amd64.exe
+ssh <host> mkdir -p coop-hub
+scp dist/coop-*-* deploy/install.sh deploy/coop.service <host>:coop-hub/
+ssh <host> coop-hub/install.sh
 ```
 
 The script installs `/usr/local/bin/coop`, creates the `coop` user and `/var/lib/coop`,
-installs the unit `coop.service`, and starts it. It is safe to run again: that is also the
-upgrade. It ends with the steps that are left: TLS and tokens.
+installs the unit `coop.service`, and starts it. It also puts each release binary into
+`/var/lib/coop/dist`: the hub gives these to its devices. It is safe to run again: that is
+also the upgrade. It ends with the steps that are left: TLS and tokens.
 
 | Path | Holds |
 |---|---|
 | `/usr/local/bin/coop` | the binary (the same one the clients run) |
+| `/var/lib/coop/dist/` | the release binaries of this version, one for each platform; a device downloads its own |
 | `/var/lib/coop/coop.db` | every event, session, kick and token (SQLite, WAL mode; readable by `coop` only) |
 | `/etc/systemd/system/coop.service` | the service: `coop serve --listen 127.0.0.1:8090 --data /var/lib/coop` |
 | `/etc/coop/tls/` | the TLS certificate and key (step 3) |
@@ -90,21 +95,34 @@ One token per agent machine:
 sudo -u coop coop admin token add laptop
 ```
 
-An agent machine runs its agents as a user with no privileges, not as root. On a machine
-where coop was set up as root, `agent-user.sh` moves it to a user `agent` (see the head of
-the script; `-n` shows the steps):
+Give a token to the machine's owner over a private channel. On the machine, as the user that
+runs the agents, one line installs coop from the hub:
 
 ```bash
-scp deploy/agent-user.sh dist/coop-linux-amd64 <host>:/tmp/
-ssh <host> 'bash /tmp/agent-user.sh /tmp/coop-linux-amd64'
+curl -fsSL <hub address>/install.sh | sh -s -- <hub address> laptop.<secret>
 ```
 
-Give a token to the machine's owner over a private channel. On the machine:
+The line downloads the binary of the machine into `~/.local/bin`, then runs `coop login`,
+`coop setup` and `coop doctor`. It needs no root, and nothing logs in to the machine.
+
+`curl` does not trust a self-signed certificate, so the line does not work with the TLS front
+of section 3. There, and on Windows, copy the binary by hand one time:
 
 ```bash
 coop login https://<host>:8443 laptop.<secret>     # shows and pins the fingerprint
 coop setup
 coop doctor
+```
+
+`coop upgrade` works with the pinned certificate, so the later versions come from the hub.
+
+An agent machine runs its agents as a user with no privileges, not as root. The install line
+refuses root. On a machine where coop was set up as root, `agent-user.sh` moves it to a user
+`agent` (see the head of the script; `-n` shows the steps):
+
+```bash
+scp deploy/agent-user.sh dist/coop-linux-amd64 <host>:/tmp/
+ssh <host> 'bash /tmp/agent-user.sh /tmp/coop-linux-amd64'
 ```
 
 To remove a machine and its agents at once:
@@ -136,33 +154,26 @@ Upgrade the hub and the `coop` binary on every machine together. A part reads me
 own version of the message schema, and an older part drops a message that only a newer schema
 allows.
 
-One command does it for the hub, each agent machine and the machine that you are on:
+1. The hub. On a machine with the repository, on the commit to roll out:
 
-```bash
-deploy/rollout.sh <hub host> <agent host>...     # for example: deploy/rollout.sh hub-1 vps-1 vps-2 hub-1
-deploy/rollout.sh -n <hub host> <agent host>...  # show each step, change nothing
-```
+   ```bash
+   make hub HOST=<host>
+   ```
 
-Run it in the repository, on the commit to roll out. A host is an SSH host or alias with a root
-login. The script needs [`sshp`](https://github.com/bahamas10/sshp). It does these steps and
-stops at the first step that fails:
+   The hub starts again with the new version, and it holds the binaries of that version for
+   its devices. The agents connect again.
 
-1. It builds the release binaries and the binary of this machine.
-2. It copies the binary and the scripts to each host, all hosts at one time.
-3. On the hub, it runs `install.sh`, which starts the hub again. The agents connect again.
-4. On each agent machine, at one time, it runs `agent-user.sh`. That installs the binary and
-   runs `coop setup` as the user `agent`, which writes the hooks of the new version.
-5. On this machine, it runs `coop setup` and `coop doctor`.
+2. Each agent machine. On the machine:
 
-Steps 3 and 4 check that the host has the new version. You can run the script again.
+   ```bash
+   coop upgrade
+   ```
 
-To upgrade only the hub by hand:
+   The machine downloads its binary from the hub and runs the setup of the new version, which
+   writes the new hooks. `coop doctor` shows when a machine and the hub have different
+   versions. No machine logs in to another one.
 
-```bash
-make release
-scp dist/coop-linux-amd64 deploy/install.sh deploy/coop.service <host>:/tmp/
-ssh <host> 'cd /tmp && sudo ./install.sh ./coop-linux-amd64'
-```
+3. A machine with a clone of the repository: `git pull && make install`, then `coop setup`.
 
 Then restart each open `coop tui` and each agent session.
 

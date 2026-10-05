@@ -51,7 +51,8 @@ main() {
   trap 'rm -f "$new"' EXIT
   echo "download $hub/dl/$file"
   if ! curl -fsSL -H "Authorization: Bearer $token" -o "$new" "$hub/dl/$file"; then
-    echo "The hub did not give $file: the token is wrong, or the hub has no binary for this device." >&2
+    echo "No download of $file from $hub. The line of curl above gives the cause:" >&2
+    echo "401 is a wrong token, 404 is a hub that has no binary for this device." >&2
     exit 1
   fi
   chmod 755 "$new"

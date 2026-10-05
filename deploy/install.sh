@@ -1,21 +1,38 @@
 #!/usr/bin/env bash
 # Install the coop hub on one Linux host with systemd: the binary, the `coop` user, the data
-# directory and one unit. Run it again after an upgrade with the new binary. TLS and tokens
-# stay manual steps; it prints them.
+# directory, one unit, and the release binaries that the hub gives to its devices. Run it
+# again with the new binaries for an upgrade. TLS and tokens stay manual steps; it prints them.
 #
-#   sudo deploy/install.sh dist/coop-linux-amd64      (the release binary for this host)
+#   deploy/install.sh [<coop binary>]
+#
+# <coop binary> is the release binary for this host (default: coop-linux-<arch> next to this
+# script). Each coop-<os>-<arch> file in the directory of that binary goes to
+# /var/lib/coop/dist. A device downloads the one for its platform from the hub: with the
+# install line that this script prints, and later with `coop upgrade`.
+#
+# `make hub HOST=<ssh host>` copies the files to a host and runs this script there.
 set -euo pipefail
 
-bin=${1:-}
 unit_dir=/etc/systemd/system
+dist=/var/lib/coop/dist
 here=$(cd "$(dirname "$0")" && pwd)
 
 if [ "$(id -u)" -ne 0 ]; then
-  echo "run as root: sudo $0 <coop binary>" >&2
-  exit 2
+  if ! command -v sudo >/dev/null; then
+    echo "run as root: $0 [<coop binary>]" >&2
+    exit 2
+  fi
+  exec sudo "$0" "$@"
 fi
-if [ -z "$bin" ] || [ ! -f "$bin" ]; then
-  echo "usage: sudo $0 <coop binary>   (for example dist/coop-linux-amd64 from 'make release')" >&2
+case $(uname -m) in
+  x86_64) arch=amd64 ;;
+  aarch64 | arm64) arch=arm64 ;;
+  *) arch=$(uname -m) ;;
+esac
+bin=${1:-$here/coop-linux-$arch}
+if [ ! -f "$bin" ]; then
+  echo "no such file: $bin" >&2
+  echo "usage: $0 [<coop binary>]   (for example dist/coop-linux-amd64 from 'make release')" >&2
   exit 2
 fi
 for cmd in systemctl openssl; do
@@ -39,6 +56,17 @@ step "data in /var/lib/coop"
 install -d -o coop -g coop -m 750 /var/lib/coop
 # A hub from before the unit set UMask=0077 left the database files readable by every user.
 find /var/lib/coop -maxdepth 1 -type f -name 'coop.db*' -exec chmod 600 {} +
+
+step "binaries for the devices in $dist"
+# Only the binaries of this version stay: a device must not get an older one.
+install -d -o coop -g coop -m 755 "$dist"
+rm -f "$dist"/coop-*
+for f in "$(dirname "$bin")"/coop-*-*; do
+  if [ -f "$f" ]; then
+    install -o coop -g coop -m 755 "$f" "$dist/"
+    basename "$f"
+  fi
+done
 
 step "service"
 install -m 644 "$here/coop.service" "$unit_dir/coop.service"
@@ -64,6 +92,9 @@ cat <<TEXT
      coop tui
 3. One token per agent machine:
      sudo -u coop coop admin token add laptop
-   On that machine: coop login https://<this host>:8443 laptop.<secret>; coop setup; coop doctor
+   On that machine, as the user that runs the agents, one time:
+     curl -fsSL <hub address>/install.sh | sh -s -- <hub address> laptop.<secret>
+   A later version of coop comes with: coop upgrade
+   (With a self-signed certificate, curl refuses the hub: see deploy/README.md, Tokens.)
 Run the admin commands as the coop user, so that the database files keep that owner.
 TEXT
