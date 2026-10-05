@@ -9,8 +9,15 @@
 #   coop-worker <directory> <claude|codex|copilot|gemini> [more arguments for the CLI]
 #
 # deploy/coop-worker@.service starts one with systemd, deploy/coop-worker.run with runit. The
-# CLI must be on the PATH or in ~/.local/bin, signed in, and have coop as an MCP server. Set
-# the hold of the session off (`H` in the TUI): a held worker cannot call its tools.
+# CLI must be on the PATH or in ~/.local/bin, signed in, and have coop as an MCP server. A held
+# worker cannot call its tools: release it one time (`g` in the TUI), or set the hold of the
+# session off (`H`).
+#
+# Only the claude worker is behind the gate of the operator: `coop claude` gives it the gate
+# hook. The CLIs of codex, copilot and gemini have no such hook, and they run here with their
+# tools allowed and no question. Thus a hold, a pause or a stop does not refuse the tool calls
+# of such a worker, and each peer of its session can make it run commands. Use these kinds
+# only in a session where you trust each agent.
 set -u
 usage='usage: coop-worker <directory> <claude|codex|copilot|gemini> [arguments]'
 dir=${1:?$usage}

@@ -1,7 +1,8 @@
 # coop-worker.ps1: the Windows form of coop-worker.sh, for a Task Scheduler task at logon.
 #   pwsh -NoProfile -WindowStyle Hidden -File coop-worker.ps1 <directory> <claude|codex|copilot|gemini> [arguments]
 # Install with deploy/coop-worker-tasks.ps1. The CLIs must be on the PATH of the user, signed in,
-# and have coop as an MCP server.
+# and have coop as an MCP server. Only the claude worker is behind the gate of the operator: see
+# the head of coop-worker.sh before you use another kind.
 param(
   [Parameter(Mandatory)][string]$Dir,
   [Parameter(Mandatory)][ValidateSet('claude', 'codex', 'copilot', 'gemini')][string]$Kind,
