@@ -16,9 +16,9 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
-// hookDeadline is how long the hook waits for the hub. Claude Code runs a tool call whose hook
-// crashes or runs out of time, so the hook must give its answer itself, and soon.
-const hookDeadline = 8 * time.Second
+// hookDeadline is how long the gate hook waits for the hub. The agent waits that long at each
+// tool call when the hub does not answer, so it is short.
+const hookDeadline = 2 * time.Second
 
 // hookTimeoutS is the time Claude Code gives the hook, in seconds. It is longer than
 // hookDeadline, so that the hook's own answer always comes first.
@@ -84,6 +84,9 @@ func denyOutput(reason string) []byte {
 // errNoGate: the hub is of a version that has no gate. No operator can hold the agent there.
 var errNoGate = errors.New("the hub has no gate")
 
+// errAuth: the hub refused the token. Unlike a hub that is down, the user must fix this.
+var errAuth = errors.New("the hub refused the token (run coop doctor)")
+
 // askGate asks the hub whether the operator lets the agent work.
 func askGate(ctx context.Context, client *http.Client, cfg config.Config) (string, error) {
 	body, _ := json.Marshal(map[string]string{"agent": cfg.Agent})
@@ -107,6 +110,9 @@ func askGate(ctx context.Context, client *http.Client, cfg config.Config) (strin
 		// have the route answers 404.
 		return "", errNoGate
 	}
+	if res.StatusCode == 401 || res.StatusCode == 403 {
+		return "", errAuth
+	}
 	if res.StatusCode != 200 {
 		return "", fmt.Errorf("the hub answered %d", res.StatusCode)
 	}
@@ -125,31 +131,33 @@ func askGate(ctx context.Context, client *http.Client, cfg config.Config) (strin
 // pretool decides one tool call: "" lets it run, any other text is the reason to refuse it.
 // A call passes with no question to the hub when the agent is in no session, when the person
 // who started it set COOP_GATE=off, or when the tool is exempt. A hub of a version with no
-// gate lets each call pass. When the hub gives no answer, the call is refused: the operator
-// could not stop it.
-func pretool(ctx context.Context, in hookInput, env map[string]string, cfg config.Config, client *http.Client) string {
+// gate lets each call pass. When the hub gives no answer, the call passes too and err says
+// why: a hub that is down must not stop the agent.
+func pretool(ctx context.Context, in hookInput, env map[string]string, cfg config.Config, client *http.Client) (string, error) {
 	if env["COOP_GATE"] == "off" || cfg.Session == "" || cfg.URL == "" || cfg.Token == "" {
-		return ""
+		return "", nil
 	}
 	if gate.Exempt(in.ToolName) {
-		return ""
+		return "", nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, hookDeadline)
 	defer cancel()
 	g, err := askGate(ctx, client, cfg)
 	if errors.Is(err, errNoGate) {
-		return ""
+		return "", nil
 	}
 	if err != nil {
-		return gate.Unknown
+		return "", err
 	}
-	return gate.Text(g)
+	return gate.Text(g), nil
 }
 
 // cmdHook is what Claude Code runs for an agent in a coop session. `pretool` runs before a
-// tool call: it asks the gate, and it always exits 0 with its answer on stdout, because any
-// other end would let the tool call run. `posttool`, `prompt` and `stop` only report to the
-// hub what the agent does; they print nothing.
+// tool call: it asks the gate and prints a refusal on stdout when the operator holds the
+// agent. When it cannot read the gate, it lets the call run and says why in one line on
+// stderr: exit 0 for a hub that does not answer, exit 1 for a refused token, which Claude Code
+// shows and does not block on. `posttool`, `prompt` and `stop` only report to the hub what the
+// agent does; they print nothing.
 func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	known := false
 	for _, e := range hookEvents {
@@ -162,9 +170,6 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int
 	hook := args[0]
 	defer func() {
 		if r := recover(); r != nil {
-			if hook == "pretool" {
-				_, _ = stdout.Write(denyOutput(gate.Unknown))
-			}
 			code = 0
 		}
 	}()
@@ -186,7 +191,17 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int
 	}
 	client := hubHTTP(cfg, io.Discard)
 	if hook == "pretool" {
-		if reason := pretool(context.Background(), in, env, cfg, client); reason != "" {
+		reason, err := pretool(context.Background(), in, env, cfg, client)
+		if errors.Is(err, errAuth) {
+			fmt.Fprintln(stderr, "coop hub:", err, "- continuing without coop")
+			return 1
+		}
+		if err != nil {
+			// No trace report either: it would wait for the same hub again.
+			fmt.Fprintln(stderr, "coop hub unreachable, continuing without coop:", err)
+			return 0
+		}
+		if reason != "" {
 			_, _ = stdout.Write(denyOutput(reason))
 			return 0
 		}
