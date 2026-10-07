@@ -221,9 +221,8 @@ coop start basedmatrix git/app build-42              # machine, project, session
 coop start -a reviewer basedmatrix git/app build-42  # with an agent name
 ```
 
-When Herdr knows the machine (`herdr machine list`), the agent starts in a new Herdr workspace
-on that machine. If not, the agent starts over SSH in this terminal. `-s` selects SSH.
-Arguments after the session go to `claude`. `-n` shows the command and does not run it.
+The agent starts over SSH in this terminal. Arguments after the session go to `claude`. `-n`
+shows the command and does not run it.
 
 One session on a machine holds a name. The hub does not let in a second session with the same
 name. The second agent gets the reason, and joins when the name is free. To run two agents in
@@ -455,34 +454,6 @@ shows it again for five minutes as `refused 2m ago`. Thus you see that the agent
 
 A second session that asks for a name in use shows as a line `duplicate refused 2m ago`. The
 line is under the agent that holds the name.
-
-### With Herdr
-
-[Herdr](https://herdr.dev) runs agents in terminal panes. An agent in a Herdr pane gets three
-things, with no setting:
-
-- A pause or a stop interrupts the turn of the agent at once. The shim sends Escape to its own
-  pane when Herdr says that the agent works. An agent that sits in `wait`, or that shows a
-  question to its human, gets no key.
-- The pane shows the place of the agent in coop. The title is `coop <session>/<agent>`, with
-  `· held` or `· paused`. The tokens `$coop` and `$gate` are available for a sidebar row.
-- In the TUI, `o` on an agent brings its pane to the front. For an agent on another machine,
-  Herdr needs a saved machine. The label of that machine must be its name in coop.
-
-The agent must run in a pane of a Herdr on its own machine. For a server, add the machine to
-Herdr one time. Use the name of the machine in coop as the label. Then start agents with
-`coop start`.
-
-```bash
-herdr machine add ssh://agent@<host> --label <machine>
-```
-
-An agent that you start with a plain `ssh` in a local pane is outside Herdr. None of the three
-things applies to it.
-
-The command `agent start` of Herdr runs a plain `claude`. Such an agent is behind the gate too,
-because `coop setup` put the hook into the settings. It gets pushes only when its arguments
-hold the channel flag (see `coop claude`).
 
 ## Security
 

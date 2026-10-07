@@ -28,9 +28,8 @@ const usageText = `usage:
                                   stop agents and set up sessions (COOP_ORCHESTRATOR_TOKEN)
   coop --reporter claude ...      Claude Code that reads every session and changes nothing
                                   (COOP_REPORTER_TOKEN)
-  coop start [-n] [-s] [-u <user>] [-a <agent>] <machine> <directory> <session> [claude args]
-                                  start an agent on another machine, in Herdr when Herdr
-                                  knows the machine, else over SSH
+  coop start [-n] [-u <user>] [-a <agent>] <machine> <directory> <session> [claude args]
+                                  start an agent on another machine over SSH
   coop tui [--url <url>] [--token <token>]
                                   watch and steer all sessions (operator token)
   coop setup                      register coop with Claude Code and install the skill

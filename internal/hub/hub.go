@@ -118,8 +118,6 @@ type StreamQuery struct {
 	ClientName, ClientVersion string
 	// Gated is true when the agent's tool calls go through the gate (started by `coop claude`).
 	Gated bool
-	// HerdrPane is the Herdr pane that the agent runs in, or "".
-	HerdrPane string
 	// Role is the role of the token that joins: machine or orchestrator. The API sets it from
 	// the token, never from the query.
 	Role string
@@ -354,8 +352,6 @@ type Conn struct {
 	// gate is whether the operator lets the agent work: run, held or paused.
 	gate  string
 	gated bool
-	// herdrPane is the Herdr pane that the agent runs in, or "".
-	herdrPane string
 	// orchestrator: the agent joined with an orchestrator token.
 	orchestrator bool
 	// quiet is the sequence of a gate record that the agent gets no notice of, or 0.
@@ -470,7 +466,7 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 		joinedAt: h.now(), resumed: old != nil,
 		out:   make(chan item, 256),
 		state: "idle", sent: map[string]bool{},
-		gate: gate, gated: q.Gated, herdrPane: q.HerdrPane, orchestrator: trusted,
+		gate: gate, gated: q.Gated, orchestrator: trusted,
 		status: row.Record.Status, reason: "disconnected", done: make(chan struct{}),
 	}
 	h.conns[key] = c
@@ -706,7 +702,7 @@ func (h *Hub) putPresenceLocked(c *Conn) {
 func (c *Conn) presence() wire.PresenceRecord {
 	r := wire.PresenceRecord{
 		Host: c.host, Cwd: c.cwd, Client: c.client, State: c.state, Note: c.note,
-		JoinedAt: c.joinedAt, Gated: c.gated, HerdrPane: c.herdrPane,
+		JoinedAt: c.joinedAt, Gated: c.gated,
 	}
 	if c.orchestrator {
 		r.Role = wire.RoleOrchestrator

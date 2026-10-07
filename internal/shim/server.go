@@ -22,7 +22,6 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/admin"
 	"github.com/AIToolSharing/agent_coop/internal/channel"
 	"github.com/AIToolSharing/agent_coop/internal/gate"
-	"github.com/AIToolSharing/agent_coop/internal/herdr"
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -54,10 +53,6 @@ type Options struct {
 	// HookInSettings says that the user's Claude Code settings hold the gate hook. An agent
 	// whose MCP client is Claude Code is then gated, however it was started.
 	HookInSettings bool
-	// Pane is the Herdr pane that this process runs in; nil for none. The shim shows the
-	// agent's coop identity and gate on it, and interrupts the agent in it when the operator
-	// pauses or removes the agent.
-	Pane *herdr.Pane
 	// Host and Cwd go to the hub with the join. Empty means os.Hostname and os.Getwd.
 	Host, Cwd string
 	// ClientName and ClientVersion go to the hub with the join. Empty means the values that
@@ -358,12 +353,6 @@ func Serve(ctx context.Context, o Options) error {
 	s.closed = true
 	s.mu.Unlock()
 	s.wg.Wait()
-	if o.Pane != nil && inSession {
-		// The agent is gone: its pane must not keep the coop title.
-		clear, done := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = o.Pane.Clear(clear)
-		done()
-	}
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -409,8 +398,7 @@ func (s *shim) start(client *mcp.Implementation) {
 	join := joinInfo{
 		agent: s.o.Agent, instance: newInstance(), host: s.o.Host, cwd: s.o.Cwd,
 		clientName: s.o.ClientName, clientVersion: s.o.ClientVersion,
-		gated:     s.o.Gated || s.o.HookInSettings && client != nil && client.Name == claudeCode,
-		herdrPane: s.o.Pane.PaneID(),
+		gated: s.o.Gated || s.o.HookInSettings && client != nil && client.Name == claudeCode,
 	}
 	if join.host == "" {
 		join.host, _ = os.Hostname()
@@ -447,20 +435,12 @@ func (s *shim) start(client *mcp.Implementation) {
 			state: func(l link) {
 				s.setLink(l)
 				if l.kind == linkJoined {
-					s.showGate(l.gate)
 					s.goRun(func() { s.tellOrchestrator(l.me) })
 				}
 			},
 			message: func(m message) { b.accept(item{msg: &m}) },
 			notice: func(n notice) {
-				if g, changed := s.setGate(n.Kind); changed {
-					s.showGate(g)
-				}
-				// A pause or a removal must stop the turn that runs now, not only the next
-				// tool call. An agent that sits in wait gets the notice from the wait.
-				if (n.Kind == noticePaused || n.Kind == noticeKicked) && !b.waiting() {
-					s.interrupt()
-				}
+				s.setGate(n.Kind)
 				b.accept(item{notice: &n})
 			},
 		})
@@ -473,9 +453,8 @@ func (s *shim) setLink(l link) {
 	s.link = l
 }
 
-// setGate records the gate that a notice gives, and gives it with true. A notice of another
-// kind changes nothing and gives false.
-func (s *shim) setGate(noticeKind string) (gate string, changed bool) {
+// setGate records the gate that a notice gives. A notice of another kind changes nothing.
+func (s *shim) setGate(noticeKind string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch noticeKind {
@@ -483,35 +462,7 @@ func (s *shim) setGate(noticeKind string) (gate string, changed bool) {
 		s.link.gate = noticeKind
 	case noticeReleased:
 		s.link.gate = wire.GateRun
-	default:
-		return "", false
 	}
-	return s.link.gate, true
-}
-
-// showGate shows the agent's session, name and gate on its Herdr pane. It does not wait for
-// Herdr, and a failure only goes to the log.
-func (s *shim) showGate(gate string) {
-	if s.o.Pane == nil {
-		return
-	}
-	s.goRun(func() {
-		if err := s.o.Pane.Show(s.ctx, s.o.Session, s.o.Agent, gate); err != nil {
-			s.logf("herdr: %v", err)
-		}
-	})
-}
-
-// interrupt stops the agent's turn in its Herdr pane, when it works.
-func (s *shim) interrupt() {
-	if s.o.Pane == nil {
-		return
-	}
-	s.goRun(func() {
-		if _, err := s.o.Pane.Interrupt(s.ctx); err != nil {
-			s.logf("herdr: %v", err)
-		}
-	})
 }
 
 // newInstance gives a random UUID (version 4) for the join.

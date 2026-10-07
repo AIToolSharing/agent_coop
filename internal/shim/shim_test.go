@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/AIToolSharing/agent_coop/internal/channel"
-	"github.com/AIToolSharing/agent_coop/internal/herdr"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -906,91 +905,6 @@ func TestTheSettingsHookGatesClaudeCodeOnly(t *testing.T) {
 	joined(t, startAs(t, o, "codex"))
 	if q := h.lastQuery(); strings.Contains(q, "gated") {
 		t.Fatalf("another client says gated: %s", q)
-	}
-}
-
-// fakeHerdr stands in for the herdr command. It says that the agent in the pane works.
-type fakeHerdr struct {
-	mu    sync.Mutex
-	calls []string
-}
-
-func (f *fakeHerdr) run(_ context.Context, args ...string) ([]byte, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls = append(f.calls, strings.Join(args, " "))
-	if len(args) > 1 && args[0] == "agent" && args[1] == "get" {
-		return []byte(`{"id":"cli","result":{"type":"agent_info","agent":{"agent_status":"working"}}}`), nil
-	}
-	return []byte(`{"id":"cli","result":{"type":"ok"}}`), nil
-}
-
-func (f *fakeHerdr) has(call string) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return slices.Contains(f.calls, call)
-}
-
-func (f *fakeHerdr) count(prefix string) int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	n := 0
-	for _, c := range f.calls {
-		if strings.HasPrefix(c, prefix) {
-			n++
-		}
-	}
-	return n
-}
-
-// In a Herdr pane the agent tells the service its pane, shows its session, name and gate on
-// the pane, and a pause interrupts the turn that runs: without this, a pause acts only at the
-// next tool call. An agent that sits in wait gets no interrupt: the wait gives it the notice.
-func TestInAHerdrPaneTheGateShowsAndAPauseInterrupts(t *testing.T) {
-	h := newFakeHub(t)
-	h.createSession("s")
-	h.mu.Lock()
-	h.sessions["s"].gate = "held"
-	h.mu.Unlock()
-	f := &fakeHerdr{}
-	o := options(h, "vps-2", "s", "bob", true)
-	o.Pane = herdr.FromEnv(map[string]string{"HERDR_ENV": "1", "HERDR_PANE_ID": "w1:p3"}, f.run)
-	b := start(t, o)
-	joined(t, b)
-	if q := h.lastQuery(); !strings.Contains(q, "herdr_pane=w1%3Ap3") {
-		t.Fatalf("join query %s", q)
-	}
-	show := func(gate string) string {
-		title := "coop s/bob"
-		if gate != "run" {
-			title += " · " + gate
-		}
-		return "pane report-metadata w1:p3 --source coop:shim --title " + title + " --token coop=s/bob --token gate=" + gate
-	}
-	eventually(t, "the pane shows the hold", func() bool { return f.has(show("held")) })
-	h.gate("s", "bob@vps-2", noticeReleased)
-	eventually(t, "the pane shows no gate", func() bool { return f.has(show("run")) })
-	if n := f.count("agent"); n != 0 {
-		t.Fatalf("a release sent %d agent calls to herdr: %v", n, f.calls)
-	}
-	// A pause while the agent works: escape goes to the pane.
-	h.gate("s", "bob@vps-2", noticePaused)
-	eventually(t, "the pause interrupts", func() bool { return f.has("agent send-keys w1:p3 esc") && f.has(show("paused")) })
-	// A pause while the agent sits in wait: the wait ends with the notice, and no key goes.
-	h.gate("s", "bob@vps-2", noticeReleased)
-	eventually(t, "released again", func() bool { return b.json("status", nil)["gate"] == "run" })
-	keys := f.count("agent send-keys")
-	waiting := b.async("wait", map[string]any{"from": "operator", "timeout_s": 500})
-	eventually(t, "the wait is open", func() bool {
-		acts := h.activities("s")
-		return len(acts) > 0 && acts[len(acts)-1].Kind == "wait_start"
-	})
-	h.gate("s", "bob@vps-2", noticePaused)
-	if r := <-waiting; !strings.Contains(r.text, "paused you") {
-		t.Fatalf("wait gave %+v", r)
-	}
-	if n := f.count("agent send-keys"); n != keys {
-		t.Fatalf("a pause during wait sent a key: %v", f.calls)
 	}
 }
 

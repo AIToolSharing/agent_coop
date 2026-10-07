@@ -11,7 +11,6 @@ import (
 
 	"github.com/AIToolSharing/agent_coop/internal/admin"
 	"github.com/AIToolSharing/agent_coop/internal/config"
-	"github.com/AIToolSharing/agent_coop/internal/herdr"
 	"github.com/AIToolSharing/agent_coop/internal/model"
 	"github.com/AIToolSharing/agent_coop/internal/tui"
 )
@@ -50,11 +49,6 @@ func cmdTUI(args []string, stderr io.Writer) int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	o := tui.Options{Store: store, Updates: updates, Op: client}
-	if _, err := lookPath("herdr"); err == nil {
-		run := herdr.Command(environ())
-		o.Focus = func(ctx context.Context, machine, pane string) error { return herdr.Focus(ctx, run, machine, pane) }
-		o.Host, _ = os.Hostname()
-	}
 	app := tui.New(o)
 	p := tea.NewProgram(app)
 	go func() {

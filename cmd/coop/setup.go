@@ -83,8 +83,8 @@ func cmdSetup(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "wrote %s\n", path)
 	// The gate hook and the hooks that report what the agent does, for every Claude Code
-	// session of this user: also for one that another
-	// tool starts, such as Herdr. A session in no coop session passes the hook at once.
+	// session of this user, also one that another tool starts. A session in no coop session
+	// passes the hook at once.
 	if settings := claudeSettingsPath(); settings != "" {
 		changed, err := installHookFile(settings, exe)
 		switch {

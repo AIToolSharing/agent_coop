@@ -72,9 +72,6 @@ func RenderAgent(v *model.Session, address string, o Options) Rendered {
 	if a.Trace.Branch != "" {
 		add(kv("branch", a.Trace.Branch, Style{}), "")
 	}
-	if a.HerdrPane != "" {
-		add(kv("herdr", "pane "+a.HerdrPane+" (o goes to it)", Style{}), "")
-	}
 	if a.Online {
 		for _, it := range a.Trace.Running() {
 			add(kv("now", toolText(it)+" for "+Age(it.At, o.Now), Style{Color: "yellow"}), "")

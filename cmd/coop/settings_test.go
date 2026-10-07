@@ -36,7 +36,7 @@ func sameJSON(a, b []byte) bool {
 const userSettings = `{
   "model": "opus",
   "hooks": {
-    "SessionStart": [{"hooks": [{"type": "command", "command": "bash '/Users/u/.claude/hooks/herdr-agent-state.sh' session"}]}],
+    "SessionStart": [{"hooks": [{"type": "command", "command": "bash '/Users/u/.claude/hooks/agent-state.sh' session"}]}],
     "PreToolUse": [
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "jq -re '.tool_input.command'"}]},
       {"hooks": [{"type": "command", "command": "/Users/u/.cargo/bin/tokensave"}]}

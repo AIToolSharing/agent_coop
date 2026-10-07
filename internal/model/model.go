@@ -94,8 +94,6 @@ type Agent struct {
 	// Gated is true while the agent is online and its tool calls go through the gate. An
 	// agent that is not gated only gets the gate as advice.
 	Gated bool
-	// HerdrPane is the Herdr pane that the agent runs in while it is online, or "".
-	HerdrPane string
 	// Orchestrator is true while the agent is online with an orchestrator token: it may also
 	// act for the operator.
 	Orchestrator bool
@@ -682,11 +680,11 @@ func (a *Agent) derive() {
 // refresh sets the effective fields: the live presence record wins while the agent is online.
 func (a *Agent) refresh() {
 	if a.live == nil {
-		a.Online, a.Gated, a.HerdrPane, a.Orchestrator = false, false, "", false
+		a.Online, a.Gated, a.Orchestrator = false, false, false
 		a.State, a.Note, a.StateSince, a.Waiting = a.dState, a.dNote, a.dSince, a.dWaiting
 		return
 	}
-	a.Online, a.Gated, a.HerdrPane = true, a.live.Gated, a.live.HerdrPane
+	a.Online, a.Gated = true, a.live.Gated
 	a.Orchestrator = a.live.Role == wire.RoleOrchestrator
 	a.State, a.Note, a.StateSince = a.live.State, a.live.Note, a.dSince
 	a.Waiting = nil

@@ -247,15 +247,6 @@
             "required": false,
             "name": "gated",
             "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]{0,63}$"
-            },
-            "required": false,
-            "name": "herdr_pane",
-            "in": "query"
           }
         ],
         "responses": {

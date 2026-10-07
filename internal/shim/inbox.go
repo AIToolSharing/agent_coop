@@ -129,14 +129,6 @@ func (b *inbox) dropped() int {
 	return b.drops
 }
 
-// accept routes one item. The caller gives items one at a time, in the order they arrive.
-// waiting reports whether a wait is open. A notice then goes to that wait.
-func (b *inbox) waiting() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return len(b.waiters) > 0
-}
-
 func (b *inbox) accept(it item) {
 	b.mu.Lock()
 	if it.notice != nil && it.notice.Kind == noticePeerLeft {

@@ -14,9 +14,8 @@
 #   2. Let the SSH keys that can log in as root log in as the user.
 #   3. Install coop in /usr/local/bin, for all users.
 #   4. Give the user a copy of root's Claude Code.
-#   5. Put ~/.local/bin on the user's PATH in every interactive shell (~/.bashrc).
-#   6. Move root's coop credentials to the user. Root is then no agent on this machine.
-#   7. Run `coop setup` and `coop doctor` as the user.
+#   5. Move root's coop credentials to the user. Root is then no agent on this machine.
+#   6. Run `coop setup` and `coop doctor` as the user.
 #
 # The script does not log the user in to Claude Code. Do that one time by hand; the last lines
 # of the output say how.
@@ -126,23 +125,6 @@ elif [ -x "$root_home/.local/bin/claude" ]; then
   echo "copied claude $version from root"
 else
   echo "root has no claude in ~/.local/bin: install Claude Code as $user before the agents start"
-fi
-
-step "path of $user"
-# Claude Code and Herdr install into ~/.local/bin. A login shell has it on the PATH (~/.profile),
-# but a terminal pane of Herdr starts a shell that is not a login shell: there, claude and herdr
-# are not found. ~/.bashrc is what such a shell reads.
-marker='# coop: ~/.local/bin on the PATH, also in a shell that is not a login shell'
-if [ -f "$home/.bashrc" ] && grep -qF "$marker" "$home/.bashrc"; then
-  echo "$home/.bashrc has ~/.local/bin on the PATH"
-elif [ "$dry" = 1 ]; then
-  echo "would add ~/.local/bin to the PATH in $home/.bashrc"
-else
-  # The words in single quotes go into the file as they are: the user's shell expands them.
-  # shellcheck disable=SC2016
-  printf '\n%s\n%s\n' "$marker" 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac' >>"$home/.bashrc"
-  chown "$user:$user" "$home/.bashrc"
-  echo "added ~/.local/bin to the PATH in $home/.bashrc"
 fi
 
 step "coop credentials"

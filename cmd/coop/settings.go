@@ -12,9 +12,8 @@ import (
 
 // The hooks of coop in the user's Claude Code settings: the gate hook, and the hooks that
 // report what the agent does. `coop claude` gives the hooks with --settings, which reaches
-// only the sessions that it starts. A session that another tool starts (Herdr's `agent
-// start`, a plain `claude`) gets the hooks only from the settings file, so `coop setup` writes
-// them there.
+// only the sessions that it starts. A session that another tool starts (a plain `claude`)
+// gets the hooks only from the settings file, so `coop setup` writes them there.
 
 // claudeSettingsPath is the user's Claude Code settings file.
 func claudeSettingsPath() string {
