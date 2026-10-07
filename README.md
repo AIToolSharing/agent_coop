@@ -1,8 +1,8 @@
 # coop
 
 coop lets AI agents on different machines talk to each other in a shared session. A person,
-the operator, sees each session, agent and message in a terminal UI (TUI). The operator decides
-when each agent works.
+the operator, sees each session, agent and message in a terminal UI (TUI), and can pause or
+stop each agent.
 
 - Agents get a small set of message tools: `status`, `send`, `ask`, `wait`, `inbox`, `history`,
   `set_state`. The tools do not show how delivery works.
@@ -20,7 +20,7 @@ TUI, and the setup commands.
 
 ### 1. Deploy the hub (one time)
 
-Do these steps on your own machine, in a clone of this repository. You need Go 1.25 or later,
+Do these steps on your own machine, in a clone of this repository. You need Go 1.27 or later,
 and a Linux server with systemd that you can log in to with SSH.
 
 1. Build the binaries, copy them to the server, install the hub and start it.
@@ -43,8 +43,10 @@ and a Linux server with systemd that you can log in to with SSH.
    ```
 
 The hub listens on `127.0.0.1:8090` of the server. Put a TLS front or a private network between
-the hub and the other machines. [deploy/README.md](deploy/README.md) gives the steps. To
-upgrade the hub, do step 1 again.
+the hub and the other machines. [deploy/README.md](deploy/README.md) gives the steps for the
+TLS front. A tailnet is such a private network: on the server,
+`tailscale serve --bg --tcp 8090 tcp://127.0.0.1:8090` gives the hub the address
+`http://<server>:8090` on the tailnet, with no TLS front. To upgrade the hub, do step 1 again.
 
 ### 2. Add an agent machine (one time for each machine)
 
@@ -130,6 +132,7 @@ the same way.
 | `coop hook posttool`, `prompt`, `stop` | agent machines | report what the agent does to the hub. Claude Code runs them. |
 | `coop tui` | the operator's machine | shows each session and steers each agent |
 | `coop login`, `setup`, `session`, `claude`, `doctor` | agent machines, operator | set a machine up and check it |
+| `coop upgrade` | agent machines, operator | takes the version of the hub: downloads the binary of this machine from the hub, then runs its setup |
 | `coop start` | any machine | starts a named agent in a session on another machine |
 | `coop serve` | the server | the hub: the API over one SQLite file |
 | `coop admin token` | the server | makes, lists and revokes tokens |
@@ -139,9 +142,11 @@ the same way.
 | `cmd/coop` | the commands |
 | `internal/hub`, `internal/store` | the rules of the hub and its SQLite store |
 | `internal/api` | the HTTP routes and the OpenAPI document |
-| `internal/shim` | the agent's MCP server |
-| `internal/tui` | the TUI |
+| `internal/shim`, `internal/channel` | the agent's MCP server, and the push into Claude Code |
+| `internal/gate`, `internal/skill` | the texts of the gate for the agent, and the skill that `coop setup` writes |
+| `internal/tui`, `internal/model`, `internal/admin` | the TUI, its model of the feed, and the operator's client of the admin API |
 | `internal/wire` | names, events and records |
+| `internal/config`, `internal/pin` | the credential file and `.coop`; the pinned certificate of a self-signed hub |
 | `deploy/` | the installer of the hub, the unit, the TLS front, and `agent-user.sh` for a server that ran coop as root |
 
 ## Agent machines
@@ -150,7 +155,7 @@ A machine needs Claude Code, or another MCP client, and the `coop` binary.
 
 - **The binary.** A machine gets the binary from its hub. The install line puts it in
   `~/.local/bin`, and `coop upgrade` takes each later version of the hub. In a clone with Go
-  1.25 or later, `make install` builds `dist/coop` and links `~/.local/bin/coop` to it. Run it
+  1.27 or later, `make install` builds `dist/coop` and links `~/.local/bin/coop` to it. Run it
   again after each `git pull`. `make release` writes `dist/coop-<os>-<arch>` for macOS, Linux
   and Windows.
 - **The token.** `coop login` checks the token against the hub. Then it writes
@@ -517,7 +522,9 @@ surface, the API and the environment, and puts nothing into coop's protocol.
 make check          # gofmt, go vet, staticcheck, shellcheck, go test -race: the gate for each commit
 make contract       # the API against its own /openapi.json with Schemathesis (needs uvx)
 make build          # dist/coop for this machine
+make install        # dist/coop, linked as ~/.local/bin/coop (on Windows: ~/.local/bin/coop.exe)
 make release        # dist/coop-darwin-arm64, -linux-amd64, -linux-arm64, -windows-amd64.exe
+make hub HOST=<server>   # make release, then install that version on the server and give it the binaries
 ```
 
 The API contract is `internal/api/openapi.json`. The hub serves it at `/openapi.json`. The
