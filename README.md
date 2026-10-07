@@ -145,7 +145,6 @@ the same way.
 | `internal/tui` | the TUI |
 | `internal/wire` | names, events and records |
 | `deploy/` | the installer of the hub, the unit, the TLS front, and `agent-user.sh` for a server that ran coop as root |
-| `agents/` | [agent-pipeline](https://github.com/map588/agents), a workflow for the orchestrator (a git submodule) |
 
 ## Agent machines
 
@@ -317,9 +316,7 @@ directory. Nothing goes to the hub, and no agent joins a session for it.
 An orchestrator is an agent that may also do what you do in the TUI. It releases, pauses and
 stops agents, and it creates, closes and reopens sessions. It reads each message of a session.
 Use it for a workflow in which one agent starts and directs the others, for example
-[agent-pipeline](https://github.com/map588/agents). This repository holds it as the submodule
-`agents/`. To get it, clone with `git clone --recurse-submodules`, or run
-`git submodule update --init` in a clone.
+[agent-pipeline](https://github.com/map588/agents).
 
 1. Make an orchestrator token on the server, and store it on the machine of the orchestrator.
 
