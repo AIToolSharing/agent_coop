@@ -28,7 +28,7 @@ const wait = "Call the coop `wait` tool and wait there. " +
 func Text(gate string) string {
 	switch gate {
 	case wire.GateHeld:
-		return "The user holds you: you may not work yet. Do not call other tools. " + wait
+		return "You are held: the orchestrator of this session gives you your task and releases you. Do not call other tools. " + wait
 	case wire.GatePaused:
 		return "The user paused you. Stop your work now and do not call other tools. " + wait
 	case Removed:

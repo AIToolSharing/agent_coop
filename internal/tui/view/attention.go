@@ -11,10 +11,9 @@ import (
 const StaleAsk = 2 * time.Minute
 
 // Item is one thing that needs the operator: a message for the operator with no answer
-// (for_you), an agent that waits for its release (held), a question that waits too long (ask),
-// or an agent that says it is blocked.
+// (for_you), a question that waits too long (ask), or an agent that says it is blocked.
 type Item struct {
-	Kind    string // for_you, held, ask, blocked
+	Kind    string // for_you, ask, blocked
 	ID      string
 	From    string
 	To      string
@@ -28,11 +27,6 @@ func Attention(v *model.Session, now time.Time) []Item {
 	var out []Item
 	for _, m := range v.ForYou() {
 		out = append(out, Item{Kind: "for_you", ID: m.ID, From: m.From})
-	}
-	for _, a := range v.AgentList() {
-		if a.Online && a.Gate == "held" {
-			out = append(out, Item{Kind: "held", Address: a.Address})
-		}
 	}
 	for _, q := range v.OpenAsks() {
 		if t, ok := parseTime(q.Since); ok && now.Sub(t) >= StaleAsk {
@@ -65,9 +59,6 @@ func RenderAttention(items []Item, now time.Time) Line {
 	if n := count("for_you"); n > 0 {
 		parts = append(parts, itoa(int64(n))+" for you")
 	}
-	if n := count("held"); n > 0 {
-		parts = append(parts, itoa(int64(n))+" held")
-	}
 	if n := count("ask"); n > 0 {
 		oldest := ""
 		for _, it := range items {
@@ -94,8 +85,6 @@ func Describe(it Item) string {
 		return "for you: #" + it.ID + " from " + it.From
 	case "ask":
 		return it.From + " waits for " + it.To + " (ask #" + it.ID + ")"
-	case "held":
-		return it.Address + " is held: g releases it"
 	}
 	s := it.Address + " is blocked"
 	if it.Note != "" {

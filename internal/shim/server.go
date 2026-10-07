@@ -203,6 +203,9 @@ func noticeText(n notice) string {
 	case noticeRedacted:
 		return fmt.Sprintf("The user withdrew message %s. Disregard what it said.", n.ID)
 	case noticeHeld, noticePaused, noticeReleased:
+		if n.Kind == noticeReleased && n.Peer != "" {
+			return "The orchestrator " + n.Peer + " left the shared session, so you are released: you may work now. If you have no task, ask the user (operator) for one."
+		}
 		text := gate.Released
 		if n.Kind != noticeReleased {
 			text = gate.Text(n.Kind)

@@ -437,19 +437,6 @@ func parseGate(body []byte) (target *wire.Address, gate string, err error) {
 	return target, b.Gate, nil
 }
 
-func parseHold(body []byte) (bool, error) {
-	var b struct {
-		Hold *bool `json:"hold"`
-	}
-	if err := decodeStrict(body, &b); err != nil {
-		return false, err
-	}
-	if b.Hold == nil {
-		return false, invalid("hold: true or false")
-	}
-	return *b.Hold, nil
-}
-
 func parseRedact(body []byte) (string, error) {
 	var b struct {
 		ID string `json:"id"`

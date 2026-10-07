@@ -50,10 +50,6 @@ func (f *fakeOp) SetGate(_ context.Context, s, t, g string) error {
 	f.calls = append(f.calls, "gate "+s+" "+t+" "+g)
 	return nil
 }
-func (f *fakeOp) SetHold(_ context.Context, s string, hold bool) error {
-	f.calls = append(f.calls, fmt.Sprintf("hold %s %v", s, hold))
-	return nil
-}
 func (f *fakeOp) Redact(_ context.Context, s, id string) (bool, error) {
 	f.calls = append(f.calls, "redact "+s+" "+id)
 	return true, nil
@@ -358,8 +354,8 @@ func TestForgetWithoutANameTakesEachAgentThatLeftAndAsksFirst(t *testing.T) {
 	}
 }
 
-// storeWithGates gives the fixture where Bob is held (he joined a session that holds new
-// agents) and Carol is paused. Alice works. Bob and Carol were started with the gate.
+// storeWithGates gives the fixture where Bob is held (an orchestrator was in the session when
+// he joined) and Carol is paused. Alice works. Bob and Carol were started with the gate.
 func storeWithGates() *model.Store {
 	s := model.New()
 	for _, u := range modeltest.Fixture() {
@@ -375,16 +371,16 @@ func storeWithGates() *model.Store {
 			Host: "h", Cwd: "/src/app", Client: wire.Client{Name: "claude-code", Version: "2.1"}, State: "idle", JoinedAt: modeltest.At(0), Gated: true,
 		}}})
 	}
-	s.Apply(model.Update{Session: &wire.SessionUpdate{SID: "build-42", Revision: 900, Record: &wire.SessionRecord{Status: "open", CreatedAt: modeltest.At(-60), Hold: true}}})
+	s.Apply(model.Update{Session: &wire.SessionUpdate{SID: "build-42", Revision: 900, Record: &wire.SessionRecord{Status: "open", CreatedAt: modeltest.At(-60)}}})
 	return s
 }
 
 // The operator's complaint: no control surface. The gate keys act on the agent under the
-// sidebar cursor: g releases with an optional task, p pauses or resumes, x stops.
+// sidebar cursor: p pauses or resumes, x stops. No key of the operator releases: g does nothing.
 func TestGateKeysSteerTheSelectedAgent(t *testing.T) {
 	h := start(t, storeWithGates())
 	h.openSession()
-	contains(t, h.frame(), "bob@vps-2 held", "carol@mac-3 paused", "new agents are held (H)", "1 held")
+	contains(t, h.frame(), "bob@vps-2 held", "carol@mac-3 paused")
 	// With no agent selected the keys do nothing to an agent.
 	h.keys("g", "p", "x")
 	if len(h.op.calls) != 0 {
@@ -392,22 +388,16 @@ func TestGateKeysSteerTheSelectedAgent(t *testing.T) {
 	}
 	// tab puts the cursor on the session row; the rows below are docs, alice, bob, carol.
 	h.keys("tab", "down", "down")
-	contains(t, h.frame(), "g release · p pause/resume · x stop")
-	// alice works: g has nothing to release, p pauses her.
+	contains(t, h.frame(), "p pause/resume · x stop")
+	// alice works: g does nothing, p pauses her.
 	h.keys("g")
-	if h.status() != "alice@mac-1 is not held" {
-		t.Fatalf("status %q", h.status())
+	if len(h.op.calls) != 0 || h.status() != "" {
+		t.Fatalf("g: calls %v status %q", h.op.calls, h.status())
 	}
 	h.keys("p")
-	// bob is held: p does not release him, g does, with a task.
+	// bob is held: p lets him go.
 	h.keys("down", "p")
-	if h.status() != "bob@vps-2 is held; g releases it" {
-		t.Fatalf("status %q", h.status())
-	}
-	h.keys("g")
-	contains(t, h.frame(), "release bob@vps-2 · task (enter: none) ›")
-	h.keys("+fix the parser", "enter")
-	if h.status() != "released bob@vps-2 with its task" {
+	if h.status() != "resumed bob@vps-2" {
 		t.Fatalf("status %q", h.status())
 	}
 	// carol is paused: p resumes her; x asks before it removes her.
@@ -415,42 +405,35 @@ func TestGateKeysSteerTheSelectedAgent(t *testing.T) {
 	contains(t, h.frame(), "remove carol@mac-3 from build-42?")
 	h.keys("y")
 	want := "[gate build-42 alice@mac-1 paused" +
-		" send build-42 bob@vps-2 fix the parser gate build-42 bob@vps-2 run" +
+		" gate build-42 bob@vps-2 run" +
 		" gate build-42 carol@mac-3 run kick build-42 carol@mac-3]"
 	if fmt.Sprint(h.op.calls) != want {
 		t.Fatalf("calls\n got %v\nwant %s", h.op.calls, want)
 	}
 }
 
-func TestReleaseWithNoTaskAndFromTheDetails(t *testing.T) {
+func TestResumeFromTheDetails(t *testing.T) {
 	h := start(t, storeWithGates())
 	h.openSession()
 	h.keys("tab", "down", "down", "down", "enter")
-	contains(t, h.frame(), "agent bob@vps-2", "held: it does no work until you release it (g)")
-	h.keys("g", "enter")
-	if fmt.Sprint(h.op.calls) != "[gate build-42 bob@vps-2 run]" || h.status() != "released bob@vps-2" {
+	contains(t, h.frame(), "agent bob@vps-2", "held: it waits for the orchestrator's task (p lets it go)")
+	h.keys("p")
+	if fmt.Sprint(h.op.calls) != "[gate build-42 bob@vps-2 run]" || h.status() != "resumed bob@vps-2" {
 		t.Fatalf("calls %v status %q", h.op.calls, h.status())
 	}
 }
 
-func TestSessionKeysAndCommandsSetGatesAndHold(t *testing.T) {
+func TestSessionKeysAndCommandsSetGates(t *testing.T) {
 	h := start(t, storeWithGates())
 	h.openSession()
-	// P pauses each agent that works (alice), R resumes each paused one (carol): a held
-	// agent (bob) stays held in both cases.
+	// P pauses each agent that works (alice), R resumes each held or paused one (bob, carol).
 	h.keys("P")
 	h.keys("R")
-	// H turns the hold of the session off; the command turns it on.
-	h.keys("H")
-	h.keys(":", "+hold on", "enter")
-	// :go with no name releases each held agent; with a name and words, the words are the task.
-	h.keys(":", "+go", "enter")
-	h.keys(":", "+go carol check the tests", "enter")
+	// :resume with a name resumes that agent.
+	h.keys(":", "+resume carol", "enter")
 	want := "[gate build-42 alice@mac-1 paused" +
-		" gate build-42 carol@mac-3 run" +
-		" hold build-42 false hold build-42 true" +
-		" gate build-42 bob@vps-2 run" +
-		" send build-42 carol@mac-3 check the tests gate build-42 carol@mac-3 run]"
+		" gate build-42 bob@vps-2 run gate build-42 carol@mac-3 run" +
+		" gate build-42 carol@mac-3 run]"
 	if fmt.Sprint(h.op.calls) != want {
 		t.Fatalf("calls\n got %v\nwant %s", h.op.calls, want)
 	}
@@ -462,27 +445,30 @@ func TestSessionKeysAndCommandsSetGatesAndHold(t *testing.T) {
 	if h.status() != "alice@mac-1 is run already" {
 		t.Fatalf("status %q", h.status())
 	}
-	h.keys(":", "+hold maybe", "enter")
-	if h.status() != "usage: :hold on|off" {
-		t.Fatalf("status %q", h.status())
+	// The commands of the hold are gone.
+	for _, cmd := range []string{"go", "go bob", "hold on", "hold off"} {
+		h.keys(":", "+"+cmd, "enter")
+		if word, _, _ := strings.Cut(cmd, " "); h.status() != "unknown command :"+word+" (tab lists them)" {
+			t.Fatalf(":%s: status %q", cmd, h.status())
+		}
+	}
+	if len(h.op.calls) != 4 {
+		t.Fatalf("a command of the hold acted: %v", h.op.calls)
 	}
 }
 
-// The next thing that needs the operator includes an agent that waits for its release.
-func TestAttentionGoesToAHeldAgent(t *testing.T) {
+// A held or paused agent waits for the orchestrator or for nobody, not for the operator: `a`
+// does not go to it.
+func TestAttentionSkipsAHeldOrPausedAgent(t *testing.T) {
 	h := start(t, storeWithGates())
 	h.openSession()
 	for range 6 {
 		h.keys("a")
-		if strings.Contains(h.frame(), "agent bob@vps-2") {
-			if h.status() != "bob@vps-2 is held: g releases it" {
-				t.Fatalf("status %q", h.status())
-			}
-			return
+		if strings.Contains(h.frame(), "agent bob@vps-2") || strings.Contains(h.frame(), "agent carol@mac-3") {
+			t.Fatalf("a opened a held or paused agent:\n%s", h.frame())
 		}
 		h.keys("esc")
 	}
-	t.Fatalf("a never opened the held agent:\n%s", h.frame())
 }
 
 func TestWithdrawAsksFirst(t *testing.T) {
@@ -502,7 +488,12 @@ func TestHelpAndFiltersAndSidebarToggle(t *testing.T) {
 	contains(t, h.frame(), "coop · help · esc back", "MOVE", "STEER")
 	// The help is longer than the screen: it scrolls.
 	h.keys("pgdn")
-	contains(t, h.frame(), ":withdraw [#id]", ":go [agent] [task]", ":hold on|off")
+	contains(t, h.frame(), ":withdraw [#id]", ":pause [agent]  :resume [agent]")
+	for _, gone := range []string{":go", ":hold", "H\t", "g\t"} {
+		if strings.Contains(h.frame(), gone) {
+			t.Errorf("the help still shows %q", gone)
+		}
+	}
 	h.keys("esc")
 	contains(t, h.frame(), "coop · all sessions · transcript")
 	h.keys("[")

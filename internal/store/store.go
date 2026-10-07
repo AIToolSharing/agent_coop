@@ -58,8 +58,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 	title      TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL,
 	closed_at  TEXT NOT NULL DEFAULT '',
-	revision   INTEGER NOT NULL,
-	hold       INTEGER NOT NULL DEFAULT 1
+	revision   INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS kicks (
 	sid      TEXT NOT NULL,
@@ -89,7 +88,6 @@ CREATE TABLE IF NOT EXISTS known (
 // added lists the columns that a later version added to a table. Open adds each one that a
 // database of an earlier version does not have. The definitions are the same as in schema.
 var added = []struct{ table, column, definition string }{
-	{"sessions", "hold", "INTEGER NOT NULL DEFAULT 1"},
 	{"known", "gate", "TEXT NOT NULL DEFAULT 'run'"},
 }
 
@@ -294,11 +292,11 @@ type SessionRow struct {
 	Revision int64
 }
 
-const sessionColumns = `sid, status, title, created_at, closed_at, revision, hold`
+const sessionColumns = `sid, status, title, created_at, closed_at, revision`
 
 func scanSession(sc interface{ Scan(...any) error }) (SessionRow, error) {
 	var r SessionRow
-	err := sc.Scan(&r.SID, &r.Record.Status, &r.Record.Title, &r.Record.CreatedAt, &r.Record.ClosedAt, &r.Revision, &r.Record.Hold)
+	err := sc.Scan(&r.SID, &r.Record.Status, &r.Record.Title, &r.Record.CreatedAt, &r.Record.ClosedAt, &r.Revision)
 	return r, err
 }
 
@@ -329,9 +327,8 @@ func (s *Store) Sessions() ([]SessionRow, error) {
 	return out, rs.Err()
 }
 
-// CreateSession makes an open session. With hold, an agent that joins it for the first time is
-// held. ErrExists when there is one.
-func (s *Store) CreateSession(sid, title, at string, hold bool) (SessionRow, error) {
+// CreateSession makes an open session. ErrExists when there is one.
+func (s *Store) CreateSession(sid, title, at string) (SessionRow, error) {
 	var row SessionRow
 	err := s.tx(func(tx *sql.Tx) error {
 		var n int
@@ -345,8 +342,8 @@ func (s *Store) CreateSession(sid, title, at string, hold bool) (SessionRow, err
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(`INSERT INTO sessions (sid, status, title, created_at, closed_at, revision, hold) VALUES (?, 'open', ?, ?, '', ?, ?)`, sid, title, at, rev, hold)
-		row = SessionRow{SID: sid, Record: wire.SessionRecord{Status: "open", Title: title, CreatedAt: at, Hold: hold}, Revision: rev}
+		_, err = tx.Exec(`INSERT INTO sessions (sid, status, title, created_at, closed_at, revision) VALUES (?, 'open', ?, ?, '', ?)`, sid, title, at, rev)
+		row = SessionRow{SID: sid, Record: wire.SessionRecord{Status: "open", Title: title, CreatedAt: at}, Revision: rev}
 		return err
 	})
 	return row, err
@@ -380,31 +377,6 @@ func (s *Store) SetStatus(sid, status, at string) (row SessionRow, changed bool,
 		return nil
 	})
 	return row, changed, err
-}
-
-// SetHold sets whether the session holds an agent that joins for the first time, and gives
-// the new record. ErrNotFound for an unknown session.
-func (s *Store) SetHold(sid string, hold bool) (row SessionRow, err error) {
-	err = s.tx(func(tx *sql.Tx) error {
-		old, err := scanSession(tx.QueryRow(`SELECT `+sessionColumns+` FROM sessions WHERE sid = ?`, sid))
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		if err != nil {
-			return err
-		}
-		rev, err := bump(tx)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(`UPDATE sessions SET hold = ?, revision = ? WHERE sid = ?`, hold, rev, sid); err != nil {
-			return err
-		}
-		row = old
-		row.Record.Hold, row.Revision = hold, rev
-		return nil
-	})
-	return row, err
 }
 
 // DeleteSession removes a closed session with its events, kicks and known agents. It gives
@@ -530,7 +502,7 @@ type KnownRow struct {
 	State   string
 	Note    string
 	SeenSeq int64
-	Gate    string // run, held or paused
+	Gate    string // run or paused
 }
 
 const knownColumns = `sid, agent, state, note, seen_seq, gate`
@@ -559,7 +531,7 @@ func (s *Store) Known(sid string) ([]KnownRow, error) {
 	return out, rs.Err()
 }
 
-// SetGate sets the gate of one known agent of sid: run, held or paused. changed is false when
+// SetGate sets the gate of one known agent of sid: run or paused. changed is false when
 // the agent is not known or has that gate already.
 func (s *Store) SetGate(sid, agent, gate string) (changed bool, err error) {
 	res, err := s.db.Exec(`UPDATE known SET gate = ? WHERE sid = ? AND agent = ? AND gate <> ?`, gate, sid, agent, gate)

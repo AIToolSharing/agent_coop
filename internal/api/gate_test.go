@@ -12,7 +12,7 @@ import (
 // agent's hook asks before each tool call.
 func TestGate(t *testing.T) {
 	high := limit{burst: 10_000, perSecond: 10_000}
-	h := startHub(t, limits{join: high, msg: high, activity: high}, options{autoCreate: true, holdNew: true})
+	h := startHub(t, limits{join: high, msg: high, activity: high}, options{autoCreate: true})
 	mac := api{base: h.base, token: h.token("mac-1")}
 	adm := admin{h.base, h.operatorToken("op")}
 	gateOf := func(t *testing.T, sid, agent string) string {
@@ -33,26 +33,34 @@ func TestGate(t *testing.T) {
 	}
 	isNotice := eventIs("notice")
 
-	t.Run("a new agent is held before and after its first join, until the operator releases it", func(t *testing.T) {
-		sid := "hold-1"
-		// Before the join, and before the session exists: a tool call must not get through.
-		if g := gateOf(t, sid, "alice"); g != "held" {
-			t.Fatalf("gate before the join %q, want held", g)
+	t.Run("a new agent may work before and after its first join; a pause stops it, a release lets it go on", func(t *testing.T) {
+		sid := "new-1"
+		// Before the join, and before the session exists: a tool call gets through.
+		if g := gateOf(t, sid, "alice"); g != "run" {
+			t.Fatalf("gate before the join %q, want run", g)
 		}
 		a := mac.stream(sid, "alice")
 		defer a.close()
-		if j := data[joinedEvent](t, a.wait(t, nil)); j.Gate != "held" {
-			t.Fatalf("joined %+v, want gate held", j)
+		if j := data[joinedEvent](t, a.wait(t, nil)); j.Gate != "run" {
+			t.Fatalf("joined %+v, want gate run", j)
 		}
-		if g := gateOf(t, sid, "alice"); g != "held" {
-			t.Fatalf("gate after the join %q, want held", g)
+		if g := gateOf(t, sid, "alice"); g != "run" {
+			t.Fatalf("gate after the join %q, want run", g)
 		}
-		if got := gates(sid, "alice@mac-1"); len(got) != 1 || got[0] != "held" {
-			t.Fatalf("gate records %v, want [held]", got)
+		if got := gates(sid, "alice@mac-1"); len(got) != 0 {
+			t.Fatalf("gate records %v, want none", got)
 		}
-		// The joined event told the agent; it gets no notice for the hold at the join.
+		// The join gives no notice.
 		a.none(t, isNotice, 300*time.Millisecond)
-		// A held agent can still talk: it must be able to ask the operator.
+
+		wantStatus(t, 204)(adm.gate(sid, "alice@mac-1", "paused"))
+		if n := data[noticeEvent](t, a.wait(t, isNotice)); n.Kind != "paused" {
+			t.Fatalf("notice %+v, want paused", n)
+		}
+		if g := gateOf(t, sid, "alice"); g != "paused" {
+			t.Fatalf("gate after the pause %q, want paused", g)
+		}
+		// A paused agent can still talk: it must be able to ask the operator.
 		wantStatus(t, 200)(mac.send(sid, "alice", "operator", "what is my task?", ""))
 
 		wantStatus(t, 204)(adm.gate(sid, "alice@mac-1", "run"))
@@ -62,6 +70,9 @@ func TestGate(t *testing.T) {
 		if g := gateOf(t, sid, "alice"); g != "run" {
 			t.Fatalf("gate after the release %q, want run", g)
 		}
+		if got := gates(sid, "alice@mac-1"); len(got) != 2 || got[0] != "paused" || got[1] != "run" {
+			t.Fatalf("gate records %v, want [paused run]", got)
+		}
 	})
 
 	t.Run("pause and resume; a repeat leaves no record; a new process keeps the gate", func(t *testing.T) {
@@ -69,17 +80,17 @@ func TestGate(t *testing.T) {
 		a := mac.stream(sid, "alice")
 		a.wait(t, nil)
 		wantStatus(t, 204)(adm.gate(sid, "alice@mac-1", "run"))
-		a.wait(t, isNotice)
+		a.none(t, isNotice, 300*time.Millisecond)
 		wantStatus(t, 204)(adm.gate(sid, "alice@mac-1", "paused"))
 		if n := data[noticeEvent](t, a.wait(t, isNotice)); n.Kind != "paused" {
 			t.Fatalf("notice %+v, want paused", n)
 		}
 		wantStatus(t, 204)(adm.gate(sid, "alice@mac-1", "paused"))
-		if got := gates(sid, "alice@mac-1"); len(got) != 3 {
-			t.Fatalf("gate records %v, want [held run paused]", got)
+		if got := gates(sid, "alice@mac-1"); len(got) != 1 {
+			t.Fatalf("gate records %v, want [paused]", got)
 		}
 		// The agent's process ends and a new one starts: it is still paused, and the join
-		// writes no new hold.
+		// writes no record.
 		a.close()
 		if err := a.ended(0); err != nil {
 			t.Fatal(err)
@@ -92,8 +103,8 @@ func TestGate(t *testing.T) {
 		if j := data[joinedEvent](t, a2.wait(t, nil)); j.Gate != "paused" {
 			t.Fatalf("joined again %+v, want gate paused", j)
 		}
-		if got := gates(sid, "alice@mac-1"); len(got) != 3 {
-			t.Fatalf("gate records after the new join %v, want 3", got)
+		if got := gates(sid, "alice@mac-1"); len(got) != 1 {
+			t.Fatalf("gate records after the new join %v, want 1", got)
 		}
 	})
 
@@ -137,15 +148,13 @@ func TestGate(t *testing.T) {
 		}
 	})
 
-	t.Run("a session with hold off lets a new agent work; the session record shows the setting", func(t *testing.T) {
-		sid := "auto-1"
-		info := parse[wire.SessionInfo](t, wantStatus(t, 200)(adm.create(sid, "")))
-		if !info.Hold {
-			t.Fatalf("a new session of a hub that holds new agents: %+v", info)
+	t.Run("a session that the operator made lets a new agent work", func(t *testing.T) {
+		sid := "made-1"
+		if info := parse[wire.SessionInfo](t, wantStatus(t, 200)(adm.create(sid, ""))); info.Status != "open" {
+			t.Fatalf("a new session: %+v", info)
 		}
-		wantStatus(t, 204)(adm.hold(sid, false))
 		if g := gateOf(t, sid, "carol"); g != "run" {
-			t.Fatalf("gate before the join, hold off: %q", g)
+			t.Fatalf("gate before the join: %q", g)
 		}
 		c := mac.stream(sid, "carol")
 		defer c.close()
@@ -155,21 +164,122 @@ func TestGate(t *testing.T) {
 		if got := gates(sid, "carol@mac-1"); len(got) != 0 {
 			t.Fatalf("gate records %v, want none", got)
 		}
-		wantStatus(t, 404)(adm.hold("no-such-session", true))
 	})
 
-	t.Run("a forgotten agent is new again: held at its next join", func(t *testing.T) {
+	// The hold: only a session with an orchestrator in it holds a new agent, and only while
+	// the orchestrator is there. The operator never has to release an agent.
+	t.Run("an orchestrator in the session holds each new agent until it releases it", func(t *testing.T) {
+		sid := "orch-1"
+		orch := api{base: h.base, token: h.roleToken("orch", wire.RoleOrchestrator)}
+		// No orchestrator yet: a new agent may work before and after its join.
+		if g := gateOf(t, sid, "early"); g != "run" {
+			t.Fatalf("gate with no orchestrator %q, want run", g)
+		}
+		early := mac.stream(sid, "early")
+		defer early.close()
+		if j := data[joinedEvent](t, early.wait(t, nil)); j.Gate != "run" {
+			t.Fatalf("early joined %+v, want gate run", j)
+		}
+		pm := orch.stream(sid, "pm")
+		if j := data[joinedEvent](t, pm.wait(t, nil)); j.Gate != "run" {
+			t.Fatalf("the orchestrator joined %+v, want gate run", j)
+		}
+		// The agent that was in the session already works on; a new one is held, before and
+		// after its join, and its hold is on record.
+		if g := gateOf(t, sid, "early"); g != "run" {
+			t.Fatalf("early with an orchestrator %q, want run", g)
+		}
+		if g := gateOf(t, sid, "alice"); g != "held" {
+			t.Fatalf("gate before the join %q, want held", g)
+		}
+		a := mac.stream(sid, "alice")
+		defer a.close()
+		if j := data[joinedEvent](t, a.wait(t, nil)); j.Gate != "held" {
+			t.Fatalf("joined %+v, want gate held", j)
+		}
+		if got := gates(sid, "alice@mac-1"); len(got) != 1 || got[0] != "held" {
+			t.Fatalf("gate records %v, want [held]", got)
+		}
+		a.none(t, isNotice, 300*time.Millisecond)
+		// A held agent can still talk.
+		wantStatus(t, 200)(mac.send(sid, "alice", "pm@orch", "what is my task?", ""))
+		// The orchestrator releases it; the record names the orchestrator.
+		wantStatus(t, 204)(admin{h.base, orch.token}.gate(sid, "alice@mac-1", "run"))
+		if n := data[noticeEvent](t, a.wait(t, isNotice)); n.Kind != "released" || n.By != "orch" {
+			t.Fatalf("notice %+v, want released by orch", n)
+		}
+		if g := gateOf(t, sid, "alice"); g != "run" {
+			t.Fatalf("gate after the release %q, want run", g)
+		}
+		if got := gates(sid, "alice@mac-1"); len(got) != 2 || got[1] != "run" {
+			t.Fatalf("gate records %v, want [held run]", got)
+		}
+		for _, e := range h.events(sid) {
+			if e.Kind == wire.EventActivity && e.From == "alice@mac-1" && e.Activity.Kind == "gate" && e.Activity.Gate == "run" && e.Activity.By != "orch" {
+				t.Fatalf("the release record %+v does not name the orchestrator", e.Activity)
+			}
+		}
+		// A second worker is held. The orchestrator's process ends and starts again under
+		// the same name: nobody is released. Then the orchestrator leaves for good: the hub
+		// releases the held worker, says why, and names the orchestrator. The next new agent
+		// is not held.
+		carl := mac.stream(sid, "carl")
+		defer carl.close()
+		if j := data[joinedEvent](t, carl.wait(t, nil)); j.Gate != "held" {
+			t.Fatalf("carl joined %+v, want gate held", j)
+		}
+		pm2 := orch.stream(sid, "pm", withInstance(pm.instance))
+		pm2.wait(t, nil)
+		carl.none(t, isNotice, 300*time.Millisecond)
+		if g := gateOf(t, sid, "carl"); g != "held" {
+			t.Fatalf("carl after the orchestrator came back %q, want held", g)
+		}
+		pm2.close()
+		if err := pm2.ended(0); err != nil {
+			t.Fatal(err)
+		}
+		// First the leave of the peer, then the release that it caused.
+		if n := data[noticeEvent](t, carl.wait(t, isNotice)); n.Kind != "peer_left" || n.Peer != "pm@orch" {
+			t.Fatalf("notice %+v, want peer_left pm@orch", n)
+		}
+		if n := data[noticeEvent](t, carl.wait(t, isNotice)); n.Kind != "released" || n.Peer != "pm@orch" || n.By != "" {
+			t.Fatalf("notice %+v, want released with the peer pm@orch", n)
+		}
+		if g := gateOf(t, sid, "carl"); g != "run" {
+			t.Fatalf("carl after the orchestrator left %q, want run", g)
+		}
+		released := 0
+		for _, e := range h.events(sid) {
+			if e.Kind == wire.EventActivity && e.From == "carl@mac-1" && e.Activity.Kind == "gate" && e.Activity.Gate == "run" {
+				released++
+				if e.Activity.Reason != "orchestrator_left" || e.Activity.From != "pm@orch" {
+					t.Fatalf("release record %+v, want the reason orchestrator_left from pm@orch", e.Activity)
+				}
+			}
+		}
+		if released != 1 {
+			t.Fatalf("%d release records of carl, want 1", released)
+		}
+		if g := gateOf(t, sid, "late"); g != "run" {
+			t.Fatalf("gate after the orchestrator left %q, want run", g)
+		}
+	})
+
+	t.Run("a forgotten agent is new again: its pause is gone at its next join", func(t *testing.T) {
 		sid := "forget-1"
 		a := mac.stream(sid, "alice")
 		a.wait(t, nil)
-		wantStatus(t, 204)(adm.gate(sid, "alice@mac-1", "run"))
+		wantStatus(t, 204)(adm.gate(sid, "alice@mac-1", "paused"))
 		a.close()
 		if err := a.ended(0); err != nil {
 			t.Fatal(err)
 		}
+		if g := gateOf(t, sid, "alice"); g != "paused" {
+			t.Fatalf("gate before the forget %q, want paused", g)
+		}
 		wantStatus(t, 204)(adm.forget(sid, "alice@mac-1"))
-		if g := gateOf(t, sid, "alice"); g != "held" {
-			t.Fatalf("gate after the forget %q, want held", g)
+		if g := gateOf(t, sid, "alice"); g != "run" {
+			t.Fatalf("gate after the forget %q, want run", g)
 		}
 	})
 
@@ -198,7 +308,7 @@ func TestGate(t *testing.T) {
 		wantStatus(t, 404)(adm.gate("gate-bad", "nobody@mac-1", "run"))
 		wantStatus(t, 422)(adm.gate("gate-bad", "alice@mac-1", "stopped"))
 		wantStatus(t, 422)(adm.gate("gate-bad", "alice", "run"))
-		wantStatus(t, 422)(adm.req("POST", "/sessions/gate-bad/hold", map[string]any{}))
+		wantStatus(t, 404)(adm.req("POST", "/sessions/gate-bad/hold", map[string]any{"hold": false}))
 		wantStatus(t, 422)(mac.req("POST", "/v1/sessions/gate-bad/gate", map[string]any{"agent": "operator"}))
 		// An operator token cannot ask as an agent, and a machine token cannot set a gate.
 		wantStatus(t, 403)(api{base: h.base, token: adm.token}.gate("gate-bad", "alice"))

@@ -23,8 +23,9 @@ yourself. Ask the user (operator) only for a decision that only the user can mak
 payment, or something that cannot be undone outside the task.
 Start each agent yourself: coop start -a <name> <machine> <directory> <session> (it runs on the
 machine as coop --agent <name> claude <session>, with no permission prompts), or on this machine
-coop --agent <name> claude <session> -p "<task>" in the background. Then release it at once with
-steer (release, the agent, and its task). Do not ask the user to start or release agents.
+coop --agent <name> claude <session> -p "<task>" in the background. A worker that joins while you
+are in the session is held until you release it: release it at once with steer (release, the
+agent, and its task). Do not ask the user to start or release agents.
 steer also pauses, resumes and stops agents, and creates, closes and reopens sessions.
 read gives every message of a session, also those between two other agents; they do not reach you
 as pushes. sessions gives each agent's state and note.
@@ -36,12 +37,12 @@ first, then each agent that waits for your answer (sessions shows waiting_on), t
 When you have nothing else to do, call wait.`
 
 // steerActions are the actions of steer. The first five take an agent.
-var steerActions = []string{"release", "pause", "resume", "stop", "allow", "forget", "hold_on", "hold_off", "create_session", "close_session", "reopen_session"}
+var steerActions = []string{"release", "pause", "resume", "stop", "allow", "forget", "create_session", "close_session", "reopen_session"}
 
 func init() {
 	descriptions["sessions"] = "List the shared sessions, or one session, with each agent: its state and note, and whether it may work (gate run, held or paused)."
 	descriptions["read"] = "Read the messages of a session, oldest first: each message, also those between two other agents. Give after (a message id) to get only newer ones."
-	descriptions["steer"] = "Act for the user. release, pause, resume: the gate of an agent (no agent: each agent of the session). stop removes an agent, allow lets a removed agent back, forget drops one that left. hold_on and hold_off: whether new agents of the session wait for a release. create_session, close_session, reopen_session. task (with release) is sent to the agent as your message."
+	descriptions["steer"] = "Act for the user. release, pause, resume: the gate of an agent (no agent: each agent of the session). stop removes an agent, allow lets a removed agent back, forget drops one that left. create_session, close_session, reopen_session. task (with release) is sent to the agent as your message."
 	schemas["sessions"] = objectSchema(nil, map[string]any{
 		"session": stringSchema("Only this session"),
 	})
@@ -230,8 +231,6 @@ func (s *shim) steer(ctx context.Context, in steerIn) (any, error) {
 		err = a.Unkick(ctx, sid, who)
 	case "forget":
 		err = a.Forget(ctx, sid, who)
-	case "hold_on", "hold_off":
-		err = a.SetHold(ctx, sid, in.Action == "hold_on")
 	case "create_session":
 		err = a.CreateSession(ctx, sid)
 	case "close_session":

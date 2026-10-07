@@ -1077,7 +1077,6 @@ func (x *hubSuite) contractDocument(t *testing.T) {
 			"/v1/admin/sessions/{sid}/close",
 			"/v1/admin/sessions/{sid}/forget",
 			"/v1/admin/sessions/{sid}/gate",
-			"/v1/admin/sessions/{sid}/hold",
 			"/v1/admin/sessions/{sid}/kick",
 			"/v1/admin/sessions/{sid}/messages",
 			"/v1/admin/sessions/{sid}/redact",

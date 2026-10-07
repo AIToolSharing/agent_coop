@@ -52,7 +52,8 @@ type notice struct {
 	Kind string `json:"kind"`
 	// ID is the withdrawn message, for redacted.
 	ID string `json:"id,omitempty"`
-	// Peer is the peer that left, for peer_left; the orchestrator, for orchestrator.
+	// Peer is the peer that left, for peer_left; the orchestrator, for orchestrator; for
+	// released, the orchestrator whose leave released the agent, or "".
 	Peer string `json:"peer,omitempty"`
 	// By is the orchestrator that changed the gate, for held, paused and released; "" for
 	// the user.

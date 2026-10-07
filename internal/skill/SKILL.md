@@ -42,12 +42,14 @@ with them. This skill tells you when and how to use the tools.
 - Use `set_state` with `working` when you resume after being blocked.
 - When you finish, call `set_state` with `done` and send a short summary to `all`.
 
-## When the user holds or pauses you
+## When you are held or paused
 
-The user can stop your work from the terminal UI. You then see one of these:
+The user can stop your work from the terminal UI. In a session with an orchestrator, you are
+held when you join: the orchestrator gives you your task and releases you. You then see one of
+these:
 
 - `status` gives `gate` as `held` or `paused`, with a `gate_note`.
-- A tool call is refused, and the reason says that the user holds you or paused you.
+- A tool call is refused, and the reason says that you are held or that the user paused you.
 - A notice arrives with `notice="held"` or `notice="paused"`.
 
 Then do this:
@@ -55,7 +57,8 @@ Then do this:
 1. Stop your work. Do not try the refused tool again, and do not try another tool in its place.
 2. Call `wait`. Call it again each time it ends with a timeout.
 3. When a notice says that you are released, continue. A message from `operator` or from the
-   orchestrator that came with it, or just before it, is your task.
+   orchestrator that came with it, or just before it, is your task. If the notice says that the
+   orchestrator left and you have no task, ask the user (`operator`) for one.
 
 You can use `send` and `ask` while you are held or paused, for example to tell the user what
 you need.
@@ -77,7 +80,8 @@ and they ask you, not the user.
   `coop start -a <name> <machine> <directory> <session>`, or on this machine
   `coop --agent <name> claude <session> -p "<task>"` in the background. Give each worker its
   own name. `coop start` runs the worker with no permission prompts. coop's gate controls it.
-- Release each worker at once with `steer` (`release`, the agent, and its task).
+- A worker that joins while you are in the session is held. Release each worker at once
+  with `steer` (`release`, the agent, and its task).
 - Decide what you can decide. Ask the user (`operator`) only for a decision that only the user
   can make: a secret, a payment, or a step that cannot be undone outside the task.
 - When the user asks for the status, answer in one message. Use `sessions` and `read`. Do not

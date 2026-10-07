@@ -232,29 +232,8 @@ func TestGateOfAKnownAgent(t *testing.T) {
 	}
 }
 
-func TestHoldOfASession(t *testing.T) {
-	s, _ := open(t)
-	if row := must(s.CreateSession("held", "", at, true)); !row.Record.Hold {
-		t.Fatal("CreateSession with hold gave a record without it")
-	}
-	if row := must(s.CreateSession("free", "", at, false)); row.Record.Hold {
-		t.Fatal("CreateSession without hold gave a record with it")
-	}
-	before, _ := must2(s.Session("held"))
-	row := must(s.SetHold("held", false))
-	if row.Record.Hold || row.Revision <= before.Revision {
-		t.Fatalf("SetHold: %+v, revision before %d", row, before.Revision)
-	}
-	if got, _ := must2(s.Session("held")); got.Record.Hold || got.Record.Status != "open" {
-		t.Fatalf("after SetHold: %+v", got)
-	}
-	if _, err := s.SetHold("nope", true); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("SetHold of an unknown session: %v", err)
-	}
-}
-
-// A database of a version before the gate has no hold and no gate column. Open adds them:
-// a session then holds new agents, and an agent that the hub knows may work.
+// A database of a version before the gate has no gate column. Open adds it: an agent that
+// the hub knows may work.
 func TestOpenAddsTheColumnsOfALaterVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "coop.db")
 	old, err := sql.Open("sqlite", path)
@@ -281,7 +260,7 @@ func TestOpenAddsTheColumnsOfALaterVersion(t *testing.T) {
 		}
 		row, _ := must2(s.Session("s1"))
 		k, _ := must2(s.KnownAgent("s1", "alice@mac-1"))
-		if !row.Record.Hold || k.Gate != "run" || k.SeenSeq != 7 {
+		if row.Record.Status != "open" || k.Gate != "run" || k.SeenSeq != 7 {
 			t.Fatalf("session %+v, known %+v", row, k)
 		}
 		if err := s.Close(); err != nil {
@@ -315,7 +294,7 @@ func TestRevisionsIncrease(t *testing.T) {
 			sid := sids[i%len(sids)]
 			switch op {
 			case 0:
-				row, err := s.CreateSession(sid, "", at, false)
+				row, err := s.CreateSession(sid, "", at)
 				if errors.Is(err, store.ErrExists) {
 					continue
 				}
@@ -355,14 +334,14 @@ func TestSessions(t *testing.T) {
 	if _, ok, _ := s.Session("x"); ok {
 		t.Fatal("session before create")
 	}
-	row := must(s.CreateSession("x", "Title", at, false))
+	row := must(s.CreateSession("x", "Title", at))
 	if row.SID != "x" || row.Record.Status != "open" || row.Record.Title != "Title" || row.Record.CreatedAt != at || row.Record.ClosedAt != "" {
 		t.Fatalf("created: %+v", row)
 	}
-	if _, err := s.CreateSession("x", "", at, false); !errors.Is(err, store.ErrExists) {
+	if _, err := s.CreateSession("x", "", at); !errors.Is(err, store.ErrExists) {
 		t.Fatalf("second create: %v", err)
 	}
-	must(s.CreateSession("a", "", at, false))
+	must(s.CreateSession("a", "", at))
 	list := must(s.Sessions())
 	if len(list) != 2 || list[0].SID != "a" || list[1].SID != "x" {
 		t.Fatalf("Sessions: %+v", list)

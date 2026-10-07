@@ -158,9 +158,6 @@ type SessionRecord struct {
 	Title     string `json:"title,omitempty"`
 	CreatedAt string `json:"created_at"`
 	ClosedAt  string `json:"closed_at,omitempty"`
-	// Hold: an agent that joins the session for the first time is held until the operator
-	// releases it.
-	Hold bool `json:"hold"`
 }
 
 // SessionInfo is one entry of GET /v1/admin/sessions: the id with its record.
@@ -201,7 +198,7 @@ type PresenceRecord struct {
 // Gates: whether the operator lets an agent work.
 const (
 	GateRun    = "run"
-	GateHeld   = "held"   // not released yet after its first join
+	GateHeld   = "held"   // waits for the orchestrator of its session to release it
 	GatePaused = "paused" // stopped by the operator for a time
 )
 
@@ -264,7 +261,9 @@ type Activity struct {
 	TimeoutS int    `json:"timeout_s,omitempty"`
 	// wait_end: message timeout cancelled
 	Result string `json:"result,omitempty"`
-	// gate: run held paused. The hub writes it when the gate of the agent changes.
+	// gate: run held paused. The hub writes it when the gate of the agent changes. A release
+	// with the reason orchestrator_left is the hub's: the last orchestrator of the session
+	// left, and From names it. The agent then waits for nobody.
 	Gate string `json:"gate,omitempty"`
 	// By is the orchestrator token that changed the gate; "" for the operator and the hub.
 	By string `json:"by,omitempty"`
@@ -430,7 +429,11 @@ func validActivity(a Activity) bool {
 		// The operator dropped an agent that left from the lists. The hub writes it.
 		return true
 	case "gate":
-		return IsGate(a.Gate) && (a.By == "" || IsToken(a.By))
+		if a.Reason == "orchestrator_left" {
+			_, ok := ParseAddress(a.From)
+			return a.Gate == GateRun && a.By == "" && ok
+		}
+		return a.Reason == "" && IsGate(a.Gate) && (a.By == "" || IsToken(a.By))
 	}
 	return false
 }

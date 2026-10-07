@@ -850,7 +850,7 @@ func TestTheGateShowsInStatusAndArrivesAsANotice(t *testing.T) {
 	h.mu.Unlock()
 	b := start(t, options(h, "vps-2", "s", "bob", true))
 	s := joined(t, b)
-	if s["gate"] != "held" || !strings.Contains(fmt.Sprint(s["gate_note"]), "holds you") {
+	if s["gate"] != "held" || !strings.Contains(fmt.Sprint(s["gate_note"]), "You are held") {
 		t.Fatalf("status of a held agent: %v", s)
 	}
 	if q := h.lastQuery(); strings.Contains(q, "gated") {
@@ -925,6 +925,13 @@ func TestNothingAnAgentSeesNamesHowTheServiceWorks(t *testing.T) {
 		if text := noticeText(notice{Kind: kind, ID: "1", Peer: "a@m"}); text == "" || forbiddenRE.MatchString(text) {
 			t.Fatalf("notice %s: %q", kind, text)
 		}
+	}
+	// A release because the orchestrator left says so, and sends the agent to the user.
+	if text := noticeText(notice{Kind: noticeReleased, Peer: "pm@orch"}); !strings.Contains(text, "pm@orch left") || !strings.Contains(text, "ask the user") {
+		t.Fatalf("release by a leave: %q", text)
+	}
+	if text := noticeText(notice{Kind: noticeReleased}); text != "The user released you. You may work now." {
+		t.Fatalf("release by the user: %q", text)
 	}
 	for _, l := range []link{{kind: linkJoining}, {kind: linkNoSession}, {kind: linkClosed}, {kind: linkRemoved}, {kind: linkRefused}, {kind: linkUnreachable}} {
 		if text := reason(false, l); text == "" || forbiddenRE.MatchString(text) {

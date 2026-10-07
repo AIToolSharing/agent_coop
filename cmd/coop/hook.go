@@ -86,7 +86,7 @@ func denyOutput(reason string) []byte {
 	return b
 }
 
-// errNoGate: the hub is of a version that has no gate. No operator can hold the agent there.
+// errNoGate: the hub is of a version that has no gate. No operator can pause the agent there.
 var errNoGate = errors.New("the hub has no gate")
 
 // errAuth: the hub refused the token. Unlike a hub that is down, the user must fix this.
@@ -185,8 +185,8 @@ func recall(file string) string {
 // gate lets each call pass.
 //
 // When the hub gives no answer, err says why, and the last answer of the hub decides (memory
-// is the directory that holds it). An agent that the user holds, paused or removed stays
-// refused: a hub that stops must not release it. Each other agent works on: a hub that is
+// is the directory that holds it). An agent that the user paused or removed stays refused: a
+// hub that stops must not release it. Each other agent works on: a hub that is
 // down must not stop it.
 func pretool(ctx context.Context, in hookInput, env map[string]string, cfg config.Config, client *http.Client, memory string) (string, error) {
 	if env["COOP_GATE"] == "off" || cfg.Session == "" || cfg.URL == "" || cfg.Token == "" {

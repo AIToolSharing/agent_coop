@@ -311,9 +311,9 @@ func TestAgentsThatLeftGoFromTheSidebar(t *testing.T) {
 	}
 }
 
-// A held or paused agent shows its gate in place of its own state, and counts as something
-// that needs the operator while it is held. An agent with no gate hook shows "soft": the gate
-// is only advice to it. The name stays whole.
+// A held or paused agent shows its gate in place of its own state. It does not need the
+// operator. An agent with no gate hook shows "soft": the gate is only advice to it. The name
+// stays whole.
 func TestTheSidebarShowsTheGate(t *testing.T) {
 	s := store()
 	now := modeltest.Now
@@ -328,9 +328,9 @@ func TestTheSidebarShowsTheGate(t *testing.T) {
 	agents := view.Listed(v, now)
 	sums := view.Summaries(s, now)
 	width := view.SidebarWidth(sums, agents, 40, now)
-	sb := view.RenderSidebar(sums, agents, view.Selection{SID: "build-42", Cursor: -1, Hold: true}, width, now)
+	sb := view.RenderSidebar(sums, agents, view.Selection{SID: "build-42", Cursor: -1}, width, now)
 	got := strings.Join(texts(sb.Rendered), "\n")
-	for _, want := range []string{"new agents are held (H)", "● alice@mac-1 working", "● bob@vps-2 held", "● carol@mac-3 paused (soft) ⏳"} {
+	for _, want := range []string{"● alice@mac-1 working", "● bob@vps-2 held", "● carol@mac-3 paused (soft) ⏳"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in\n%s", want, got)
 		}
@@ -338,26 +338,14 @@ func TestTheSidebarShowsTheGate(t *testing.T) {
 	if strings.Contains(got, "bob@vps-2 held (soft)") {
 		t.Errorf("a gated agent shows as soft:\n%s", got)
 	}
-	sb = view.RenderSidebar(sums, agents, view.Selection{SID: "build-42", Cursor: -1}, width, now)
-	if got := strings.Join(texts(sb.Rendered), "\n"); !strings.Contains(got, "new agents start at once (H)") {
-		t.Errorf("hold off:\n%s", got)
-	}
-	// The attention line counts the held agent, not the paused one.
-	items := view.Attention(v, now)
-	held := 0
-	for _, it := range items {
-		if it.Kind == "held" {
-			held++
-			if it.Address != "bob@vps-2" || view.Describe(it) != "bob@vps-2 is held: g releases it" {
-				t.Errorf("held item %+v: %s", it, view.Describe(it))
-			}
+	// A held or paused agent does not need the operator.
+	for _, it := range view.Attention(v, now) {
+		if it.Address == "bob@vps-2" || it.Address == "carol@mac-3" {
+			t.Errorf("a held or paused agent needs the operator: %+v", it)
 		}
 	}
-	if line := view.Plain(view.RenderAttention(items, now)); held != 1 || !strings.Contains(line, "1 held") {
-		t.Errorf("%d held items, line %q", held, line)
-	}
 	// The details say what the gate means, and that carol has no gate hook.
-	if lines := strings.Join(texts(view.RenderAgent(v, "bob@vps-2", opts(110))), "\n"); !strings.Contains(lines, "held: it does no work until you release it (g)") || strings.Contains(lines, "no gate:") {
+	if lines := strings.Join(texts(view.RenderAgent(v, "bob@vps-2", opts(110))), "\n"); !strings.Contains(lines, "held: it waits for the orchestrator's task (p lets it go)") || strings.Contains(lines, "no gate:") {
 		t.Errorf("details of bob:\n%s", lines)
 	}
 	if lines := strings.Join(texts(view.RenderAgent(v, "carol@mac-3", opts(110))), "\n"); !strings.Contains(lines, "paused: it does no work until you resume it (p)") || !strings.Contains(lines, "no gate: this agent was not started with coop claude") {

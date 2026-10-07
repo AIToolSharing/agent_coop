@@ -126,8 +126,6 @@ type Sidebar struct {
 type Selection struct {
 	SID    string
 	Cursor int // -1 when the sidebar has no focus
-	// Hold is the hold setting of the shown session: new agents wait for a release.
-	Hold bool
 }
 
 // SidebarWidth is the narrowest width that shows every row whole, at most maxWidth.
@@ -198,11 +196,6 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 	}
 	add(Line{S("")}, nil)
 	add(Line{Styled("AGENTS · "+sel.SID, Style{Bold: true, Dim: true})}, nil)
-	if sel.Hold {
-		add(Line{Dim("  new agents are held (H)")}, nil)
-	} else {
-		add(Line{Dim("  new agents start at once (H)")}, nil)
-	}
 	if len(agents) == 0 {
 		add(Line{Dim("  none yet")}, nil)
 	}

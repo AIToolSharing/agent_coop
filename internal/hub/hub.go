@@ -88,9 +88,6 @@ type Options struct {
 	// AutoCreate lets the first join of an unknown session create it, open. A closed session
 	// stays closed.
 	AutoCreate bool
-	// HoldNew is the hold setting of a session that the hub makes: an agent that joins such a
-	// session for the first time is held until the operator releases it.
-	HoldNew bool
 	// Ping is the interval of the SSE ping, and of the check of each live connection's token
 	// and session. Zero means 15 s.
 	Ping time.Duration
@@ -140,6 +137,8 @@ type Message struct {
 type Notice struct {
 	Kind string `json:"kind"` // kicked closed reopened redacted peer_left held paused released
 	ID   string `json:"id,omitempty"`
+	// Peer is the peer that left, for peer_left; for released, the orchestrator whose leave
+	// released the agent, or "".
 	Peer string `json:"peer,omitempty"`
 	// By is the orchestrator token that changed the gate, for held, paused and released.
 	By string `json:"by,omitempty"`
@@ -404,7 +403,7 @@ type Joined struct {
 	// CatchUpUntil is the last sequence that existed at the join; events up to it come from
 	// the store, later ones from the connection.
 	CatchUpUntil int64
-	// hold: this is the agent's first join, and the session holds new agents.
+	// hold: this is the agent's first join, and an orchestrator is in the session.
 	hold bool
 }
 
@@ -447,10 +446,10 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 		// A new process of an agent the hub knows gets what the agent missed.
 		startSeq = known.SeenSeq + 1
 	}
-	// An agent that the hub does not know starts held when the session holds new agents. An
-	// orchestrator does not: it releases the others.
+	// An agent that the hub does not know starts held when an orchestrator is in the session.
+	// An orchestrator does not: it releases the others.
 	trusted := q.Role == wire.RoleOrchestrator
-	gate := gateOf(gateInput{Known: isKnown, Gate: known.Gate, Hold: row.Record.Hold, Trusted: trusted})
+	gate := gateOf(gateInput{Known: isKnown, Gate: known.Gate, Hold: h.orchestratorInLocked(sid), Trusted: trusted})
 	key := wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: me})
 	old := h.conns[key]
 	if old != nil && old.instance != q.Instance {
@@ -507,7 +506,7 @@ func (h *Hub) Run(ctx context.Context, j *Joined, sink Sink) {
 			Kind: "joined", Host: c.host, Cwd: c.cwd, Client: c.client, At: c.joinedAt,
 		}}, true, nil)
 		if err == nil && j.hold {
-			// The first join in a session that holds new agents: record the hold. The agent
+			// The first join in a session with an orchestrator: record the hold. The agent
 			// gets no notice of it: the joined event tells it the gate.
 			c.quiet, err = h.recordGateLocked(c.sid, me, wire.GateHeld, "")
 		}
@@ -601,7 +600,11 @@ func (h *Hub) deliver(c *Conn, it item, sink Sink) bool {
 			return write("notice", Notice{Kind: "redacted", ID: e.ID, At: e.At}, id)
 		case wire.EventActivity:
 			if e.Activity.Kind == "gate" {
-				return write("notice", Notice{Kind: gateNotice(e.Activity.Gate), By: e.Activity.By, At: e.Activity.At}, id)
+				n := Notice{Kind: gateNotice(e.Activity.Gate), By: e.Activity.By, At: e.Activity.At}
+				if e.Activity.Reason == "orchestrator_left" {
+					n.Peer = e.Activity.From
+				}
+				return write("notice", n, id)
 			}
 			return write("notice", Notice{Kind: "peer_left", Peer: e.From, At: e.Activity.At}, id)
 		}
@@ -664,6 +667,36 @@ func (h *Hub) leave(c *Conn) {
 	}
 	if rev, err := h.st.NextRevision(); err == nil {
 		h.feedAll("presence", presenceOut{Kind: "presence", Key: c.key, Revision: rev}, "")
+	}
+	if c.orchestrator && !h.orchestratorInLocked(c.sid) {
+		h.releaseHeldLocked(c.sid, c.me.String())
+	}
+}
+
+// releaseHeldLocked releases each held agent of a session whose last orchestrator left (an
+// orchestrator that comes back under the same name replaces its connection and does not
+// leave). Nobody would release them: the record says why, and the notice names the
+// orchestrator, so that the agent asks the user for its task.
+func (h *Hub) releaseHeldLocked(sid, orchestrator string) {
+	known, err := h.st.Known(sid)
+	if err != nil {
+		return
+	}
+	for _, k := range known {
+		if k.Gate != wire.GateHeld {
+			continue
+		}
+		if _, err := h.st.SetGate(sid, k.Agent, wire.GateRun); err != nil {
+			return
+		}
+		if a, ok := wire.ParseAddress(k.Agent); ok {
+			if c := h.conns[wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: a})]; c != nil {
+				c.gate = wire.GateRun
+			}
+		}
+		_, _ = h.publishLocked(wire.Event{Kind: wire.EventActivity, SID: sid, From: k.Agent, Activity: &wire.Activity{
+			Kind: "gate", Gate: wire.GateRun, Reason: "orchestrator_left", From: orchestrator, At: h.now(),
+		}}, false, nil)
 	}
 }
 
@@ -987,7 +1020,7 @@ func (h *Hub) ListSessions() ([]wire.SessionInfo, error) {
 func (h *Hub) CreateSession(sid, title string) (wire.SessionInfo, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	row, err := h.st.CreateSession(sid, title, h.now(), h.opt.HoldNew)
+	row, err := h.st.CreateSession(sid, title, h.now())
 	if errors.Is(err, store.ErrExists) {
 		return wire.SessionInfo{}, errf("conflict", "session %s exists", sid)
 	}
@@ -1119,15 +1152,17 @@ type gateInput struct {
 	Kicked bool   // the operator removed the agent
 	Known  bool   // the agent joined the session before
 	Gate   string // the gate of a known agent
-	Hold   bool   // the session holds an agent that joins for the first time
-	// Trusted: the agent is an orchestrator. The operator can pause or stop it, but the
-	// session does not hold it at its first join.
+	Hold   bool   // an orchestrator is in the session: it holds an agent that joins for the first time
+	// Trusted: the agent is an orchestrator. The operator can pause or stop it, but it is
+	// not held at its first join.
 	Trusted bool
 }
 
 // gateOf gives the gate of an agent: removed, or run, held or paused. An agent that did not
-// join yet is held when the session holds new agents, unless it is an orchestrator. Thus a
-// tool call that comes before the join does not get through.
+// join yet is held when an orchestrator is in the session, unless it is an orchestrator
+// itself. Thus a tool call that comes before the join does not get through. The hold is for
+// the workflow in which the orchestrator gives each worker its task: the operator never has
+// to release an agent.
 func gateOf(in gateInput) string {
 	switch {
 	case in.Kicked:
@@ -1148,9 +1183,18 @@ func gateNotice(gate string) string {
 	return gate
 }
 
+// orchestratorInLocked reports whether an orchestrator is in the session now.
+func (h *Hub) orchestratorInLocked(sid string) bool {
+	for _, c := range h.conns {
+		if c.sid == sid && c.orchestrator {
+			return true
+		}
+	}
+	return false
+}
+
 // Gate answers an agent's question before a tool call: may I work? The answer is run, held,
-// paused or removed. The agent does not have to be in the session: a session that does not
-// exist yet holds new agents when the hub does.
+// paused or removed. The agent does not have to be in the session.
 func (h *Hub) Gate(machine, sid, agent, role string) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -1158,15 +1202,10 @@ func (h *Hub) Gate(machine, sid, agent, role string) (string, error) {
 		return "", errf("rate_limited", "too many updates")
 	}
 	me := wire.Address{Agent: agent, Machine: machine}.String()
-	in := gateInput{Hold: h.opt.HoldNew, Trusted: role == wire.RoleOrchestrator}
+	in := gateInput{Hold: h.orchestratorInLocked(sid), Trusted: role == wire.RoleOrchestrator}
 	var err error
 	if in.Kicked, err = h.st.Kicked(sid, me); err != nil {
 		return "", storeErr(err)
-	}
-	if row, ok, err := h.st.Session(sid); err != nil {
-		return "", storeErr(err)
-	} else if ok {
-		in.Hold = row.Record.Hold
 	}
 	k, known, err := h.st.KnownAgent(sid, me)
 	if err != nil {
@@ -1234,21 +1273,6 @@ func (h *Hub) SetGate(sid string, target *wire.Address, gate, by string) error {
 			return err
 		}
 	}
-	return nil
-}
-
-// SetHold sets whether a session holds an agent that joins it for the first time.
-func (h *Hub) SetHold(sid string, hold bool) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	row, err := h.st.SetHold(sid, hold)
-	if errors.Is(err, store.ErrNotFound) {
-		return errf("not_found", "no session %s", sid)
-	}
-	if err != nil {
-		return storeErr(err)
-	}
-	h.feedSession(row)
 	return nil
 }
 
@@ -1513,7 +1537,7 @@ func (h *Hub) requireOpenLocked(sid string, create bool) (store.SessionRow, erro
 		return row, storeErr(err)
 	}
 	if !ok && create {
-		row, err = h.st.CreateSession(sid, "", h.now(), h.opt.HoldNew)
+		row, err = h.st.CreateSession(sid, "", h.now())
 		if err != nil && !errors.Is(err, store.ErrExists) {
 			return row, storeErr(err)
 		}

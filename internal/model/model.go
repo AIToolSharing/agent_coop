@@ -527,12 +527,16 @@ func (v *Session) applyEvent(e *wire.Event) {
 				if x.By != "" {
 					sys("held by " + actor(x.By))
 				} else {
-					sys("is held until the operator releases it")
+					sys("is held until the orchestrator releases it")
 				}
 			case wire.GatePaused:
 				sys("paused by " + actor(x.By))
 			default:
-				sys("released by " + actor(x.By))
+				if x.Reason == "orchestrator_left" {
+					sys("released: its orchestrator " + x.From + " left the session")
+				} else {
+					sys("released by " + actor(x.By))
+				}
 			}
 		}
 	}

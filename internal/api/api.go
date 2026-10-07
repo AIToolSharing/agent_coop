@@ -109,7 +109,6 @@ func New(h *hub.Hub, log func(format string, args ...any)) *Server {
 	s.add("POST", "/v1/admin/sessions/{sid}/unkick", kindAct, s.adminUnkick)
 	s.add("POST", "/v1/admin/sessions/{sid}/forget", kindAct, s.adminForget)
 	s.add("POST", "/v1/admin/sessions/{sid}/gate", kindAct, s.adminGate)
-	s.add("POST", "/v1/admin/sessions/{sid}/hold", kindAct, s.adminHold)
 	s.add("POST", "/v1/admin/sessions/{sid}/redact", kindAct, s.adminRedact)
 	s.add("POST", "/v1/admin/sessions/{sid}/messages", kindOperator, s.adminSend)
 	s.add("GET", "/v1/admin/stream", kindRead, s.adminStream)
@@ -600,19 +599,6 @@ func (s *Server) adminGate(w http.ResponseWriter, r *http.Request, owner hub.Own
 		return
 	}
 	s.done(w, s.hub.SetGate(sid, target, gate, actor(owner)))
-}
-
-func (s *Server) adminHold(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
-	b, ok := body(w, r)
-	if !ok {
-		return
-	}
-	hold, err := parseHold(b)
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	s.done(w, s.hub.SetHold(sid, hold))
 }
 
 func (s *Server) adminRedact(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {

@@ -26,7 +26,7 @@ in this terminal.
   -n           show what would run, and run nothing
 Arguments after the session go to claude, for example --model opus or -p "<prompt>".
 The agent runs with --permission-mode bypassPermissions: no permission prompts, because nobody
-sits at its terminal. coop's gate still holds, pauses and stops it. Give --permission-mode to
+sits at its terminal. coop's gate still pauses and stops it. Give --permission-mode to
 choose another mode.
 `
 
@@ -76,7 +76,7 @@ func planStart(o startOpts, tty bool) ([]string, error) {
 	}
 	coop = append(coop, "claude", o.session)
 	// An agent that coop start places has no person at its terminal to answer a permission
-	// prompt. coop's gate holds, pauses and stops it instead. Arguments that set the mode
+	// prompt. coop's gate pauses and stops it instead. Arguments that set the mode
 	// win.
 	if !slices.ContainsFunc(o.claudeArgs, func(a string) bool {
 		return a == "--permission-mode" || strings.HasPrefix(a, "--permission-mode=") || a == "--dangerously-skip-permissions"

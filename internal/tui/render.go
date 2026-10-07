@@ -109,22 +109,18 @@ var help = [][2]string{
 	{"m", "message the session; tab picks the target; \"@agent text\" also works"},
 	{"r", "reply to the selected message, to its sender, in its thread"},
 	{"alt+enter", "a new line in the composer"},
-	{"a", "go to the next thing that needs you: a message for you, a held agent, a stale ask, a blocked agent"},
+	{"a", "go to the next thing that needs you: a message for you, a stale ask, a blocked agent"},
 	{"/", "search in the message text, or in the activity; an empty search clears"},
 	{"STEER  (an agent selected in the sidebar, or its details open)", ""},
-	{"g", "release a held or paused agent, with a task or none"},
-	{"p", "pause the agent at its next tool call, or resume it"},
+	{"p", "pause the agent at its next tool call, or resume it; it also lets a held agent go"},
 	{"x", "stop the agent: remove it (:allow lets it back)"},
 	{"P  R", "pause each working agent; resume each paused one"},
-	{"H", "new agents are held, or start at once"},
 	{"COMMANDS  (: then tab completes)", ""},
 	{":new <name>", "create a session"},
 	{":close  :reopen  :delete", "the shown session; delete needs a closed session"},
 	{":kick <agent>  :allow <agent>", "remove an agent from the session; let it back in"},
 	{":forget [agent]", "drop an agent that left from the lists; without a name: each one that left"},
-	{":go [agent] [task]", "release a held or paused agent, with a task if you give one; no name: each held one"},
-	{":pause [agent]  :resume [agent]", "stop an agent's work at its next tool call; let it go on; no name: each one"},
-	{":hold on|off", "new agents of the session wait for your release, or start at once"},
+	{":pause [agent]  :resume [agent]", "stop an agent's work at its next tool call; let it go on (a held one too); no name: each one"},
 	{":withdraw [#id]", "withdraw a message (default: the selected one)"},
 	{":filter [agent]", "only messages, or activity, of one agent; without a name: off"},
 	{":sys", "system lines on or off"},
@@ -148,7 +144,7 @@ func helpLines(width int) view.Rendered {
 	return r
 }
 
-var commands = []string{"new", "close", "reopen", "delete", "kick", "allow", "forget", "go", "pause", "resume", "hold", "withdraw", "filter", "sys", "brief", "help", "quit"}
+var commands = []string{"new", "close", "reopen", "delete", "kick", "allow", "forget", "pause", "resume", "withdraw", "filter", "sys", "brief", "help", "quit"}
 
 // Complete finishes a command line: the command word, or an agent name for the commands that
 // take one.
@@ -169,7 +165,7 @@ func Complete(value string, agents []*model.Agent) string {
 		}
 		return commonPrefix(hits)
 	}
-	if !slices.Contains([]string{"kick", "allow", "forget", "filter", "go", "pause", "resume"}, word) {
+	if !slices.Contains([]string{"kick", "allow", "forget", "filter", "pause", "resume"}, word) {
 		return value
 	}
 	arg = strings.TrimSpace(arg)
@@ -334,37 +330,28 @@ func (a *App) command(line string, s screen) tea.Cmd {
 			return forget()
 		}
 		return confirm("forget "+strconv.Itoa(len(targets))+" agents that left "+session+"? they may join again (y/n)", forget)
-	case "go", "pause", "resume":
+	case "pause", "resume":
 		if session == "" {
 			return needSession()
 		}
-		// go takes held and paused agents to run; pause takes running ones; resume takes
-		// paused ones and leaves a held agent held.
-		want, applies := wire.GateRun, func(ag *model.Agent) bool { return ag.Gate != wire.GateRun }
-		done := map[string]string{"go": "released", "pause": "paused", "resume": "resumed"}[cmd]
-		switch cmd {
-		case "pause":
-			want, applies = wire.GatePaused, func(ag *model.Agent) bool { return ag.Gate == wire.GateRun }
-		case "resume":
-			applies = func(ag *model.Agent) bool { return ag.Gate == wire.GatePaused }
+		// pause takes running agents to paused; resume takes paused and held ones to run.
+		want, applies := wire.GatePaused, func(ag *model.Agent) bool { return ag.Gate == wire.GateRun }
+		done := "paused"
+		if cmd == "resume" {
+			want, applies = wire.GateRun, func(ag *model.Agent) bool { return ag.Gate != wire.GateRun }
+			done = "resumed"
 		}
-		name, task := "", ""
-		if len(fields) > 1 {
-			name, task = fields[1], strings.Join(fields[2:], " ")
-		}
-		if task != "" && cmd != "go" {
+		if len(fields) > 2 {
 			return a.setStatus("usage: :" + cmd + " [agent]")
 		}
-		if name != "" {
+		if len(fields) > 1 {
+			name := fields[1]
 			ag := agentOf(name)
 			if ag == nil {
 				return a.setStatus("no agent " + name)
 			}
 			if !applies(ag) {
 				return a.setStatus(ag.Address + " is " + ag.Gate + " already")
-			}
-			if cmd == "go" {
-				return a.release(session, ag.Address, task)
 			}
 			return a.act(func(ctx context.Context) (string, error) {
 				return done + " " + ag.Address, a.op.SetGate(ctx, session, ag.Address, want)
@@ -373,12 +360,12 @@ func (a *App) command(line string, s screen) tea.Cmd {
 		// No name: each agent that the command applies to. A removed agent has no gate.
 		var targets []*model.Agent
 		for _, ag := range s.v.AgentList() {
-			if !ag.Kicked && !ag.Forgotten && ag.JoinedAt != "" && applies(ag) && (cmd != "go" || ag.Gate == wire.GateHeld) {
+			if !ag.Kicked && !ag.Forgotten && ag.JoinedAt != "" && applies(ag) {
 				targets = append(targets, ag)
 			}
 		}
 		if len(targets) == 0 {
-			return a.setStatus("no agent to " + map[string]string{"go": "release", "pause": "pause", "resume": "resume"}[cmd] + " in " + session)
+			return a.setStatus("no agent to " + cmd + " in " + session)
 		}
 		return a.act(func(ctx context.Context) (string, error) {
 			for _, ag := range targets {
@@ -390,20 +377,6 @@ func (a *App) command(line string, s screen) tea.Cmd {
 				return done + " " + targets[0].Address, nil
 			}
 			return done + " " + strconv.Itoa(len(targets)) + " agents", nil
-		})
-	case "hold":
-		if session == "" {
-			return needSession()
-		}
-		if arg != "on" && arg != "off" {
-			return a.setStatus("usage: :hold on|off")
-		}
-		hold := arg == "on"
-		return a.act(func(ctx context.Context) (string, error) {
-			if hold {
-				return "new agents of " + session + " are held until you release them", a.op.SetHold(ctx, session, true)
-			}
-			return "new agents of " + session + " start at once", a.op.SetHold(ctx, session, false)
 		})
 	case "withdraw":
 		if session == "" {

@@ -258,7 +258,7 @@ func TestTheGateOfAnAgentIsItsLastGateRecord(t *testing.T) {
 		}
 	}
 	want := snapshot(load(gates("held", "run", "paused")))
-	if !strings.Contains(want, "gate:paused") || !strings.Contains(want, "sys bob@vps-2 is held until the operator releases it") ||
+	if !strings.Contains(want, "gate:paused") || !strings.Contains(want, "sys bob@vps-2 is held until the orchestrator releases it") ||
 		!strings.Contains(want, "sys bob@vps-2 released by the operator") || !strings.Contains(want, "sys bob@vps-2 paused by the operator") {
 		t.Fatalf("the snapshot lacks the gate or its timeline lines:\n%s", want)
 	}
@@ -270,6 +270,11 @@ func TestTheGateOfAnAgentIsItsLastGateRecord(t *testing.T) {
 	)
 	if got := snapshot(load(byOrch)); !strings.Contains(got, "sys bob@vps-2 released by the orchestrator orch") || !strings.Contains(got, "sys carol@mac-3 removed by the orchestrator orch") {
 		t.Fatalf("the timeline does not name the orchestrator:\n%s", got)
+	}
+	// A release because the orchestrator left says so.
+	byLeave := append(fixture(), model.Update{Event: &wire.Event{Kind: wire.EventActivity, Seq: 600, SID: sid, From: bob.String(), Activity: &wire.Activity{Kind: "gate", Gate: "run", Reason: "orchestrator_left", From: "pm@orch", At: at(90)}}})
+	if got := snapshot(load(byLeave)); !strings.Contains(got, "sys bob@vps-2 released: its orchestrator pm@orch left the session") {
+		t.Fatalf("the timeline does not say that the orchestrator left:\n%s", got)
 	}
 	rapid.Check(t, func(rt *rapid.T) {
 		perm := rapid.Permutation(gates("held", "run", "paused")).Draw(rt, "order")

@@ -8,7 +8,7 @@ when each agent works.
   `set_state`. The tools do not show how delivery works.
 - The person who starts an agent sets the session. The agent does not select it.
 - In Claude Code, a message from a peer wakes an idle agent (channel push).
-- The operator holds, releases, pauses and stops each agent from the TUI.
+- The operator pauses and stops each agent from the TUI.
 - The TUI shows the conversation as a transcript and as threads, with each message whole.
 - The TUI shows what each agent does at its terminal: its tool calls, its words, and the files
   that it changed.
@@ -94,10 +94,8 @@ For a hub with a self-signed certificate, copy `dist/coop-<os>-<arch>` to the ma
    coop start <machine> <project> <session>
    ```
 
-3. Release the agent. A new agent is held and does no work. In the TUI, press `tab`, go to the
-   agent, and press `g`. Type a task, or press `enter` for none.
-4. Steer the agent. `p` pauses or resumes it, `x` stops it, and `m` writes a message. `?` shows
-   each key.
+3. Steer the agent. In the TUI, press `tab` and go to the agent. `p` pauses or resumes it, `x`
+   stops it, and `m` writes a message. `?` shows each key.
 
 To upgrade to a new version, run `make hub HOST=<server>` on your own machine. Then run
 `coop upgrade` on each agent machine: the machine takes the version of its hub. In a clone, run
@@ -241,7 +239,7 @@ coop session has the hook, however you start it.
 On a machine where `coop setup` did not run, `coop claude` gives the hook with `--settings`. In
 that case, do not pass a `--settings` of your own. To start one session with no gate, set
 `COOP_GATE=off` in its environment. Another MCP client has no hook. The TUI marks such an agent
-`soft`, and a hold or a pause is only advice to it.
+`soft`, and a pause is only advice to it.
 
 A headless agent (`claude -p`) gets no push. It uses `wait`, `ask` or `inbox`. Allow the coop
 tools when you start it.
@@ -275,8 +273,8 @@ coop tui
 | `?` | shows each key and each command |
 
 The sidebar lists the sessions, then the agents of the shown session. The commands are `:new`,
-`:close`, `:reopen`, `:delete`, `:kick`, `:allow`, `:forget`, `:go`, `:pause`, `:resume`,
-`:hold`, `:withdraw`, `:filter`, `:sys` and `:brief`.
+`:close`, `:reopen`, `:delete`, `:kick`, `:allow`, `:forget`, `:pause`, `:resume`, `:withdraw`,
+`:filter`, `:sys` and `:brief`.
 
 ### See what the agents do
 
@@ -335,11 +333,17 @@ The orchestrator has three more tools:
 
 | Tool | Does |
 |---|---|
-| `steer` | releases (with a task), pauses, resumes, stops, allows and forgets agents; sets the hold; creates, closes and reopens sessions |
+| `steer` | releases (with a task), pauses, resumes, stops, allows and forgets agents; creates, closes and reopens sessions |
 | `read` | gives each message of a session, also the messages between two other agents |
 | `sessions` | lists each session with its agents, their states, notes and gates |
 
-It starts agents on other machines with `coop start`. It is never held when it joins.
+It starts agents on other machines with `coop start`. While an orchestrator is in a session,
+each agent that joins the session for the first time is held: it does no work until the
+orchestrator releases it with its task (`steer`, `release`). The orchestrator itself is never
+held. In a session with no orchestrator, nothing is held: an agent works from its join. When
+the last orchestrator leaves the session, also by a crash, the hub releases the agents that it
+held, and tells each one to ask you for its task. An orchestrator that starts again under the
+same name releases nobody.
 
 Messages do not interrupt the orchestrator one by one, also not your messages. They queue, and
 one short notice says that items wait. The next notice comes after it reads them with `inbox`
@@ -357,7 +361,7 @@ pass to it.
 A `send` or an `ask` to `any` goes to one agent. The hub picks the agent, and the result names
 it. In the TUI, `any` is a target of `m`.
 
-- **Free.** The hub picks an agent that is in the session now, that you do not hold or pause,
+- **Free.** The hub picks an agent that is in the session now, that you do not pause,
   and whose state is not `working` or `blocked`. It never picks the sender, and never an
   orchestrator.
 - **Least load.** Of the free agents, the one on the machine with the fewest working agents
@@ -393,47 +397,37 @@ A worker that waits is `idle`, so a send to `any` can pick it.
    systemctl enable --now coop-worker@claude
    ```
 
-3. Release the worker one time (`g` in the TUI), or set the hold of the session off (`H`). A
-   held worker cannot call its tools. One release is sufficient: the worker joins again in each
-   round under the same name.
-
 `deploy/coop-worker.run` is the same service for runit. `deploy/coop-worker.ps1` and
 `deploy/coop-worker-tasks.ps1` are the worker for Windows, as a task at logon.
 
 The kinds are `claude`, `codex`, `copilot` and `gemini`. Only the `claude` worker is behind
 your gate, because only `coop claude` gives the gate hook. The other kinds run with their tools
-allowed and no question, and a hold, a pause or a stop does not refuse their tool calls. Each
+allowed and no question, and a pause or a stop does not refuse their tool calls. Each
 peer of the session can make such a worker run commands. Use these kinds only in a session
 where you trust each agent.
 
-### Hold, pause, stop
+### Pause, stop
 
-You decide when an agent works. The keys act on the agent under the sidebar cursor, or on the
-agent whose details are open.
+An agent works from the moment it joins. You never have to release one. You stop it when you
+must. The keys act on the agent under the sidebar cursor, or on the agent whose details are
+open.
 
 | Key | Command | Does |
 |---|---|---|
-| `g` | `:go [agent] [task]` | releases a held or paused agent. The text that you type is its task. |
 | `p` | `:pause [agent]`, `:resume [agent]` | stops the agent at its next tool call, or lets it continue |
 | `x` | `:kick <agent>` | stops the agent: the hook refuses each tool call until `:allow` |
 | `P`, `R` | `:pause`, `:resume` | pauses each working agent of the session, resumes each paused agent |
-| `H` | `:hold on\|off` | new agents of the session wait for your release, or start at once |
 
-- **Held.** A new session holds each agent that joins it for the first time. The hook refuses
-  the first tool call of the agent, and the agent waits. The attention line counts the held
-  agents, and `a` goes to the next one.
-- **A pipeline.** If another agent starts the agents of a session, release the first agent and
-  press `H`.
 - **Paused.** A pause stops the agent at its next tool call. It does not interrupt a command
-  that runs. A held or paused agent can still read and write messages.
+  that runs. A paused agent can still read and write messages.
+- **Held.** Only in a session with an orchestrator: a new agent waits for the task of the
+  orchestrator (see Let an agent run the session). When the orchestrator leaves, the hub
+  releases the held agents. `p` or `:resume` lets one go before that, without a task.
 - **No answer from the hub.** If the hook gets no answer from the hub, the last answer of the
-  hub decides. An agent that you hold, paused or stopped stays refused. Thus a restart of the
+  hub decides. An agent that is held, paused or stopped stays refused. Thus a restart of the
   hub releases no agent. Each other agent works on, and the hook writes one line on stderr.
   Thus a hub that is down does not stop your agents. An agent that the hub never answered has
-  no last answer: it works, also in a session that holds new agents. The hook keeps the last
-  answer in `~/.config/coop/gate/`.
-- **The default.** `coop serve --hold-new=false` makes each new session start its agents at
-  once.
+  no last answer: it works. The hook keeps the last answer in `~/.config/coop/gate/`.
 
 ### Agents that left, and agents that you removed
 

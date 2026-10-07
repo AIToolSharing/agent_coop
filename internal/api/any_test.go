@@ -136,12 +136,13 @@ func (x *hubSuite) sendToAny(t *testing.T) {
 	t.Run("an orchestrator gives work to any and gets none", func(t *testing.T) {
 		sid := x.session(t)
 		boss := api{x.h.base, x.h.roleToken("boss", wire.RoleOrchestrator)}
-		pm := boss.stream(sid, "pm")
-		defer pm.close()
+		// alice joins before the orchestrator: it does not hold her.
 		a := x.mac1.stream(sid, "alice")
 		defer a.close()
-		pm.wait(t, nil)
 		a.wait(t, nil)
+		pm := boss.stream(sid, "pm")
+		defer pm.close()
+		pm.wait(t, nil)
 		// The orchestrator is free and comes first by its key, but alice gets each task.
 		for range 2 {
 			if sent := parse[operatorSendResponse](t, wantStatus(t, 200)(x.op.a.send(sid, "any", "task", ""))); sent.To != "alice@mac-1" {

@@ -24,8 +24,8 @@ const usageText = `usage:
   coop --agent <name> claude ...  the same, as the agent <name> (default: the name in .coop,
                                   then the directory name)
   coop --orchestrator claude <session> ...
-                                  the same, as an orchestrator: it may also release, pause,
-                                  stop agents and set up sessions (COOP_ORCHESTRATOR_TOKEN)
+                                  the same, as an orchestrator: it may also pause, stop
+                                  agents and set up sessions (COOP_ORCHESTRATOR_TOKEN)
   coop start [-n] [-u <user>] [-a <agent>] <machine> <directory> <session> [claude args]
                                   start an agent on another machine over SSH
   coop tui [--url <url>] [--token <token>]
@@ -37,7 +37,7 @@ const usageText = `usage:
   coop mcp                        the MCP server Claude Code starts (stdio)
   coop hook pretool               the gate check Claude Code runs before a tool call
   coop serve [--listen <addr>] [--data <dir>] [--dist <dir>] [--auto-create=false]
-             [--hold-new=false]   run the hub (the server)
+                                  run the hub (the server)
   coop admin token add [--role <role>] <name> | list | revoke <name>
                                   manage tokens on the hub's host
   coop version

@@ -55,7 +55,6 @@ func TestEachRoleReachesOnlyItsRoutes(t *testing.T) {
 		"POST /v1/admin/sessions/{sid}/unkick":   act,
 		"POST /v1/admin/sessions/{sid}/forget":   act,
 		"POST /v1/admin/sessions/{sid}/gate":     act,
-		"POST /v1/admin/sessions/{sid}/hold":     act,
 		"POST /v1/admin/sessions/{sid}/redact":   act,
 		"POST /v1/admin/sessions/{sid}/messages": {wire.RoleOperator},
 	}
@@ -117,12 +116,12 @@ func coopServer(h *harness) interface{ Routes() []string } {
 	return h.srv.Handler.(interface{ Routes() []string })
 }
 
-// The workflow of github.com/map588/agents: an orchestrator starts workers in a session that
-// holds new agents, releases them itself, and reads what they say to each other. The operator
-// sees who released them.
+// The workflow of github.com/map588/agents: an orchestrator starts workers, which the session
+// holds while the orchestrator is in it; it releases them itself, and reads what they say to
+// each other. The operator sees who released them.
 func TestAnOrchestratorRunsASessionForTheOperator(t *testing.T) {
 	high := limit{burst: 10_000, perSecond: 10_000}
-	h := startHub(t, limits{join: high, msg: high, activity: high}, options{autoCreate: true, holdNew: true})
+	h := startHub(t, limits{join: high, msg: high, activity: high}, options{autoCreate: true})
 	mac := api{base: h.base, token: h.roleToken("mac-1", wire.RoleMachine)}
 	orchTok := h.roleToken("orch", wire.RoleOrchestrator)
 	orch := api{base: h.base, token: orchTok}
@@ -135,7 +134,7 @@ func TestAnOrchestratorRunsASessionForTheOperator(t *testing.T) {
 		}](t, wantStatus(t, 200)(a.gate(sid, agent))).Gate
 	}
 
-	// Before and after its join, the orchestrator may work: the session holds only others.
+	// Before and after its join, the orchestrator may work: it holds only others.
 	if g := gateOf(orch, "pm"); g != "run" {
 		t.Fatalf("gate of the orchestrator before its join %q, want run", g)
 	}
@@ -147,7 +146,8 @@ func TestAnOrchestratorRunsASessionForTheOperator(t *testing.T) {
 	if rec, ok := h.presence(sid + ".orch.pm"); !ok || rec.Role != wire.RoleOrchestrator {
 		t.Fatalf("presence %+v, want the role orchestrator", rec)
 	}
-	// A worker is held. The orchestrator releases it; the record names the orchestrator.
+	// A worker that joins now is held. The orchestrator releases it; the record names the
+	// orchestrator.
 	w1 := mac.stream(sid, "w1")
 	defer w1.close()
 	if j := data[joinedEvent](t, w1.wait(t, nil)); j.Gate != "held" {
@@ -209,7 +209,6 @@ func TestAnOrchestratorRunsASessionForTheOperator(t *testing.T) {
 		// The agents of the session, with their states and gates.
 		view := parse[struct {
 			Session string `json:"session"`
-			Hold    bool   `json:"hold"`
 			Agents  []struct {
 				Name   string `json:"name"`
 				Online bool   `json:"online"`
@@ -227,7 +226,7 @@ func TestAnOrchestratorRunsASessionForTheOperator(t *testing.T) {
 			"w1@mac-1": "true idle run ",
 			"w3@mac-1": "true idle held ",
 		}
-		if view.Session != sid || !view.Hold || fmt.Sprint(got) != fmt.Sprint(want) {
+		if view.Session != sid || fmt.Sprint(got) != fmt.Sprint(want) {
 			t.Fatalf("%s: session view %+v\n got %v\nwant %v (a removed agent is not listed)", name, view, got, want)
 		}
 	}

@@ -415,10 +415,6 @@ func (a admin) gate(sid, target, gate string) (int, []byte) {
 	return a.req(http.MethodPost, "/sessions/"+sid+"/gate", body)
 }
 
-func (a admin) hold(sid string, hold bool) (int, []byte) {
-	return a.req(http.MethodPost, "/sessions/"+sid+"/hold", map[string]any{"hold": hold})
-}
-
 func (a admin) forget(sid, target string) (int, []byte) {
 	return a.req(http.MethodPost, "/sessions/"+sid+"/forget", map[string]any{"target": target})
 }
@@ -728,6 +724,7 @@ type noticeEvent struct {
 	Kind string `json:"kind"`
 	ID   string `json:"id"`
 	Peer string `json:"peer"`
+	By   string `json:"by"`
 	At   string `json:"at"`
 }
 
@@ -740,6 +737,7 @@ func (n *noticeEvent) UnmarshalJSON(b []byte) error {
 		rule{slices.Contains([]string{"kicked", "closed", "reopened", "redacted", "peer_left", "held", "paused", "released"}, n.Kind), "kind"},
 		rule{n.ID == "" || wire.IsID(n.ID), "id"},
 		rule{n.Peer == "" || isAddress(n.Peer), "peer"},
+		rule{n.By == "" || wire.IsToken(n.By), "by"},
 		rule{wire.IsTime(n.At), "at"},
 	)
 }

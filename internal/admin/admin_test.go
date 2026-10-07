@@ -278,9 +278,6 @@ func TestActionsCallTheAdminRoutes(t *testing.T) {
 	if err := c.SetGate(ctx, "build-42", "", "run"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.SetHold(ctx, "build-42", false); err != nil {
-		t.Fatal(err)
-	}
 	if ok, err := c.Redact(ctx, "build-42", "14"); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
@@ -294,7 +291,6 @@ func TestActionsCallTheAdminRoutes(t *testing.T) {
 		{"POST", "/v1/admin/sessions/build-42/forget", `{"target":"bob@vps-2"}`},
 		{"POST", "/v1/admin/sessions/build-42/gate", `{"gate":"paused","target":"bob@vps-2"}`},
 		{"POST", "/v1/admin/sessions/build-42/gate", `{"gate":"run"}`},
-		{"POST", "/v1/admin/sessions/build-42/hold", `{"hold":false}`},
 		{"POST", "/v1/admin/sessions/build-42/redact", `{"id":"14"}`},
 	}
 	if fmt.Sprint(*calls) != fmt.Sprint(want) {

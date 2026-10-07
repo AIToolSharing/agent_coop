@@ -32,7 +32,7 @@ func startRealHub(t *testing.T) *realHub {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := hub.New(st, hub.Options{AutoCreate: true, HoldNew: true, Ping: 100 * time.Millisecond})
+	h := hub.New(st, hub.Options{AutoCreate: true, Ping: 100 * time.Millisecond})
 	srv := httptest.NewServer(api.New(h, t.Logf))
 	t.Cleanup(func() {
 		srv.Close()
@@ -72,9 +72,9 @@ func toolNamesOf(t *testing.T, a *testAgent) []string {
 	return names
 }
 
-// The workflow of github.com/map588/agents: the orchestrator starts in a session that holds
-// new agents, releases a worker with its task, reads what the workers say to each other, and
-// sets up a second session. It is never held itself.
+// The workflow of github.com/map588/agents: a worker that joins while the orchestrator is in
+// the session is held; the orchestrator releases it with its task, reads what the workers say
+// to each other, and sets up a second session. It is never held itself.
 func TestTheOrchestratorSteersTheSessionWithItsTools(t *testing.T) {
 	r := startRealHub(t)
 	o := start(t, r.options(wire.RoleOrchestrator, "pipe-1", "pm"))
@@ -134,12 +134,11 @@ func TestTheOrchestratorSteersTheSessionWithItsTools(t *testing.T) {
 		t.Fatalf("a message between two workers reached the orchestrator's inbox: %v", inbox)
 	}
 
-	// The second session: create it, hold off, list it.
+	// The second session: create it, list it.
 	o.json("steer", map[string]any{"action": "create_session", "session": "pipe-2"})
-	o.json("steer", map[string]any{"action": "hold_off", "session": "pipe-2"})
 	sessions := o.json("sessions", map[string]any{"session": "pipe-2"})
 	b, _ := json.Marshal(sessions)
-	if !strings.Contains(string(b), `"session":"pipe-2"`) || !strings.Contains(string(b), `"hold":false`) {
+	if !strings.Contains(string(b), `"session":"pipe-2"`) || strings.Contains(string(b), `"hold"`) {
 		t.Fatalf("sessions %s", b)
 	}
 	all := o.json("sessions", nil)
@@ -150,7 +149,8 @@ func TestTheOrchestratorSteersTheSessionWithItsTools(t *testing.T) {
 		}
 	}
 
-	// Stop needs an agent; a task goes only with release; a name that no agent has fails.
+	// Stop needs an agent; a task goes only with release; the actions of the hold of a
+	// session are gone; a name that no agent has fails.
 	for _, bad := range []map[string]any{
 		{"action": "stop"},
 		{"action": "pause", "agent": "w2", "task": "x"},
