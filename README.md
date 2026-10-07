@@ -514,6 +514,11 @@ Not protected:
 
 ## Develop
 
+The rule of the scope: coop is the hub, the shim and the TUI. It knows sessions, agents,
+messages, states, the gate and the trace. It does not know the terminal an agent runs in, the
+launcher that started it, or the workflow it is part of. An integration uses coop's public
+surface, the API and the environment, and puts nothing into coop's protocol.
+
 ```bash
 make check          # gofmt, go vet, staticcheck, shellcheck, go test -race: the gate for each commit
 make contract       # the API against its own /openapi.json with Schemathesis (needs uvx)
