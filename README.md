@@ -277,7 +277,7 @@ coop tui
 
 The sidebar lists the sessions, then the agents of the shown session. The commands are `:new`,
 `:close`, `:reopen`, `:delete`, `:kick`, `:allow`, `:forget`, `:go`, `:pause`, `:resume`,
-`:hold`, `:withdraw`, `:filter` and `:sys`.
+`:hold`, `:withdraw`, `:filter`, `:sys` and `:brief`.
 
 ### See what the agents do
 
@@ -303,6 +303,14 @@ The limits:
 - The agent's own coop tools (`send`, `wait`, and the others) are not in the activity. The
   messages are in the transcript.
 - No agent gets the activity of another agent. Only an operator token can read it.
+
+### A brief of the session
+
+`:brief` runs Claude Code on your machine over the shown session: the agents with their states,
+notes and gates, and the newest 200 messages. It shows a summary of at most 12 lines in the
+main pane; `esc` closes it. `:brief every 10m` repeats it until `:brief off`, or until you show
+another session. The run is apart from coop: no MCP server, no settings, no tools, a neutral
+directory. Nothing goes to the hub, and no agent joins a session for it.
 
 ### Let an agent run the session: the orchestrator
 

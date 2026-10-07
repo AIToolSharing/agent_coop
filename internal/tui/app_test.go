@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -601,4 +602,68 @@ func TestKeysThatArriveTogetherActOnTheLatestState(t *testing.T) {
 	h := start(t, nil)
 	h.keys("tab", "down", "enter", "tab", "down", "down", "enter")
 	contains(t, h.frame(), "agent alice@mac-1 · esc back")
+}
+
+// :brief runs a local Claude Code run over the shown session and shows the summary in the
+// main pane. The TUI gives it the agents and the newest messages; the hub is not involved.
+// `every` repeats it on the tick; `off` and a change of the shown session end the repeats.
+func TestBriefRunsALocalSummaryAndShowsIt(t *testing.T) {
+	h := start(t, nil)
+	var inputs []string
+	h.app.brief = func(_ context.Context, input string) (string, error) {
+		inputs = append(inputs, input)
+		return "Alice parses. Bob waits for CI.\nCarol waits on Bob.", nil
+	}
+	h.keys(":", "+brief", "enter")
+	if h.status() != "pick a session first (tab, then ↑↓)" || len(inputs) != 0 {
+		t.Fatalf("with no session: status %q, %d runs", h.status(), len(inputs))
+	}
+	h.openSession()
+	h.keys(":", "+brief", "enter")
+	if len(inputs) != 1 || !strings.Contains(inputs[0], "alice@mac-1: online, working") || !strings.Contains(inputs[0], "Can I change the users table?") {
+		t.Fatalf("inputs %q", inputs)
+	}
+	contains(t, h.frame(), "Bob waits for CI.")
+	if h.status() != "brief of build-42" {
+		t.Fatalf("status %q", h.status())
+	}
+	h.keys("esc")
+	if strings.Contains(h.frame(), "Bob waits for CI.") {
+		t.Fatal("esc did not close the brief")
+	}
+	// every: one run now, the next ones on the tick after the interval.
+	h.keys(":", "+brief", "space", "+every", "space", "+10m", "enter")
+	if len(inputs) != 2 {
+		t.Fatalf("%d runs after :brief every", len(inputs))
+	}
+	h.keys("esc")
+	now := modeltest.Now
+	h.app.now = func() time.Time { return now }
+	if cmd := h.app.briefTick(now); cmd != nil {
+		t.Fatal("a tick before the interval ran a brief")
+	}
+	now = now.Add(11 * time.Minute)
+	if cmd := h.app.briefTick(now); cmd == nil {
+		t.Fatal("no brief after the interval")
+	} else {
+		h.app.Update(cmd())
+	}
+	if len(inputs) != 3 {
+		t.Fatalf("%d runs after the interval", len(inputs))
+	}
+	h.keys("esc", ":", "+brief", "space", "+off", "enter")
+	now = now.Add(11 * time.Minute)
+	if cmd := h.app.briefTick(now); cmd != nil || h.status() != "brief: repeats off" {
+		t.Fatalf("brief off: cmd %v status %q", cmd != nil, h.status())
+	}
+	h.keys(":", "+brief", "space", "+every", "space", "+soon", "enter")
+	if h.status() != "usage: :brief [every <N>m | off]" {
+		t.Fatalf("status %q", h.status())
+	}
+	// A failure of the run goes to the status line.
+	h.app.brief = func(context.Context, string) (string, error) { return "", errors.New("claude is not on this machine") }
+	h.keys(":", "+brief", "enter")
+	if h.status() != "brief: claude is not on this machine" {
+		t.Fatalf("status %q", h.status())
+	}
 }

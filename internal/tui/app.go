@@ -41,6 +41,9 @@ type Options struct {
 	Op      Operator
 	Now     func() time.Time
 	Loc     *time.Location
+	// Brief writes a short summary of a session from its text, with a local Claude Code run.
+	// Nil means runBrief (brief.go).
+	Brief func(ctx context.Context, input string) (string, error)
 }
 
 const (
@@ -52,7 +55,7 @@ const (
 )
 
 type overlay struct {
-	kind string // message, agent, help
+	kind string // message, agent, help, brief
 	id   string
 }
 
@@ -96,6 +99,15 @@ type App struct {
 	status        string
 	attn          int
 
+	// The brief of the shown session: see brief.go.
+	brief        func(ctx context.Context, input string) (string, error)
+	briefText    string
+	briefAt      time.Time
+	briefEvery   time.Duration
+	briefNext    time.Time
+	briefSID     string
+	briefRunning bool
+
 	transcripts map[string]*view.Transcript
 	ta          textarea.Model
 	last        screen
@@ -122,12 +134,15 @@ func New(o Options) *App {
 	if o.Loc == nil {
 		o.Loc = time.Local
 	}
+	if o.Brief == nil {
+		o.Brief = runBrief
+	}
 	ta := textarea.New()
 	ta.Prompt = ""
 	ta.ShowLineNumbers = false
 	ta.CharLimit = wire.MaxText
 	return &App{
-		store: o.Store, updates: o.Updates, op: o.Op, now: o.Now, loc: o.Loc,
+		store: o.Store, updates: o.Updates, op: o.Op, now: o.Now, loc: o.Loc, brief: o.Brief,
 
 		width: 80, height: 24,
 		sid: model.AllSessions, view: viewTranscript, focus: "main", sidebar: true,
@@ -221,6 +236,8 @@ func (a *App) screen() screen {
 	switch {
 	case a.overlay != nil && a.overlay.kind == "help":
 		s.main = helpLines(s.mainW)
+	case a.overlay != nil && a.overlay.kind == "brief":
+		s.main = briefLines(a.briefText, a.briefAt, a.loc, s.mainW)
 	case a.overlay != nil && a.overlay.kind == "message":
 		s.main = view.RenderMessage(s.v, a.overlay.id, o)
 	case a.overlay != nil && a.overlay.kind == "agent":
@@ -339,7 +356,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, a.readFeed()
 	case tickMsg:
-		return a, tick()
+		return a, tea.Batch(tick(), a.briefTick(a.now()))
+	case briefMsg:
+		a.briefDone(m)
+		return a, nil
 	case statusMsg:
 		a.status = string(m)
 		return a, nil

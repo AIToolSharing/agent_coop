@@ -128,6 +128,7 @@ var help = [][2]string{
 	{":withdraw [#id]", "withdraw a message (default: the selected one)"},
 	{":filter [agent]", "only messages, or activity, of one agent; without a name: off"},
 	{":sys", "system lines on or off"},
+	{":brief [every <N>m | off]", "a summary of the session by a local Claude Code run; repeat it, or stop the repeats"},
 	{":help  :quit", "this help; quit"},
 }
 
@@ -147,7 +148,7 @@ func helpLines(width int) view.Rendered {
 	return r
 }
 
-var commands = []string{"new", "close", "reopen", "delete", "kick", "allow", "forget", "go", "pause", "resume", "hold", "withdraw", "filter", "sys", "help", "quit"}
+var commands = []string{"new", "close", "reopen", "delete", "kick", "allow", "forget", "go", "pause", "resume", "hold", "withdraw", "filter", "sys", "brief", "help", "quit"}
 
 // Complete finishes a command line: the command word, or an agent name for the commands that
 // take one.
@@ -441,6 +442,23 @@ func (a *App) command(line string, s screen) tea.Cmd {
 			return a.setStatus("system lines on")
 		}
 		return a.setStatus("system lines off")
+	case "brief":
+		if session == "" {
+			return needSession()
+		}
+		every, off, err := parseBrief(arg)
+		switch {
+		case err != nil:
+			return a.setStatus(err.Error())
+		case off:
+			a.briefEvery = 0
+			return a.setStatus("brief: repeats off")
+		}
+		a.briefEvery = every
+		if every > 0 {
+			a.briefNext = a.now().Add(every)
+		}
+		return a.startBrief(session, s.v)
 	case "help":
 		a.overlay = &overlay{kind: "help"}
 		a.scroll = 0
