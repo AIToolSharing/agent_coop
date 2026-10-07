@@ -31,11 +31,10 @@ read gives every message of a session, also those between two other agents; they
 as pushes. sessions gives each agent's state and note.
 When the user asks for the status, answer it yourself in one message: use sessions and read. Do not
 ask each agent to report. You send as yourself, never as the user.
-Messages from the user and from the agents do not interrupt you. They wait on your agenda, and you
-get one short nudge when new items wait. Finish your current step, then call agenda: it gives the
-user's messages first, then the questions of agents that wait for your answer, then the rest.
-Answer the questions first: those agents stop until you do. When you have nothing else to do, call
-agenda with wait_s.`
+Messages from the user and from the agents do not interrupt you one by one. They queue, and one
+short notice says that items wait. Finish your current step, then call inbox: answer the user
+first, then each agent that waits for your answer (sessions shows waiting_on), then the rest.
+When you have nothing else to do, call wait.`
 
 const reporterInstructions = `You read the shared sessions of agents. You change nothing and you send nothing.
 sessions lists each session with its agents: what each one does, its note, and whether the
@@ -50,10 +49,6 @@ func init() {
 	descriptions["sessions"] = "List the shared sessions, or one session, with each agent: its state and note, and whether it may work (gate run, held or paused)."
 	descriptions["read"] = "Read the messages of a session, oldest first: each message, also those between two other agents. Give after (a message id) to get only newer ones."
 	descriptions["steer"] = "Act for the user. release, pause, resume: the gate of an agent (no agent: each agent of the session). stop removes an agent, allow lets a removed agent back, forget drops one that left. hold_on and hold_off: whether new agents of the session wait for a release. create_session, close_session, reopen_session. task (with release) is sent to the agent as your message."
-	descriptions["agenda"] = "Take everything that waits for you, in the order to handle it: the user's messages, the questions of agents that wait for your answer, the other messages, the notices; with the agents that wait on you and those that are blocked. Call it between your steps, and when a nudge says that your agenda has new items. wait_s waits for a first item when nothing waits."
-	schemas["agenda"] = objectSchema(nil, map[string]any{
-		"wait_s": map[string]any{"type": "integer", "minimum": 0, "maximum": 600, "default": 0, "description": "How long to wait for a first item when nothing waits"},
-	})
 	schemas["sessions"] = objectSchema(nil, map[string]any{
 		"session": stringSchema("Only this session"),
 	})

@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AIToolSharing/agent_coop/internal/admin"
@@ -43,9 +44,6 @@ type Options struct {
 	Role string
 	// Admin reaches the admin API with the token of Role.
 	Admin *admin.Client
-	// NudgeGap is the shortest time between two nudges of an orchestrator. Zero means one
-	// minute.
-	NudgeGap time.Duration
 	// Push advertises the channel capability and pushes incoming items into the session.
 	Push bool
 	// Gated says that the agent's tool calls go through the operator's gate (`coop claude`).
@@ -264,8 +262,8 @@ type shim struct {
 	link     link
 	client   *hubClient
 	inbox    *inbox
-	// nudge schedules the orchestrator's nudges; nil for another role.
-	nudge *nudger
+	// signaled: the orchestrator got the notice that items wait, and has not read them since.
+	signaled atomic.Bool
 }
 
 // Serve runs the MCP server until the MCP client goes away or ctx ends.
@@ -321,7 +319,6 @@ func Serve(ctx context.Context, o Options) error {
 		if orchestrator {
 			s.addReaderTools(server)
 			addTool(s, server, "steer", s.steer)
-			addTool(s, server, "agenda", s.agenda)
 		}
 	default:
 		// No session: no tools. The agent then has nothing to call, so a task costs nothing.
@@ -344,11 +341,6 @@ func Serve(ctx context.Context, o Options) error {
 
 	err := server.Run(ctx, tr)
 	cancel()
-	s.mu.Lock()
-	if s.nudge != nil {
-		s.nudge.stop()
-	}
-	s.mu.Unlock()
 	s.mu.Lock()
 	s.closed = true
 	s.mu.Unlock()
@@ -419,13 +411,9 @@ func (s *shim) start(client *mcp.Implementation) {
 	s.client.httpc = s.o.HTTPClient
 	opts := inboxOptions{push: s.o.Push, onPush: s.pushItem}
 	if s.o.Role == wire.RoleOrchestrator {
-		// The orchestrator's scheduler: no push for each item, one nudge for all of them.
-		gap := s.o.NudgeGap
-		if gap <= 0 {
-			gap = defaultNudgeGap
-		}
-		s.nudge = &nudger{gap: gap, now: time.Now, fire: s.sendNudge}
-		opts = inboxOptions{onQueued: s.nudge.queued}
+		// No push for each item: a push for each message would stop the orchestrator's work
+		// again and again. The items queue, and one notice per batch says that they wait.
+		opts = inboxOptions{onQueued: s.queued}
 	}
 	s.inbox = newInbox(opts)
 	c, b := s.client, s.inbox
@@ -697,6 +685,7 @@ func (s *shim) wait(ctx context.Context, in waitIn) (any, error) {
 	items, ok := await(ctx, p, s.timeout(in.TimeoutS))
 	switch {
 	case ok:
+		s.signaled.Store(false)
 		s.report(activity{Kind: "wait_end", Result: "message"})
 		// A release can come with a task, which the queue holds: give both at once.
 		if slices.ContainsFunc(items, func(it item) bool { return it.notice != nil && it.notice.Kind == noticeReleased }) {
@@ -718,12 +707,65 @@ func (s *shim) takeInbox() (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if s.nudge != nil {
-		s.nudge.read()
-	}
+	s.signaled.Store(false)
 	v := view(inbox.take())
 	v.Dropped = inbox.dropped()
 	return v, nil
+}
+
+// queued runs when an item went to the orchestrator's queue. The first item of a batch sends
+// one notice; the next items send nothing until the orchestrator reads the queue.
+func (s *shim) queued() {
+	if s.signaled.CompareAndSwap(false, true) {
+		s.goRun(s.sendNudge)
+	}
+}
+
+// sendNudge pushes one line that says what waits. Without the channel there is no push: the
+// orchestrator then calls wait or inbox itself.
+func (s *shim) sendNudge() {
+	s.mu.Lock()
+	b := s.inbox
+	s.mu.Unlock()
+	if b == nil || !s.o.Push {
+		return
+	}
+	items := b.peek()
+	if len(items) == 0 {
+		s.signaled.Store(false)
+		return
+	}
+	if err := s.push(s.ctx, nudgeText(items), map[string]string{"kind": "notice", "notice": "waiting", "items": fmt.Sprint(len(items))}); err != nil {
+		// The next item tries again.
+		s.signaled.Store(false)
+		s.logf("coop: notice: %v", err)
+	}
+}
+
+// nudgeText says what waits, in one line.
+func nudgeText(items []item) string {
+	user, agents, notices := 0, 0, 0
+	for _, it := range items {
+		switch {
+		case it.msg != nil && it.msg.From == wire.Operator:
+			user++
+		case it.msg != nil:
+			agents++
+		default:
+			notices++
+		}
+	}
+	var parts []string
+	if user > 0 {
+		parts = append(parts, fmt.Sprintf("%d from the user", user))
+	}
+	if agents > 0 {
+		parts = append(parts, fmt.Sprintf("%d from agents", agents))
+	}
+	if notices > 0 {
+		parts = append(parts, fmt.Sprintf("%d notices", notices))
+	}
+	return fmt.Sprintf("%d items wait for you (%s). Finish your current step, then call inbox.", len(items), strings.Join(parts, ", "))
 }
 
 func (s *shim) history(ctx context.Context, in historyIn) (any, error) {
