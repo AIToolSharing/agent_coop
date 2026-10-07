@@ -33,11 +33,11 @@ func TestUsageAndVersion(t *testing.T) {
 	}
 }
 
-// hub stands in for a hub that knows an operator token and a machine token, and the tokens
-// orch.3 (orchestrator) and rep.4 (reporter).
+// hub stands in for a hub that knows an operator token and a machine token, and the token
+// orch.3 (orchestrator).
 func hub(t *testing.T, operator, machine string) *httptest.Server {
 	t.Helper()
-	roles := map[string]string{operator: "operator", machine: "machine", "orch.3": "orchestrator", "rep.4": "reporter"}
+	roles := map[string]string{operator: "operator", machine: "machine", "orch.3": "orchestrator"}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		switch {
@@ -99,13 +99,13 @@ func TestLoginStoresTheTokenUnderTheKeyOfItsRole(t *testing.T) {
 		t.Fatalf("env file %v", got)
 	}
 	// The tokens of the two other roles get keys of their own: no token replaces another.
-	for _, tok := range []string{"orch.3", "rep.4"} {
+	for _, tok := range []string{"orch.3"} {
 		if code := run([]string{"login", srv.URL, tok}, &out, &errOut); code != 0 {
 			t.Fatalf("%s: code %d: %s", tok, code, errOut.String())
 		}
 	}
 	got = config.ReadEnvFile(file, func(s string) { t.Fatal(s) })
-	if got["COOP_ORCHESTRATOR_TOKEN"] != "orch.3" || got["COOP_REPORTER_TOKEN"] != "rep.4" || got["COOP_TOKEN"] != "mac.2" || got["COOP_OPERATOR_TOKEN"] != "op.1" {
+	if got["COOP_ORCHESTRATOR_TOKEN"] != "orch.3" || got["COOP_TOKEN"] != "mac.2" || got["COOP_OPERATOR_TOKEN"] != "op.1" {
 		t.Fatalf("env file %v", got)
 	}
 	if !strings.Contains(out.String(), "coop --orchestrator claude") {
@@ -354,25 +354,20 @@ func TestGlobalAgentFlagSetsTheAgentName(t *testing.T) {
 	}
 }
 
-// --orchestrator and --reporter go only with claude, and need the token of the role.
+// --orchestrator goes only with claude, and needs the token of the role.
 func TestRoleFlagsGoWithClaudeAndNeedTheirToken(t *testing.T) {
 	home := t.TempDir()
 	setHome(t, home)
 	t.Setenv("COOP_ORCHESTRATOR_TOKEN", "")
-	t.Setenv("COOP_REPORTER_TOKEN", "")
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	defer func() { launchRole = "" }()
 	var out, errOut bytes.Buffer
-	if code := run([]string{"--reporter", "tui"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "goes with claude") {
-		t.Fatalf("--reporter tui: code %d stderr %q", code, errOut.String())
+	if code := run([]string{"--orchestrator", "tui"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "goes with claude") {
+		t.Fatalf("--orchestrator tui: code %d stderr %q", code, errOut.String())
 	}
 	errOut.Reset()
 	if code := run([]string{"--orchestrator", "--agent", "pm", "claude", "pipe-1"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "no orchestrator token (COOP_ORCHESTRATOR_TOKEN)") {
 		t.Fatalf("no orchestrator token: code %d stderr %q", code, errOut.String())
-	}
-	errOut.Reset()
-	if code := run([]string{"--reporter", "claude", "pipe-1"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "takes no session") {
-		t.Fatalf("reporter with a session: code %d stderr %q", code, errOut.String())
 	}
 }
 

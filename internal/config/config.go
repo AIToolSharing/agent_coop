@@ -23,15 +23,13 @@ type Config struct {
 	// of Role.
 	Token         string
 	OperatorToken string // the operator token, COOP_OPERATOR_TOKEN
-	// OrchestratorToken and ReporterToken are the tokens of the two other roles,
-	// COOP_ORCHESTRATOR_TOKEN and COOP_REPORTER_TOKEN.
+	// OrchestratorToken is the token of an orchestrator, COOP_ORCHESTRATOR_TOKEN.
 	OrchestratorToken string
-	ReporterToken     string
 	CertSHA256        string // the pinned hub certificate, COOP_CERT_SHA256 (hex); "" = none
 	Session           string // the session, or "" when the agent is in no session
 	Agent             string // the agent name; never empty
 	// Role is the role that this process acts in: "" for an agent with the machine token,
-	// orchestrator or reporter. It comes only from COOP_ROLE in env: the person who starts
+	// or orchestrator. It comes only from COOP_ROLE in env: the person who starts
 	// the process selects it.
 	Role  string
 	Push  bool // true when Claude Code loads the server as a channel
@@ -41,7 +39,7 @@ type Config struct {
 // Load finds the configuration. For each key, a value in env wins, and an empty value counts as
 // not set. COOP_SESSION and COOP_AGENT then come from the nearest .coop file (FindProjectFile)
 // from cwd, or else from CLAUDE_PROJECT_DIR in env. COOP_URL, the tokens (COOP_TOKEN,
-// COOP_OPERATOR_TOKEN, COOP_ORCHESTRATOR_TOKEN, COOP_REPORTER_TOKEN), COOP_CERT_SHA256 and
+// COOP_OPERATOR_TOKEN, COOP_ORCHESTRATOR_TOKEN), COOP_CERT_SHA256 and
 // COOP_PUSH then come from the credential file. A .coop file cannot set an address or a
 // token, because a repository can hold one. The default agent name always comes from cwd; in
 // the home directory (HOME in env) it is "agent".
@@ -89,7 +87,6 @@ func Load(env map[string]string, file string, warn func(string), cwd string) Con
 		Token:             pick("COOP_TOKEN", fromFile),
 		OperatorToken:     pick("COOP_OPERATOR_TOKEN", fromFile),
 		OrchestratorToken: pick("COOP_ORCHESTRATOR_TOKEN", fromFile),
-		ReporterToken:     pick("COOP_REPORTER_TOKEN", fromFile),
 		CertSHA256:        strings.ToLower(pick("COOP_CERT_SHA256", fromFile)),
 		Session:           session,
 		Agent:             agent,
@@ -101,11 +98,8 @@ func Load(env map[string]string, file string, warn func(string), cwd string) Con
 	case "", wire.RoleMachine:
 	case wire.RoleOrchestrator:
 		cfg.Role, cfg.Token = role, cfg.OrchestratorToken
-	case wire.RoleReporter:
-		// A reporter joins no session: it reads every session.
-		cfg.Role, cfg.Token, cfg.Session = role, cfg.ReporterToken, ""
 	default:
-		warn(fmt.Sprintf("COOP_ROLE %q is not orchestrator or reporter; ignoring it", role))
+		warn(fmt.Sprintf("COOP_ROLE %q is not orchestrator; ignoring it", role))
 	}
 	return cfg
 }

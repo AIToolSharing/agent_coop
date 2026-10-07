@@ -38,9 +38,8 @@ type Options struct {
 	Session string
 	// Agent is the agent name in the session.
 	Agent string
-	// Role is "" for an agent, or orchestrator or reporter (wire roles). An orchestrator gets
-	// the tools steer, sessions and read; a reporter joins no session and gets only sessions
-	// and read. Both need Admin.
+	// Role is "" for an agent, or orchestrator (a wire role). An orchestrator gets the tools
+	// steer, sessions and read. It needs Admin.
 	Role string
 	// Admin reaches the admin API with the token of Role.
 	Admin *admin.Client
@@ -277,14 +276,9 @@ func Serve(ctx context.Context, o Options) error {
 	tr := channel.Wrap(inner)
 	tr.Classic = true
 	runCtx, cancel := context.WithCancel(ctx)
-	if o.Role == wire.RoleReporter {
-		// A reporter is in no session: each tool names the session that it reads.
-		o.Session = ""
-	}
 	s := &shim{o: o, push: tr.Push, ctx: runCtx, link: link{kind: linkJoining}}
 
-	inSession := o.Session != "" && o.Role != wire.RoleReporter
-	reporter := o.Role == wire.RoleReporter && o.Admin != nil
+	inSession := o.Session != ""
 	orchestrator := o.Role == wire.RoleOrchestrator && o.Admin != nil
 	caps := &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}}
 	opts := &mcp.ServerOptions{
@@ -297,10 +291,7 @@ func Serve(ctx context.Context, o Options) error {
 			s.start(client)
 		},
 	}
-	switch {
-	case reporter:
-		opts.Instructions = reporterInstructions
-	case inSession:
+	if inSession {
 		opts.Instructions = instructions
 		if orchestrator {
 			opts.Instructions += orchestratorInstructions
@@ -311,9 +302,6 @@ func Serve(ctx context.Context, o Options) error {
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "coop", Version: version}, opts)
 	switch {
-	case reporter:
-		// A reporter joins no session: no stream, no pushes, no gate.
-		s.addReaderTools(server)
 	case inSession:
 		s.addTools(server)
 		if orchestrator {
@@ -377,7 +365,7 @@ const claudeCode = "claude-code"
 // start joins the session. It runs once, after the client has initialized.
 func (s *shim) start(client *mcp.Implementation) {
 	s.mu.Lock()
-	if s.o.Session == "" || s.o.Role == wire.RoleReporter || s.started {
+	if s.o.Session == "" || s.started {
 		s.mu.Unlock()
 		return
 	}

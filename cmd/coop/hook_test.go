@@ -461,8 +461,8 @@ func TestLaunchEnvNamesTheSessionAndTheAgent(t *testing.T) {
 	if has(env, "COOP_SESSION=") || has(env, "COOP_AGENT=from-dir") {
 		t.Errorf("no session, but %v", env)
 	}
-	// --orchestrator and --reporter set the role.
-	for _, role := range []string{"orchestrator", "reporter"} {
+	// --orchestrator sets the role.
+	for _, role := range []string{"orchestrator"} {
 		if env := launchEnv(map[string]string{"PATH": "/bin"}, "build-42", role, load); !has(env, "COOP_ROLE="+role) {
 			t.Errorf("%s: %v", role, env)
 		}

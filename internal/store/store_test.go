@@ -493,7 +493,7 @@ func TestTokens(t *testing.T) {
 	if _, err := s.IssueToken("x", "root", at); err == nil {
 		t.Fatal("bad role accepted")
 	}
-	for _, role := range []string{"orchestrator", "reporter"} {
+	for _, role := range []string{"orchestrator"} {
 		if _, got, ok := must3(s.VerifyToken(must(s.IssueToken("t-"+role, role, at)))); !ok || got != role {
 			t.Fatalf("%s token: role %q ok %v", role, got, ok)
 		}

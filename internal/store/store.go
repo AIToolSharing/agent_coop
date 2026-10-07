@@ -595,7 +595,7 @@ func (s *Store) KnownAgent(sid, agent string) (KnownRow, bool, error) {
 // TokenRow is one token: its name, role and dates. The secret is never stored.
 type TokenRow struct {
 	Name      string
-	Role      string // a wire role: machine, operator, orchestrator or reporter
+	Role      string // a wire role: machine, operator or orchestrator
 	CreatedAt string
 	RevokedAt string // "" while valid
 }

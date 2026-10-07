@@ -945,7 +945,7 @@ type AllMessagesQuery struct {
 }
 
 // AllMessages gives the messages of a session, each one, also those between two agents,
-// oldest first. The operator, an orchestrator and a reporter read them.
+// oldest first. The operator and an orchestrator read them.
 func (h *Hub) AllMessages(sid string, q AllMessagesQuery) ([]Message, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

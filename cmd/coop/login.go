@@ -23,7 +23,6 @@ var roleKeys = map[string]string{
 	wire.RoleMachine:      "COOP_TOKEN",
 	wire.RoleOperator:     "COOP_OPERATOR_TOKEN",
 	wire.RoleOrchestrator: "COOP_ORCHESTRATOR_TOKEN",
-	wire.RoleReporter:     "COOP_REPORTER_TOKEN",
 }
 
 // hubIdentity is what the hub says of a token and of itself.
@@ -113,8 +112,6 @@ func cmdLogin(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "next:  coop tui")
 	case wire.RoleOrchestrator:
 		fmt.Fprintln(stdout, "next:  coop --orchestrator claude <session>   # an agent that may also act for the operator")
-	case wire.RoleReporter:
-		fmt.Fprintln(stdout, "next:  coop --reporter claude                 # an agent that reads every session")
 	default:
 		fmt.Fprintln(stdout, "next:  cd <project> && coop session <name>   # put the project's agents in a session")
 		fmt.Fprintln(stdout, "       coop claude                           # Claude Code with the coop channel")

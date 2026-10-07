@@ -69,9 +69,9 @@ const (
 // An orchestrator is an agent that may also act for the operator. It sends as itself, so that
 // agents and the gates of a workflow can tell it from the human.
 var mayUse = map[kind][]string{
-	kindAny:      {wire.RoleMachine, wire.RoleOperator, wire.RoleOrchestrator, wire.RoleReporter},
+	kindAny:      {wire.RoleMachine, wire.RoleOperator, wire.RoleOrchestrator},
 	kindAgent:    {wire.RoleMachine, wire.RoleOrchestrator},
-	kindRead:     {wire.RoleOperator, wire.RoleOrchestrator, wire.RoleReporter},
+	kindRead:     {wire.RoleOperator, wire.RoleOrchestrator},
 	kindAct:      {wire.RoleOperator, wire.RoleOrchestrator},
 	kindOperator: {wire.RoleOperator},
 }

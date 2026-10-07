@@ -82,7 +82,7 @@ func cmdUpgrade(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	cfg := config.Load(environ(), config.DefaultEnvFile(), func(string) {}, cwd())
-	token := cmp.Or(cfg.Token, cfg.OperatorToken, cfg.OrchestratorToken, cfg.ReporterToken)
+	token := cmp.Or(cfg.Token, cfg.OperatorToken, cfg.OrchestratorToken)
 	if cfg.URL == "" || token == "" {
 		fmt.Fprintln(stderr, "no hub address or no token: run coop login <url> <token>")
 		return 1

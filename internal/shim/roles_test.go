@@ -40,7 +40,7 @@ func startRealHub(t *testing.T) *realHub {
 		_ = st.Close()
 	})
 	r := &realHub{url: srv.URL, tokens: map[string]string{}}
-	for role, name := range map[string]string{wire.RoleMachine: "mac-1", wire.RoleOperator: "matt", wire.RoleOrchestrator: "orch", wire.RoleReporter: "rep"} {
+	for role, name := range map[string]string{wire.RoleMachine: "mac-1", wire.RoleOperator: "matt", wire.RoleOrchestrator: "orch"} {
 		if r.tokens[role], err = st.IssueToken(name, role, "2026-10-04T12:00:00.000Z"); err != nil {
 			t.Fatal(err)
 		}
@@ -51,7 +51,7 @@ func startRealHub(t *testing.T) *realHub {
 
 func (r *realHub) options(role, session, agent string) Options {
 	o := Options{URL: r.url, Token: r.tokens[role], Session: session, Agent: agent, Host: "host", Cwd: "/work", second: 10 * time.Millisecond}
-	if role == wire.RoleOrchestrator || role == wire.RoleReporter {
+	if role == wire.RoleOrchestrator {
 		o.Role = role
 		o.Admin = &admin.Client{Base: r.url, Token: r.tokens[role]}
 	}
@@ -176,55 +176,6 @@ func TestTheOrchestratorSteersTheSessionWithItsTools(t *testing.T) {
 			t.Fatal("the orchestrator did not learn that the operator paused it")
 		}
 		time.Sleep(20 * time.Millisecond)
-	}
-}
-
-// A reporter joins no session and changes nothing. It reads each session and its agents.
-func TestTheReporterOnlyReads(t *testing.T) {
-	r := startRealHub(t)
-	w1 := start(t, r.options(wire.RoleMachine, "pipe-1", "w1"))
-	joined(t, w1)
-	if err := r.op.SetGate(context.Background(), "pipe-1", "w1@mac-1", wire.GateRun); err != nil {
-		t.Fatal(err)
-	}
-	w1.json("set_state", map[string]any{"state": "working", "note": "T1"})
-	w1.json("send", map[string]any{"to": "operator", "text": "DONE .pipeline/research.md"})
-
-	// A session in its options does not make it join.
-	rep := start(t, r.options(wire.RoleReporter, "pipe-1", "rep"))
-	if got := strings.Join(toolNamesOf(t, rep), " "); got != "read sessions" {
-		t.Fatalf("reporter tools: %s", got)
-	}
-	if !strings.Contains(rep.cs.InitializeResult().Instructions, "You change nothing") {
-		t.Fatal("no reporter instructions")
-	}
-	b, _ := json.Marshal(rep.json("sessions", nil))
-	for _, want := range []string{`"session":"pipe-1"`, `"name":"w1@mac-1"`, `"state":"working"`, `"note":"T1"`, `"gate":"run"`} {
-		if !strings.Contains(string(b), want) {
-			t.Errorf("sessions lack %s: %s", want, b)
-		}
-	}
-	read := rep.json("read", map[string]any{"session": "pipe-1"})
-	msgs, _ := read["messages"].([]any)
-	if len(msgs) != 1 || !strings.Contains(fmt.Sprint(msgs[0]), "DONE .pipeline/research.md") {
-		t.Fatalf("read %v", read)
-	}
-	id := msgs[0].(map[string]any)["id"].(string)
-	if after := rep.json("read", map[string]any{"session": "pipe-1", "after": id}); len(after["messages"].([]any)) != 0 {
-		t.Fatalf("read after the last id: %v", after)
-	}
-	if res := rep.tool("read", map[string]any{}); !res.isError {
-		t.Fatalf("read with no session: %s", res.text)
-	}
-	// The reporter is not in the session: the operator's list does not have it.
-	v, err := r.op.Session(context.Background(), "pipe-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, a := range v.Agents {
-		if strings.HasPrefix(a.Name, "rep@") {
-			t.Fatalf("the reporter joined: %+v", v.Agents)
-		}
 	}
 }
 

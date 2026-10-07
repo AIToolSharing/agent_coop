@@ -434,7 +434,7 @@ func TestLoadTakesThePinnedCertificateFromTheCredentialFile(t *testing.T) {
 func TestTheRoleSelectsItsTokenAndOnlyEnvSetsIt(t *testing.T) {
 	dir := t.TempDir()
 	cred := filepath.Join(dir, "env")
-	writeFile(t, cred, "COOP_TOKEN=mac.m\nCOOP_ORCHESTRATOR_TOKEN=orch.o\nCOOP_REPORTER_TOKEN=rep.r\nCOOP_ROLE=orchestrator\n", 0o600)
+	writeFile(t, cred, "COOP_TOKEN=mac.m\nCOOP_ORCHESTRATOR_TOKEN=orch.o\nCOOP_ROLE=orchestrator\n", 0o600)
 	project := t.TempDir()
 	writeFile(t, filepath.Join(project, ".coop"), "COOP_SESSION=build-42\nCOOP_ROLE=orchestrator\n", 0o644)
 	none := func(string) {}
@@ -443,10 +443,6 @@ func TestTheRoleSelectsItsTokenAndOnlyEnvSetsIt(t *testing.T) {
 	}
 	if c := config.Load(map[string]string{"COOP_ROLE": "orchestrator"}, cred, none, project); c.Role != "orchestrator" || c.Token != "orch.o" || c.Session != "build-42" {
 		t.Fatalf("orchestrator: %+v", c)
-	}
-	// A reporter is in no session, also when a .coop file names one.
-	if c := config.Load(map[string]string{"COOP_ROLE": "reporter"}, cred, none, project); c.Role != "reporter" || c.Token != "rep.r" || c.Session != "" {
-		t.Fatalf("reporter: %+v", c)
 	}
 	var warned string
 	if c := config.Load(map[string]string{"COOP_ROLE": "operator"}, cred, func(s string) { warned = s }, project); c.Role != "" || c.Token != "mac.m" || !strings.Contains(warned, "COOP_ROLE") {

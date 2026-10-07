@@ -26,8 +26,6 @@ const usageText = `usage:
   coop --orchestrator claude <session> ...
                                   the same, as an orchestrator: it may also release, pause,
                                   stop agents and set up sessions (COOP_ORCHESTRATOR_TOKEN)
-  coop --reporter claude ...      Claude Code that reads every session and changes nothing
-                                  (COOP_REPORTER_TOKEN)
   coop start [-n] [-u <user>] [-a <agent>] <machine> <directory> <session> [claude args]
                                   start an agent on another machine over SSH
   coop tui [--url <url>] [--token <token>]
@@ -50,13 +48,13 @@ func main() {
 }
 
 // launchRole is the role that `coop claude` starts Claude Code in: "" for an agent, or the
-// role of --orchestrator or --reporter.
+// role of --orchestrator.
 var launchRole string
 
 func run(args []string, stdout, stderr io.Writer) int {
-	// --orchestrator and --reporter select the role of the agent that `coop claude` starts.
+	// --orchestrator selects the role of the agent that `coop claude` starts.
 	// They come before the command, as --agent does.
-	for len(args) > 0 && (args[0] == "--orchestrator" || args[0] == "--reporter") {
+	for len(args) > 0 && args[0] == "--orchestrator" {
 		launchRole, args = strings.TrimPrefix(args[0], "--"), args[1:]
 	}
 	// A global --agent <name> names the agent for this run, as COOP_AGENT does. It comes before
@@ -77,7 +75,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		os.Setenv("COOP_AGENT", name)
 	}
-	for len(args) > 0 && (args[0] == "--orchestrator" || args[0] == "--reporter") {
+	for len(args) > 0 && args[0] == "--orchestrator" {
 		launchRole, args = strings.TrimPrefix(args[0], "--"), args[1:]
 	}
 	if len(args) == 0 {

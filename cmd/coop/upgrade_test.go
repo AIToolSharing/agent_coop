@@ -66,7 +66,7 @@ func device(t *testing.T, h *distHub, path string) {
 		t.Skip("the stand-in binary is a shell script")
 	}
 	setHome(t, t.TempDir())
-	for _, key := range []string{"XDG_CONFIG_HOME", "COOP_URL", "COOP_TOKEN", "COOP_OPERATOR_TOKEN", "COOP_ORCHESTRATOR_TOKEN", "COOP_REPORTER_TOKEN", "COOP_CERT_SHA256", "COOP_SESSION", "COOP_AGENT", "CLAUDE_PROJECT_DIR", "CLAUDE_CONFIG_DIR"} {
+	for _, key := range []string{"XDG_CONFIG_HOME", "COOP_URL", "COOP_TOKEN", "COOP_OPERATOR_TOKEN", "COOP_ORCHESTRATOR_TOKEN", "COOP_CERT_SHA256", "COOP_SESSION", "COOP_AGENT", "CLAUDE_PROJECT_DIR", "CLAUDE_CONFIG_DIR"} {
 		t.Setenv(key, "")
 	}
 	t.Chdir(t.TempDir())
@@ -216,7 +216,7 @@ func TestUpgradeKeepsTheOldBinaryWhenItCannotUpgrade(t *testing.T) {
 			t.Skip("as the other cases")
 		}
 		setHome(t, t.TempDir())
-		for _, key := range []string{"XDG_CONFIG_HOME", "COOP_URL", "COOP_TOKEN", "COOP_OPERATOR_TOKEN", "COOP_ORCHESTRATOR_TOKEN", "COOP_REPORTER_TOKEN"} {
+		for _, key := range []string{"XDG_CONFIG_HOME", "COOP_URL", "COOP_TOKEN", "COOP_OPERATOR_TOKEN", "COOP_ORCHESTRATOR_TOKEN"} {
 			t.Setenv(key, "")
 		}
 		if code, _, errOut := upgrade(t); code != 1 || !strings.Contains(errOut, "coop login") {

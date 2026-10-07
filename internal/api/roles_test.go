@@ -19,21 +19,20 @@ func (h *harness) roleToken(name, role string) string {
 	return tok
 }
 
-// The rules of the four token roles. A machine token acts as agents. The operator is the
+// The rules of the three token roles. A machine token acts as agents. The operator is the
 // human. An orchestrator is an agent that may also do what the operator does, but it sends
-// as itself, never as the operator. A reporter only reads.
+// as itself, never as the operator.
 func TestEachRoleReachesOnlyItsRoutes(t *testing.T) {
 	h := startHub(t, limits{}, options{autoCreate: true})
 	tokens := map[string]string{
 		wire.RoleMachine:      h.roleToken("mac-1", wire.RoleMachine),
 		wire.RoleOperator:     h.roleToken("matt", wire.RoleOperator),
 		wire.RoleOrchestrator: h.roleToken("orch", wire.RoleOrchestrator),
-		wire.RoleReporter:     h.roleToken("rep", wire.RoleReporter),
 	}
 	agent := []string{wire.RoleMachine, wire.RoleOrchestrator}
-	read := []string{wire.RoleOperator, wire.RoleOrchestrator, wire.RoleReporter}
+	read := []string{wire.RoleOperator, wire.RoleOrchestrator}
 	act := []string{wire.RoleOperator, wire.RoleOrchestrator}
-	all := []string{wire.RoleMachine, wire.RoleOperator, wire.RoleOrchestrator, wire.RoleReporter}
+	all := []string{wire.RoleMachine, wire.RoleOperator, wire.RoleOrchestrator}
 	// Each route of the hub, with the roles that may use it.
 	routes := map[string][]string{
 		"GET /v1/whoami":                         all,
@@ -102,7 +101,7 @@ func TestEachRoleReachesOnlyItsRoutes(t *testing.T) {
 // coop login and coop doctor learn the role of a token from the hub.
 func TestWhoamiGivesTheNameAndTheRole(t *testing.T) {
 	h := startHub(t, limits{}, options{autoCreate: true})
-	for _, role := range []string{wire.RoleMachine, wire.RoleOperator, wire.RoleOrchestrator, wire.RoleReporter} {
+	for _, role := range []string{wire.RoleMachine, wire.RoleOperator, wire.RoleOrchestrator} {
 		got := parse[struct {
 			Name string `json:"name"`
 			Role string `json:"role"`
@@ -128,7 +127,6 @@ func TestAnOrchestratorRunsASessionForTheOperator(t *testing.T) {
 	orchTok := h.roleToken("orch", wire.RoleOrchestrator)
 	orch := api{base: h.base, token: orchTok}
 	oadm := admin{h.base, orchTok}
-	rep := admin{h.base, h.roleToken("rep", wire.RoleReporter)}
 	sid := "pipe-1"
 	gateOf := func(a api, agent string) string {
 		t.Helper()
@@ -189,12 +187,12 @@ func TestAnOrchestratorRunsASessionForTheOperator(t *testing.T) {
 		t.Fatalf("%d kick records", kicks)
 	}
 
-	// The orchestrator and the reporter read the messages between two other agents.
+	// The orchestrator reads the messages between two other agents.
 	w3 := mac.stream(sid, "w3")
 	defer w3.close()
 	w3.wait(t, nil)
 	id := parse[sendResponse](t, wantStatus(t, 200)(mac.send(sid, "w1", "w3@mac-1", "API changed: see T2", ""))).ID
-	for name, reader := range map[string]admin{"orchestrator": oadm, "reporter": rep} {
+	for name, reader := range map[string]admin{"orchestrator": oadm} {
 		msgs := parse[struct {
 			Messages []apiMessage `json:"messages"`
 		}](t, wantStatus(t, 200)(reader.req("GET", "/sessions/"+sid+"/messages", nil))).Messages
@@ -233,9 +231,9 @@ func TestAnOrchestratorRunsASessionForTheOperator(t *testing.T) {
 			t.Fatalf("%s: session view %+v\n got %v\nwant %v (a removed agent is not listed)", name, view, got, want)
 		}
 	}
-	wantStatus(t, 404)(rep.req("GET", "/sessions/nosuch/messages", nil))
-	wantStatus(t, 422)(rep.req("GET", "/sessions/"+sid+"/messages?after=x", nil))
-	wantStatus(t, 422)(rep.req("GET", "/sessions/"+sid+"/messages?limit=0", nil))
+	wantStatus(t, 404)(oadm.req("GET", "/sessions/nosuch/messages", nil))
+	wantStatus(t, 422)(oadm.req("GET", "/sessions/"+sid+"/messages?after=x", nil))
+	wantStatus(t, 422)(oadm.req("GET", "/sessions/"+sid+"/messages?limit=0", nil))
 
 	// The orchestrator sends as itself. It cannot send as the operator.
 	msg := parse[sendResponse](t, wantStatus(t, 200)(orch.send(sid, "pm", "operator", "Gate 1: approve the stories?", "")))

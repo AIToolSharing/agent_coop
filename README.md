@@ -347,17 +347,6 @@ with `★`, and the timeline names it: "released by the orchestrator <name>".
 An agent that the orchestrator starts with `coop claude` is a plain agent. The flag does not
 pass to it.
 
-### Read every session: the reporter
-
-A reporter is a Claude Code session that reads every session and changes nothing. It joins no
-session, so the TUI does not list it. It has two tools, `sessions` and `read`.
-
-```bash
-ssh <server> 'sudo -u coop coop admin token add --role reporter <name>'
-coop login <hub address> <reporter token>
-coop --reporter claude
-```
-
 ### Give work to a free agent: `any`
 
 A `send` or an `ask` to `any` goes to one agent. The hub picks the agent, and the result names
@@ -476,7 +465,6 @@ Protected:
   | `machine` | yes | no | no | no |
   | `operator` | no | yes | yes | yes |
   | `orchestrator` | yes | yes | yes | no |
-  | `reporter` | no | yes | no | no |
 
   Only the person who starts a process selects its role (`coop --orchestrator claude`). A
   credential file or a `.coop` file cannot.

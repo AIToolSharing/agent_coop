@@ -79,12 +79,9 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 			}
 			check(cfg.Token, wire.RoleMachine, "COOP_TOKEN")
 			check(cfg.OperatorToken, wire.RoleOperator, "COOP_OPERATOR_TOKEN")
-			// The tokens of the two other roles are not needed on each machine.
+			// The orchestrator token is not needed on each machine.
 			if cfg.OrchestratorToken != "" {
 				check(cfg.OrchestratorToken, wire.RoleOrchestrator, "COOP_ORCHESTRATOR_TOKEN")
-			}
-			if cfg.ReporterToken != "" {
-				check(cfg.ReporterToken, wire.RoleReporter, "COOP_REPORTER_TOKEN")
 			}
 			// The hub and its devices must have one version: a part drops a message that only a
 			// newer schema allows. A build from a clone is never equal, so this is a note.

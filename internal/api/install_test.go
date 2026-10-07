@@ -96,7 +96,7 @@ func distDir(t *testing.T) (dir string, files map[string]string) {
 func TestTheHubGivesItsBinariesToEachValidToken(t *testing.T) {
 	dir, files := distDir(t)
 	h := startHub(t, limits{}, options{autoCreate: true, dist: dir})
-	for _, role := range []string{wire.RoleMachine, wire.RoleOperator, wire.RoleOrchestrator, wire.RoleReporter} {
+	for _, role := range []string{wire.RoleMachine, wire.RoleOperator, wire.RoleOrchestrator} {
 		status, header, body := get(t, h.base+"/dl/coop-linux-amd64", h.roleToken("t-"+role, role))
 		if status != 200 || string(body) != files["coop-linux-amd64"] || header.Get("Content-Type") != "application/octet-stream" {
 			t.Errorf("%s token: %d %q %q", role, status, body, header.Get("Content-Type"))
