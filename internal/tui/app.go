@@ -655,20 +655,6 @@ func (a *App) wheel(m tea.Mouse) tea.Cmd {
 	return a.scrollBy(s, delta, true)
 }
 
-// --- Actions -----------------------------------------------------------------------------------
-
-func (a *App) act(f func(ctx context.Context) (string, error)) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
-		defer cancel()
-		status, err := f(ctx)
-		if err != nil {
-			return statusMsg("error: " + err.Error())
-		}
-		return statusMsg(status)
-	}
-}
-
 // --- View --------------------------------------------------------------------------------------
 
 func (a *App) View() tea.View {

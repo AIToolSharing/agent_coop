@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"unicode/utf8"
 
@@ -41,15 +42,6 @@ func isText(s string) bool { n := runes(s); return n >= 1 && n <= wire.MaxText }
 
 var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
 
-func oneOf(s string, xs ...string) bool {
-	for _, x := range xs {
-		if s == x {
-			return true
-		}
-	}
-	return false
-}
-
 // optString is an optional string field. An absent field is fine; a JSON null is not, as with
 // zod's `.optional()`. Found by Schemathesis: a null was taken as absent.
 type optString struct {
@@ -82,7 +74,7 @@ func decodeStrict(body []byte, v any) error {
 func query(q url.Values, keys ...string) (map[string]string, error) {
 	out := map[string]string{}
 	for k, vs := range q {
-		if !oneOf(k, keys...) {
+		if !slices.Contains(keys, k) {
 			return nil, invalid("unknown query parameter " + k)
 		}
 		if len(vs) > 0 {
@@ -205,7 +197,7 @@ func parseActivity(body []byte) (hub.ActivityRequest, error) {
 	// allow names the fields of the kind; any other set field fails.
 	allow := func(fields ...string) error {
 		for f, isSet := range set {
-			if isSet && !oneOf(f, fields...) {
+			if isSet && !slices.Contains(fields, f) {
 				return invalid("unknown field " + f + " for kind " + r.Kind)
 			}
 		}
@@ -216,7 +208,7 @@ func parseActivity(body []byte) (hub.ActivityRequest, error) {
 		if err := allow("state", "note"); err != nil {
 			return r, err
 		}
-		if !oneOf(b.State.val, "working", "blocked", "done", "idle") {
+		if !slices.Contains([]string{"working", "blocked", "done", "idle"}, b.State.val) {
 			return r, invalid("state: working, blocked, done or idle")
 		}
 		if runes(b.Note.val) > 500 {
@@ -245,7 +237,7 @@ func parseActivity(body []byte) (hub.ActivityRequest, error) {
 		if err := allow("result"); err != nil {
 			return r, err
 		}
-		if !oneOf(b.Result.val, "message", "timeout", "cancelled") {
+		if !slices.Contains([]string{"message", "timeout", "cancelled"}, b.Result.val) {
 			return r, invalid("result: message, timeout or cancelled")
 		}
 		r.Result = b.Result.val

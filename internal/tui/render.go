@@ -207,9 +207,14 @@ func (a *App) command(line string, s screen) tea.Cmd {
 			return needSession()
 		}
 		return confirm("delete "+session+" and its messages? (y/n)", func() tea.Cmd {
-			return a.act(func(ctx context.Context) (string, error) {
-				return "deleted " + session, a.op.DeleteSession(ctx, session)
-			})
+			return func() tea.Msg {
+				ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+				defer cancel()
+				if err := a.op.DeleteSession(ctx, session); err != nil {
+					return statusMsg("error: " + err.Error())
+				}
+				return statusMsg("deleted " + session)
+			}
 		})
 	case "filter":
 		if arg == "" {

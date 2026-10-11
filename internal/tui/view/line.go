@@ -4,6 +4,7 @@
 package view
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -190,27 +191,13 @@ func Age(iso string, now time.Time) string {
 	s := int64(max(0, now.Sub(t).Round(time.Second)) / time.Second)
 	switch {
 	case s < 60:
-		return itoa(s) + "s"
+		return strconv.FormatInt(s, 10) + "s"
 	case s < 3600:
-		return itoa(s/60) + "m"
+		return strconv.FormatInt(s/60, 10) + "m"
 	case s < 86400:
-		return itoa(s/3600) + "h"
+		return strconv.FormatInt(s/3600, 10) + "h"
 	}
-	return itoa(s/86400) + "d"
-}
-
-func itoa(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
+	return strconv.FormatInt(s/86400, 10) + "d"
 }
 
 // StateColor is the color of an agent state.

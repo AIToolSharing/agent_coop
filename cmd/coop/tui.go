@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -72,5 +71,3 @@ func cmdTUI(args []string, stderr io.Writer) int {
 	}
 	return 0
 }
-
-var _ = os.Exit

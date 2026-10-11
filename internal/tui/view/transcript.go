@@ -1,6 +1,7 @@
 package view
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/AIToolSharing/agent_coop/internal/model"
@@ -145,7 +146,7 @@ func (t *Transcript) message(v *model.Session, m *model.Msg, o Options) {
 func Header(m *model.Msg, o Options, all bool) Line {
 	right := Line{Dim("#" + m.ID)}
 	if n := len(m.Replies); n > 0 {
-		right = append(right, Color("  ↳"+itoa(int64(n)), "cyan"))
+		right = append(right, Color("  ↳"+strconv.Itoa(n), "cyan"))
 	}
 	left := Line{Dim(Clock(m.SentAt, o.loc())), S("  ")}
 	if all {

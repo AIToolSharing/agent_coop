@@ -1,6 +1,7 @@
 package view
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/AIToolSharing/agent_coop/internal/model"
@@ -15,7 +16,7 @@ func RenderThreads(v *model.Session, o Options) Rendered {
 		r.IDs = append(r.IDs, id)
 	}
 	asks := v.OpenAsks()
-	add(Line{Bold("OPEN ASKS (" + itoa(int64(len(asks))) + ")")}, "")
+	add(Line{Bold("OPEN ASKS (" + strconv.Itoa(len(asks)) + ")")}, "")
 	if len(asks) == 0 {
 		add(Line{Dim("  none")}, "")
 	}

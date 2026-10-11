@@ -1,6 +1,7 @@
 package view
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/AIToolSharing/agent_coop/internal/model"
@@ -62,7 +63,7 @@ func RenderAgent(v *model.Session, address string, o Options) Rendered {
 	if a.Left != nil {
 		add(kv("left", Clock(a.Left.At, o.loc())+" ("+a.Left.Reason+")", Style{}), "")
 	}
-	add(kv("messages", "sent "+itoa(int64(a.Sent)), Style{}), "")
+	add(kv("messages", "sent "+strconv.Itoa(a.Sent), Style{}), "")
 	add(Line{S("")}, "")
 	add(Line{Bold("TIMELINE")}, "")
 	for _, it := range v.Timeline {
@@ -127,7 +128,7 @@ func RenderMessage(v *model.Session, id string, o Options) Rendered {
 	}
 	if len(m.Replies) > 0 {
 		add(Line{S("")}, "")
-		add(Line{Bold("REPLIES (" + itoa(int64(len(m.Replies))) + ")")}, "")
+		add(Line{Bold("REPLIES (" + strconv.Itoa(len(m.Replies)) + ")")}, "")
 		for _, c := range m.Replies {
 			add(Line{Dim("  #" + c.ID + " "), Bold(c.From)}, c.ID)
 			for _, line := range Wrap(c.Text, max(10, o.Width-4)) {

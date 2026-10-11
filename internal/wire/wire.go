@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -264,15 +265,6 @@ func isWaitTarget(s string) bool {
 	return ok
 }
 
-func oneOf(s string, xs ...string) bool {
-	for _, x := range xs {
-		if s == x {
-			return true
-		}
-	}
-	return false
-}
-
 // DecodeEvent reads one stored event. An unknown subject or a bad payload gives false. An
 // event of a kind that this version dropped (a kick or a redact on ops, a gate or a forgotten
 // activity) gives false too: a log of an older hub holds such events.
@@ -320,13 +312,13 @@ func validActivity(a Activity) bool {
 		return a.Host != "" && a.Cwd != "" && a.Client.Name != ""
 	case "left":
 		// kicked is the reason of an older hub that could remove an agent.
-		return oneOf(a.Reason, "disconnected", "kicked", "revoked", "closed")
+		return slices.Contains([]string{"disconnected", "kicked", "revoked", "closed"}, a.Reason)
 	case "state":
-		return oneOf(a.State, "working", "blocked", "done", "idle") && len([]rune(a.Note)) <= 500
+		return slices.Contains([]string{"working", "blocked", "done", "idle"}, a.State) && len([]rune(a.Note)) <= 500
 	case "wait_start":
 		return (a.From == "" || isWaitTarget(a.From)) && optionalID(a.ReplyTo) && a.TimeoutS >= 1 && a.TimeoutS <= 600
 	case "wait_end":
-		return oneOf(a.Result, "message", "timeout", "cancelled")
+		return slices.Contains([]string{"message", "timeout", "cancelled"}, a.Result)
 	case "refused":
 		return a.Reason == "taken"
 	}

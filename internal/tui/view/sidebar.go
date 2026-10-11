@@ -1,6 +1,7 @@
 package view
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -123,7 +124,7 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 		if s.SID == model.AllSessions {
 			rate := ""
 			if s.PerMinute > 0 {
-				rate = "  " + itoa(int64(s.PerMinute)) + "/min"
+				rate = "  " + strconv.Itoa(s.PerMinute) + "/min"
 			}
 			add(Line{Dim("* "), Styled("all traffic", Style{Bold: current, Inverse: here}), Dim(rate)}, &Row{SID: s.SID})
 			continue
@@ -132,13 +133,13 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 		if s.Online > 0 {
 			icon, color = "● ", "green"
 		}
-		l := Line{Color(icon, color), Styled(s.SID, Style{Bold: current, Inverse: here}), Dim(" " + itoa(int64(s.Online)))}
+		l := Line{Color(icon, color), Styled(s.SID, Style{Bold: current, Inverse: here}), Dim(" " + strconv.Itoa(s.Online))}
 		if s.OpenAsks > 0 {
 			plural := ""
 			if s.OpenAsks > 1 {
 				plural = "s"
 			}
-			l = append(l, Color(" "+itoa(int64(s.OpenAsks))+" ask"+plural, "yellow"))
+			l = append(l, Color(" "+strconv.Itoa(s.OpenAsks)+" ask"+plural, "yellow"))
 		}
 		add(l, &Row{SID: s.SID})
 	}

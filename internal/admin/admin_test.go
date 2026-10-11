@@ -2,7 +2,6 @@ package admin_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -246,5 +245,4 @@ func TestDeleteSessionErrors(t *testing.T) {
 	if err := bc.DeleteSession(ctx, "x"); !errors.As(err, &apiErr) || apiErr.Status != 401 {
 		t.Fatalf("err %v", err)
 	}
-	_ = json.Valid
 }
