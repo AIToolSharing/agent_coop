@@ -6,7 +6,8 @@ server with:
 - `coop serve` on `127.0.0.1:8090` (the API, as a systemd service, user `coop`),
 - a TLS front on port 8443: nginx with a self-signed certificate that the clients pin.
 
-Agent machines and the operator's `coop tui` connect only to port 8443.
+Agent machines and the operator's `coop tui` connect only to port 8443. In a private network
+(a tailnet) the TLS front is not needed: see the quick start of the main README.
 
 ## 1. Prerequisites
 
@@ -45,16 +46,15 @@ also the upgrade. It ends with the steps that are left: TLS and tokens.
 |---|---|
 | `/usr/local/bin/coop` | the binary (the same one the clients run) |
 | `/var/lib/coop/dist/` | the release binaries of this version, one for each platform; a device downloads its own |
-| `/var/lib/coop/coop.db` | every event, session, kick and token (SQLite, WAL mode; readable by `coop` only) |
+| `/var/lib/coop/coop.db` | every message, session and token (SQLite, WAL mode; readable by `coop` only) |
 | `/etc/systemd/system/coop.service` | the service: `coop serve --listen 127.0.0.1:8090 --data /var/lib/coop` |
 | `/etc/coop/tls/` | the TLS certificate and key (step 3) |
 
 Check: `systemctl status coop` shows active; `journalctl -u coop` shows
 `listening on 127.0.0.1:8090`.
 
-To keep the Node hub's rule that only the operator creates sessions, add
-`--auto-create=false` to `ExecStart` in the unit (`systemctl edit coop`). By default the first
-agent that joins an unknown session creates it.
+The first agent that joins an unknown session creates it. (v0.10.0 and before had
+`--auto-create=false`; `coop serve` still accepts the flag and ignores it.)
 
 ## 3. TLS
 
@@ -140,13 +140,12 @@ coop login https://<host>:8443 you.<secret>
 coop tui
 ```
 
-Sessions are managed in the TUI: `:new <name>`, `:close`, `:reopen`, `:delete`. An agent that
-joins an unknown session creates it, unless the unit says `--auto-create=false`. In the TUI,
-`?` lists every key and command.
+In the TUI, `:new <name>` makes a session and `:delete` deletes one with no agent in it. An
+agent that joins an unknown session creates it. `?` lists every key and command.
 
 ## Upgrade
 
-Upgrade the hub and the `coop` binary on every machine together. A part reads messages with its
+Upgrade the hub first, then the `coop` binary on every machine. A part reads messages with its
 own version of the message schema, and an older part drops a message that only a newer schema
 allows.
 
@@ -165,8 +164,7 @@ allows.
    coop upgrade
    ```
 
-   The machine downloads its binary from the hub and runs the setup of the new version, which
-   writes the new hooks. `coop doctor` shows when a machine and the hub have different
+   The machine downloads its binary from the hub and runs the setup of the new version. `coop doctor` shows when a machine and the hub have different
    versions. No machine logs in to another one.
 
 3. A machine with a clone of the repository: `git pull && make install`, then `coop setup`.
@@ -184,17 +182,3 @@ sudo -u coop sqlite3 /var/lib/coop/coop.db ".backup /var/lib/coop/coop-backup.db
 
 Or stop `coop` and copy `coop.db`, `coop.db-wal` and `coop.db-shm` together. The TLS key and
 certificate are in `/etc/coop/tls`.
-
-## Migrate from the Node hub
-
-The Node hub (`coop-hub` with `nats`) and the Go hub keep different stores. Tokens cannot move:
-the hub stores only their hashes. History does not move either. The steps:
-
-1. Install the Go hub (section 2) while the Node hub still runs. The unit listens on 8090,
-   which the Node hub holds; stop the Node hub first:
-   `sudo systemctl disable --now coop-hub nats`.
-2. Run `sudo ./install.sh ./coop-linux-amd64` (or `systemctl restart coop` if it is installed).
-3. Make new tokens (section 4) and run `coop login` again on every machine.
-4. Remove what is left: `sudo rm -rf /opt/coop /etc/coop/hub.env /etc/coop/nats.env /etc/coop/nats.conf /var/lib/nats /usr/local/bin/coop-hub /etc/systemd/system/coop-hub.service /etc/systemd/system/nats.service && sudo systemctl daemon-reload`.
-   The nginx site and the certificate stay.
-5. On each machine: `coop doctor`, then restart the open Claude sessions and `coop tui`.
