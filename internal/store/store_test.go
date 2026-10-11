@@ -62,8 +62,7 @@ func genEvent(t *rapid.T) wire.Event {
 	addr := func(label string) string {
 		return rapid.SampledFrom([]string{"alice@mac-1", "bob@vps-2", "carol@mac-3"}).Draw(t, label)
 	}
-	switch rapid.IntRange(0, 3).Draw(t, "kind") {
-	case 0:
+	if rapid.Bool().Draw(t, "message") {
 		from := rapid.SampledFrom([]string{wire.Operator, addr("from")}).Draw(t, "sender")
 		to := rapid.SampledFrom([]string{wire.Broadcast, wire.Operator, addr("to")}).Draw(t, "recipient")
 		e := msg(sid, from, to, rapid.StringMatching(`[a-z ]{1,20}`).Draw(t, "text"))
@@ -71,10 +70,6 @@ func genEvent(t *rapid.T) wire.Event {
 			e.ReplyTo = "7"
 		}
 		return e
-	case 1:
-		return wire.Event{Kind: wire.EventKick, SID: sid, Target: addr("target"), At: at}
-	case 2:
-		return wire.Event{Kind: wire.EventRedact, SID: sid, ID: "3", At: at}
 	}
 	kind := rapid.SampledFrom([]string{"joined", "left", "state", "wait_start", "wait_end"}).Draw(t, "activity")
 	return evt(sid, addr("actor"), kind)
@@ -102,7 +97,7 @@ func TestAppendThenReadIsAFilter(t *testing.T) {
 		sid := rapid.SampledFrom([]string{"s1", "s2"}).Draw(rt, "qsid")
 		from := int64(rapid.IntRange(0, n+1).Draw(rt, "from"))
 		to := int64(rapid.IntRange(0, n+1).Draw(rt, "to"))
-		kinds := rapid.SliceOfDistinct(rapid.SampledFrom([]string{"msg", "kick", "redact", "evt"}), rapid.ID[string]).Draw(rt, "kinds")
+		kinds := rapid.SliceOfDistinct(rapid.SampledFrom([]string{"msg", "evt"}), rapid.ID[string]).Draw(rt, "kinds")
 		got := must(s.Events(sid, from, to, kinds...))
 		var want []wire.Event
 		for _, e := range all {
@@ -119,39 +114,18 @@ func TestAppendThenReadIsAFilter(t *testing.T) {
 	})
 }
 
-// A redact deletes the newest row. The next event must not get the same sequence: a message
-// id is unique for the life of the store, and a resume by id depends on it.
+// A delete of a session takes its newest rows. The next event must not get the same sequence: a
+// message id is unique for the life of the store, and a resume by id depends on it.
 func TestDeleteDoesNotReuseASequence(t *testing.T) {
 	s, _ := open(t)
+	must(s.CreateSession("s1", "", at))
 	must(s.Append(msg("s1", "alice@mac-1", wire.Broadcast, "oops"), false, nil))
-	if !must(s.Delete("s1", 1)) {
-		t.Fatal("delete refused")
-	}
-	if seq := must(s.Append(msg("s1", "alice@mac-1", wire.Broadcast, "next"), false, nil)); seq != 2 {
+	must(s.DeleteSession("s1"))
+	if seq := must(s.Append(msg("s2", "alice@mac-1", wire.Broadcast, "next"), false, nil)); seq != 2 {
 		t.Fatalf("seq %d after a delete, want 2", seq)
 	}
 	if last := must(s.LastSeq()); last != 2 {
 		t.Fatalf("LastSeq %d, want 2", last)
-	}
-	got := must(s.Events("s1", 1, 10))
-	if len(got) != 1 || got[0].Seq != 2 {
-		t.Fatalf("events after delete: %+v", got)
-	}
-}
-
-func TestDeleteTakesOnlyAMessageOfThatSession(t *testing.T) {
-	s, _ := open(t)
-	must(s.Append(evt("s1", "alice@mac-1", "joined"), true, nil))             // 1
-	must(s.Append(msg("s2", "alice@mac-1", wire.Broadcast, "x"), false, nil)) // 2
-	must(s.Append(msg("s1", wire.Operator, wire.Broadcast, "y"), false, nil)) // 3
-	for _, c := range []struct {
-		sid  string
-		seq  int64
-		want bool
-	}{{"s1", 1, false}, {"s1", 2, false}, {"s1", 99, false}, {"s1", 3, true}, {"s1", 3, false}} {
-		if got := must(s.Delete(c.sid, c.seq)); got != c.want {
-			t.Errorf("Delete(%s, %d) = %v, want %v", c.sid, c.seq, got, c.want)
-		}
 	}
 }
 
@@ -185,56 +159,9 @@ func TestKnownFollowsTheAppends(t *testing.T) {
 	}
 }
 
-func TestForgetRemovesOneKnownAgent(t *testing.T) {
-	s, _ := open(t)
-	must(s.Append(evt("s1", "alice@mac-1", "joined"), true, nil))
-	must(s.Append(evt("s1", "bob@vps-2", "joined"), true, nil))
-	must(s.Append(evt("s2", "bob@vps-2", "joined"), true, nil))
-	if known := must(s.Forget("s1", "bob@vps-2")); !known {
-		t.Fatal("Forget of a known agent gave false")
-	}
-	if known := must(s.Forget("s1", "bob@vps-2")); known {
-		t.Fatal("a second Forget gave true")
-	}
-	if all := must(s.Known("s1")); len(all) != 1 || all[0].Agent != "alice@mac-1" {
-		t.Fatalf("Known s1: %+v", all)
-	}
-	// The same address in another session stays.
-	if _, ok := must2(s.KnownAgent("s2", "bob@vps-2")); !ok {
-		t.Fatal("Forget took the agent of another session")
-	}
-	// The events stay: the history of the session does not change.
-	if events := must(s.Events("s1", 1, 10)); len(events) != 2 {
-		t.Fatalf("%d events of s1, want 2", len(events))
-	}
-}
-
-func TestGateOfAKnownAgent(t *testing.T) {
-	s, _ := open(t)
-	me := "alice@mac-1"
-	if changed := must(s.SetGate("s1", me, "paused")); changed {
-		t.Fatal("SetGate changed an agent that is not known")
-	}
-	must(s.Append(evt("s1", me, "joined"), true, nil))
-	if k, _ := must2(s.KnownAgent("s1", me)); k.Gate != "run" {
-		t.Fatalf("gate of a new agent %q, want run", k.Gate)
-	}
-	if changed := must(s.SetGate("s1", me, "paused")); !changed {
-		t.Fatal("SetGate did not change run to paused")
-	}
-	if changed := must(s.SetGate("s1", me, "paused")); changed {
-		t.Fatal("SetGate changed paused to paused")
-	}
-	// A later event of the agent keeps the gate.
-	must(s.Append(evt("s1", me, "state"), false, &store.Known{State: "working"}))
-	if all := must(s.Known("s1")); len(all) != 1 || all[0].Gate != "paused" {
-		t.Fatalf("Known: %+v", all)
-	}
-}
-
-// A database of a version before the gate has no gate column. Open adds it: an agent that
-// the hub knows may work.
-func TestOpenAddsTheColumnsOfALaterVersion(t *testing.T) {
+// A database of v0.10.0 has the table kicks, the column known.gate and closed sessions. This
+// version opens it, reads it, and writes to it.
+func TestOpenADatabaseOfAnEarlierVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "coop.db")
 	old, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -242,9 +169,11 @@ func TestOpenAddsTheColumnsOfALaterVersion(t *testing.T) {
 	}
 	for _, q := range []string{
 		`CREATE TABLE sessions (sid TEXT PRIMARY KEY, status TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, closed_at TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL)`,
-		`CREATE TABLE known (sid TEXT NOT NULL, agent TEXT NOT NULL, state TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', seen_seq INTEGER NOT NULL, PRIMARY KEY (sid, agent))`,
-		`INSERT INTO sessions (sid, status, created_at, revision) VALUES ('s1', 'open', '` + at + `', 1)`,
-		`INSERT INTO known (sid, agent, state, seen_seq) VALUES ('s1', 'alice@mac-1', 'working', 7)`,
+		`CREATE TABLE kicks (sid TEXT NOT NULL, target TEXT NOT NULL, at TEXT NOT NULL, revision INTEGER NOT NULL, PRIMARY KEY (sid, target))`,
+		`CREATE TABLE known (sid TEXT NOT NULL, agent TEXT NOT NULL, state TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', seen_seq INTEGER NOT NULL, gate TEXT NOT NULL DEFAULT 'run', PRIMARY KEY (sid, agent))`,
+		`INSERT INTO sessions (sid, status, created_at, closed_at, revision) VALUES ('s1', 'closed', '` + at + `', '` + at + `', 1)`,
+		`INSERT INTO kicks (sid, target, at, revision) VALUES ('s1', 'bob@vps-2', '` + at + `', 2)`,
+		`INSERT INTO known (sid, agent, state, seen_seq, gate) VALUES ('s1', 'alice@mac-1', 'working', 7, 'paused')`,
 	} {
 		if _, err := old.Exec(q); err != nil {
 			t.Fatal(err)
@@ -253,20 +182,19 @@ func TestOpenAddsTheColumnsOfALaterVersion(t *testing.T) {
 	if err := old.Close(); err != nil {
 		t.Fatal(err)
 	}
-	for range 2 { // the second Open finds the columns and adds nothing
-		s, err := store.Open(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		row, _ := must2(s.Session("s1"))
-		k, _ := must2(s.KnownAgent("s1", "alice@mac-1"))
-		if row.Record.Status != "open" || k.Gate != "run" || k.SeenSeq != 7 {
-			t.Fatalf("session %+v, known %+v", row, k)
-		}
-		if err := s.Close(); err != nil {
-			t.Fatal(err)
-		}
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer s.Close()
+	row, ok := must2(s.Session("s1"))
+	k, _ := must2(s.KnownAgent("s1", "alice@mac-1"))
+	if !ok || row.Record.CreatedAt != at || k.State != "working" || k.SeenSeq != 7 {
+		t.Fatalf("session %+v, known %+v", row, k)
+	}
+	must(s.CreateSession("s2", "", at))
+	must(s.Append(evt("s2", "carol@mac-3", "joined"), true, nil))
+	must(s.DeleteSession("s1"))
 }
 
 func must2[T any](v T, ok bool, err error) (T, bool) {
@@ -289,7 +217,7 @@ func TestRevisionsIncrease(t *testing.T) {
 			last = rev
 		}
 		sids := []string{"a", "b", "c"}
-		ops := rapid.SliceOfN(rapid.IntRange(0, 6), 1, 60).Draw(rt, "ops")
+		ops := rapid.SliceOfN(rapid.IntRange(0, 3), 1, 60).Draw(rt, "ops")
 		for i, op := range ops {
 			sid := sids[i%len(sids)]
 			switch op {
@@ -300,24 +228,14 @@ func TestRevisionsIncrease(t *testing.T) {
 				}
 				seen(must(row, err).Revision, "create")
 			case 1:
-				row, _, err := s.SetStatus(sid, "closed", at)
+				rev, err := s.DeleteSession(sid)
 				if errors.Is(err, store.ErrNotFound) {
 					continue
 				}
-				seen(must(row, err).Revision, "close")
+				seen(must(rev, err), "delete")
 			case 2:
-				row, _, err := s.SetStatus(sid, "open", at)
-				if errors.Is(err, store.ErrNotFound) {
-					continue
-				}
-				seen(must(row, err).Revision, "reopen")
-			case 3:
-				seen(must(s.Kick(sid, "bob@vps-2", at)), "kick")
-			case 4:
-				seen(must(s.Unkick(sid, "bob@vps-2")), "unkick")
-			case 5:
 				seen(must(s.NextRevision()), "presence")
-			case 6:
+			case 3:
 				// A reopen of the store must continue the count, not restart it.
 				if err := s.Close(); err != nil {
 					rt.Fatal(err)
@@ -335,7 +253,7 @@ func TestSessions(t *testing.T) {
 		t.Fatal("session before create")
 	}
 	row := must(s.CreateSession("x", "Title", at))
-	if row.SID != "x" || row.Record.Status != "open" || row.Record.Title != "Title" || row.Record.CreatedAt != at || row.Record.ClosedAt != "" {
+	if row.SID != "x" || row.Record.Title != "Title" || row.Record.CreatedAt != at {
 		t.Fatalf("created: %+v", row)
 	}
 	if _, err := s.CreateSession("x", "", at); !errors.Is(err, store.ErrExists) {
@@ -346,32 +264,13 @@ func TestSessions(t *testing.T) {
 	if len(list) != 2 || list[0].SID != "a" || list[1].SID != "x" {
 		t.Fatalf("Sessions: %+v", list)
 	}
-	if _, _, err := s.SetStatus("nosuch", "closed", at); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("SetStatus unknown: %v", err)
-	}
-	if _, _, err := s.DeleteSession("x"); !errors.Is(err, store.ErrOpen) {
-		t.Fatalf("delete open: %v", err)
-	}
-	closed, changed, err := s.SetStatus("x", "closed", "2026-10-02T11:00:00.000Z")
-	if err != nil || !changed || closed.Record.Status != "closed" || closed.Record.ClosedAt != "2026-10-02T11:00:00.000Z" {
-		t.Fatalf("close: %+v %v %v", closed, changed, err)
-	}
-	if _, changed, _ := s.SetStatus("x", "closed", at); changed {
-		t.Fatal("a second close counts as a change")
-	}
-	reopened, changed, _ := s.SetStatus("x", "open", at)
-	if !changed || reopened.Record.ClosedAt != "" || reopened.Revision <= closed.Revision {
-		t.Fatalf("reopen: %+v %v", reopened, changed)
-	}
-	// Delete takes the events, the kicks and the known agents of the session with it.
+	// Delete takes the events and the known agents of the session with it.
 	must(s.Append(msg("x", "alice@mac-1", wire.Broadcast, "m"), false, nil))
 	must(s.Append(evt("x", "alice@mac-1", "joined"), true, nil))
-	must(s.Kick("x", "bob@vps-2", at))
 	must(s.Append(msg("a", "alice@mac-1", wire.Broadcast, "keep"), false, nil))
-	must2(s.SetStatus("x", "closed", at))
-	rev, kicks, err := s.DeleteSession("x")
-	if err != nil || rev <= reopened.Revision || len(kicks) != 1 || kicks[0].Target != "bob@vps-2" || kicks[0].Revision >= rev {
-		t.Fatalf("delete: %d %+v %v", rev, kicks, err)
+	rev, err := s.DeleteSession("x")
+	if err != nil || rev <= row.Revision {
+		t.Fatalf("delete: %d %v", rev, err)
 	}
 	if _, ok, _ := s.Session("x"); ok {
 		t.Fatal("session after delete")
@@ -382,37 +281,11 @@ func TestSessions(t *testing.T) {
 	if got := must(s.Known("x")); len(got) != 0 {
 		t.Fatalf("known after delete: %+v", got)
 	}
-	if got := must(s.Kicks()); len(got) != 0 {
-		t.Fatalf("kicks after delete: %+v", got)
-	}
 	if got := must(s.Events("a", 1, 100)); len(got) != 1 {
 		t.Fatalf("other session lost events: %+v", got)
 	}
-	if _, _, err := s.DeleteSession("x"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := s.DeleteSession("x"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("delete twice: %v", err)
-	}
-}
-
-func TestKicks(t *testing.T) {
-	s, _ := open(t)
-	if must(s.Kicked("s", "bob@vps-2")) {
-		t.Fatal("kicked before kick")
-	}
-	r1 := must(s.Kick("s", "bob@vps-2", at))
-	if !must(s.Kicked("s", "bob@vps-2")) {
-		t.Fatal("not kicked after kick")
-	}
-	r2 := must(s.Kick("s", "bob@vps-2", "2026-10-02T11:00:00.000Z"))
-	kicks := must(s.Kicks())
-	if r2 <= r1 || len(kicks) != 1 || kicks[0].At != "2026-10-02T11:00:00.000Z" || kicks[0].Revision != r2 {
-		t.Fatalf("kick twice: %+v", kicks)
-	}
-	r3 := must(s.Unkick("s", "bob@vps-2"))
-	if r3 <= r2 || must(s.Kicked("s", "bob@vps-2")) {
-		t.Fatal("unkick")
-	}
-	if r4 := must(s.Unkick("s", "bob@vps-2")); r4 <= r3 {
-		t.Fatal("an unkick of an absent kick still gets a revision")
 	}
 }
 
@@ -472,10 +345,8 @@ func TestTokens(t *testing.T) {
 	if _, err := s.IssueToken("x", "root", at); err == nil {
 		t.Fatal("bad role accepted")
 	}
-	for _, role := range []string{"orchestrator"} {
-		if _, got, ok := must3(s.VerifyToken(must(s.IssueToken("t-"+role, role, at)))); !ok || got != role {
-			t.Fatalf("%s token: role %q ok %v", role, got, ok)
-		}
+	if _, err := s.IssueToken("x", "orchestrator", at); err == nil {
+		t.Fatal("the role orchestrator accepted")
 	}
 }
 
@@ -493,7 +364,7 @@ func TestRowsAreTheWireForm(t *testing.T) {
 	events := []wire.Event{
 		msg("s1", "alice@mac-1", "bob@vps-2", "one"),
 		evt("s2", "bob@vps-2", "joined"),
-		{Kind: wire.EventKick, SID: "s1", Target: "bob@vps-2", At: at},
+		msg("s1", wire.Operator, wire.Broadcast, "two"),
 	}
 	for _, e := range events {
 		must(s.Append(e, false, nil))

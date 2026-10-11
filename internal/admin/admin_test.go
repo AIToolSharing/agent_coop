@@ -72,8 +72,8 @@ func frame(kind, id, data string) string {
 }
 
 const (
-	sessionOpen = `{"kind":"session","session":"build-42","revision":1,"record":{"status":"open","created_at":"2026-09-30T11:59:00.000Z"}}`
-	sessionDocs = `{"kind":"session","session":"docs","revision":2,"record":{"status":"closed","created_at":"2026-09-30T11:50:00.000Z","closed_at":"2026-09-30T11:59:00.000Z"}}`
+	sessionOpen = `{"kind":"session","session":"build-42","revision":1,"record":{"created_at":"2026-09-30T11:59:00.000Z"}}`
+	sessionDocs = `{"kind":"session","session":"docs","revision":2,"record":{"created_at":"2026-09-30T11:50:00.000Z"}}`
 	presenceBob = `{"kind":"presence","key":"build-42.vps-2.bob","revision":3,"record":{"host":"vps-2","cwd":"/srv","client":{"name":"codex","version":"0.9"},"state":"idle","joined_at":"2026-09-30T12:00:00.000Z"}}`
 	msg7        = `{"kind":"event","seq":7,"subject":"coop.build-42.msg.mac-1.alice","payload":"{\"to\":\"bob@vps-2\",\"text\":\"hi\",\"sent_at\":\"2026-09-30T12:00:20.000Z\"}"}`
 	msg9        = `{"kind":"event","seq":9,"subject":"coop.build-42.ops","payload":"{\"kind\":\"msg\",\"to\":\"all\",\"text\":\"carry on\",\"sent_at\":\"2026-09-30T12:00:30.000Z\"}"}`
@@ -139,32 +139,6 @@ func TestFeedResumesAndReconcilesAfterADrop(t *testing.T) {
 	}
 	if s.requests[0].Header.Get("Last-Event-ID") != "" || s.requests[0].Header.Get("Accept") != "text/event-stream" {
 		t.Fatalf("first request headers %v", s.requests[0].Header)
-	}
-}
-
-// The trace has no event id, and each connection gets the whole trace again. The store must
-// hold each item one time, and the trace must not move the point that the feed resumes from.
-func TestFeedCarriesTheTraceAndDoesNotResumeFromIt(t *testing.T) {
-	trace := `{"kind":"trace","boot":5,"key":"build-42.vps-2.bob","branch":"main","items":[{"n":1,"at":"2026-09-30T12:00:01.000Z","kind":"tool_start","id":"t1","tool":"Bash","text":"go test ./..."}]}`
-	s := &sse{hold: make(chan struct{}), scripts: [][]string{
-		{frame("session", "", sessionOpen), frame("event", "7", msg7), frame("trace", "", trace)},
-		{frame("session", "", sessionOpen), frame("trace", "", trace), frame("event", "9", msg9), "hold"},
-	}}
-	srv := httptest.NewServer(s)
-	defer srv.Close()
-	defer close(s.hold)
-	store, err := run(t, srv, "op.secret", time.Second, func(st *model.Store) bool {
-		return st.View("build-42").Msgs["9"] != nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	bob := store.View("build-42").Agents["bob@vps-2"]
-	if bob == nil || len(bob.Trace.Items) != 1 || bob.Trace.Items[0].Text != "go test ./..." || bob.Trace.Branch != "main" {
-		t.Fatalf("bob %+v, want one trace item and the branch", bob)
-	}
-	if got := s.requests[1].Header.Get("Last-Event-ID"); got != "7" {
-		t.Fatalf("Last-Event-ID %q, want 7", got)
 	}
 }
 
@@ -254,51 +228,19 @@ func TestActionsCallTheAdminRoutes(t *testing.T) {
 	if err := c.CreateSession(ctx, "build-42"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.CloseSession(ctx, "build-42"); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.ReopenSession(ctx, "build-42"); err != nil {
-		t.Fatal(err)
-	}
 	if err := c.DeleteSession(ctx, "build-42"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Kick(ctx, "build-42", "bob@vps-2"); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Unkick(ctx, "build-42", "bob@vps-2"); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Forget(ctx, "build-42", "bob@vps-2"); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.SetGate(ctx, "build-42", "bob@vps-2", "paused"); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.SetGate(ctx, "build-42", "", "run"); err != nil {
-		t.Fatal(err)
-	}
-	if ok, err := c.Redact(ctx, "build-42", "14"); err != nil || !ok {
-		t.Fatal(ok, err)
-	}
 	want := []call{
 		{"POST", "/v1/admin/sessions", `{"session":"build-42"}`},
-		{"POST", "/v1/admin/sessions/build-42/close", ""},
-		{"POST", "/v1/admin/sessions/build-42/reopen", ""},
 		{"DELETE", "/v1/admin/sessions/build-42", ""},
-		{"POST", "/v1/admin/sessions/build-42/kick", `{"target":"bob@vps-2"}`},
-		{"POST", "/v1/admin/sessions/build-42/unkick", `{"target":"bob@vps-2"}`},
-		{"POST", "/v1/admin/sessions/build-42/forget", `{"target":"bob@vps-2"}`},
-		{"POST", "/v1/admin/sessions/build-42/gate", `{"gate":"paused","target":"bob@vps-2"}`},
-		{"POST", "/v1/admin/sessions/build-42/gate", `{"gate":"run"}`},
-		{"POST", "/v1/admin/sessions/build-42/redact", `{"id":"14"}`},
 	}
 	if fmt.Sprint(*calls) != fmt.Sprint(want) {
 		t.Fatalf("\n got %v\nwant %v", *calls, want)
 	}
 }
 
-func TestSendAndListAndErrors(t *testing.T) {
+func TestSendAndErrors(t *testing.T) {
 	ctx := context.Background()
 	c, calls := actions(t, 200, `{"id":"21","to":"all","sent_at":"2026-09-30T12:05:00.000Z"}`)
 	id, err := c.Send(ctx, "build-42", "all", "carry on", "")
@@ -314,23 +256,14 @@ func TestSendAndListAndErrors(t *testing.T) {
 	if _, err := c.Send(ctx, "build-42", "operator", "x", ""); err == nil {
 		t.Fatal("the operator cannot write to the operator")
 	}
-	lc, _ := actions(t, 200, `{"sessions":[{"session":"docs","status":"closed","created_at":"2026-09-30T11:50:00.000Z","closed_at":"2026-09-30T11:59:00.000Z"}]}`)
-	list, err := lc.ListSessions(ctx)
-	if err != nil || len(list) != 1 || list[0].Session != "docs" || list[0].Status != "closed" {
-		t.Fatal(list, err)
-	}
-	ec, _ := actions(t, 409, `{"error":"conflict","message":"the session is open"}`)
+	ec, _ := actions(t, 409, `{"error":"conflict","message":"agents are in session build-42: bob@vps-2"}`)
 	err = ec.DeleteSession(ctx, "build-42")
 	var apiErr *admin.APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != 409 || apiErr.Message != "the session is open" {
+	if !errors.As(err, &apiErr) || apiErr.Status != 409 || apiErr.Message != "agents are in session build-42: bob@vps-2" {
 		t.Fatalf("err %v", err)
 	}
-	nc, _ := actions(t, 404, `{"error":"not_found","message":"no such message"}`)
-	if ok, err := nc.Redact(ctx, "build-42", "99"); err != nil || ok {
-		t.Fatal(ok, err)
-	}
 	bc := &admin.Client{Base: ec.Base, Token: "wrong"}
-	if err := bc.CloseSession(ctx, "x"); !errors.As(err, &apiErr) || apiErr.Status != 401 {
+	if err := bc.DeleteSession(ctx, "x"); !errors.As(err, &apiErr) || apiErr.Status != 401 {
 		t.Fatalf("err %v", err)
 	}
 	_ = json.Valid

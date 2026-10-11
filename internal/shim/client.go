@@ -7,7 +7,6 @@ package shim
 import (
 	"bufio"
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"io"
@@ -16,8 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
 // unreachable is the text for every failure that a retry can repair.
@@ -30,12 +27,9 @@ func (e agentError) Error() string { return string(e) }
 
 // Kinds of link: where the stream stands, for the status tool and for tool errors.
 const (
-	linkJoining   = "joining"
-	linkJoined    = "joined"
-	linkNoSession = "no_session"
-	linkClosed    = "closed"
-	linkRemoved   = "removed"
-	linkRefused   = "refused"
+	linkJoining = "joining"
+	linkJoined  = "joined"
+	linkRefused = "refused"
 	// linkTaken: another session on this machine holds the agent's name.
 	linkTaken       = "taken"
 	linkUnreachable = "unreachable"
@@ -43,8 +37,7 @@ const (
 
 type link struct {
 	kind string
-	me   string // the agent's address, for joined
-	gate string // whether the user lets the agent work, for joined
+	me   string // the agent's address, for joined and taken
 }
 
 // streamHandlers get what the stream gives. The stream loop calls them one at a time.
@@ -62,13 +55,9 @@ type joinInfo struct {
 	cwd           string
 	clientName    string
 	clientVersion string
-	// gated: the agent's tool calls go through the operator's gate.
-	gated bool
 }
 
 const (
-	// retryClosed is the wait before the next join when the session is closed or unknown.
-	retryClosed = 30 * time.Second
 	// retryTaken is the wait before the next join when another session holds the name. The
 	// hub drops a dead holder within about 25 s, so a restarted session gets its name soon.
 	retryTaken = 10 * time.Second
@@ -119,7 +108,7 @@ func (c *hubClient) path(p string) string {
 	return c.base + "/v1/sessions/" + url.PathEscape(c.session) + p
 }
 
-// run holds the stream open until ctx ends, the token is refused, or the agent is removed.
+// run holds the stream open until ctx ends or the token is refused.
 func (c *hubClient) run(ctx context.Context, h streamHandlers) {
 	lastID := ""
 	backoff := time.Second
@@ -143,7 +132,7 @@ func (c *hubClient) run(ctx context.Context, h streamHandlers) {
 			continue
 		}
 		if res.StatusCode < 200 || res.StatusCode > 299 {
-			e := readError(res)
+			_ = readError(res)
 			watchdog.Stop()
 			cancel()
 			switch {
@@ -154,21 +143,10 @@ func (c *hubClient) run(ctx context.Context, h streamHandlers) {
 				if !c.sleep(ctx, retryTaken) {
 					return
 				}
-			case res.StatusCode == 401:
+			case res.StatusCode == 401 || res.StatusCode == 403:
+				// No valid token, or a token of another role (the operator's).
 				h.state(link{kind: linkRefused})
 				return
-			case res.StatusCode == 403 && e != nil && e.Message == "removed from session":
-				h.state(link{kind: linkRemoved})
-				return
-			case res.StatusCode == 403 || res.StatusCode == 404:
-				kind := linkClosed
-				if res.StatusCode == 404 {
-					kind = linkNoSession
-				}
-				h.state(link{kind: kind})
-				if !c.sleep(ctx, retryClosed) {
-					return
-				}
 			default:
 				if !failed() {
 					return
@@ -177,14 +155,10 @@ func (c *hubClient) run(ctx context.Context, h streamHandlers) {
 			continue
 		}
 		backoff = time.Second
-		removed := c.readStream(res.Body, watchdog, h, &lastID)
+		c.readStream(res.Body, watchdog, h, &lastID)
 		_ = res.Body.Close()
 		watchdog.Stop()
 		cancel()
-		if removed {
-			h.state(link{kind: linkRemoved})
-			return
-		}
 		if ctx.Err() != nil {
 			return
 		}
@@ -204,9 +178,6 @@ func (c *hubClient) openStream(ctx context.Context, lastID string) (*http.Respon
 		"client_name":    {c.join.clientName},
 		"client_version": {c.join.clientVersion},
 	}
-	if c.join.gated {
-		q.Set("gated", "1")
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.path("/stream")+"?"+q.Encode(), nil)
 	if err != nil {
 		return nil, err
@@ -220,21 +191,21 @@ func (c *hubClient) openStream(ctx context.Context, lastID string) (*http.Respon
 }
 
 // readStream gives the stream's events to h until the body ends. Each line resets the
-// watchdog. It gives true when the hub removed the agent.
-func (c *hubClient) readStream(body io.Reader, watchdog *time.Timer, h streamHandlers, lastID *string) (removed bool) {
+// watchdog.
+func (c *hubClient) readStream(body io.Reader, watchdog *time.Timer, h streamHandlers, lastID *string) {
 	rd := bufio.NewReader(body)
 	var event, id string
 	var data []string
 	for {
 		line, err := rd.ReadString('\n')
 		if err != nil {
-			return removed
+			return
 		}
 		watchdog.Reset(c.idle)
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
-			if len(data) > 0 && dispatch(event, id, strings.Join(data, "\n"), h, lastID) {
-				removed = true
+			if len(data) > 0 {
+				dispatch(event, id, strings.Join(data, "\n"), h, lastID)
 			}
 			event, id, data = "", "", nil
 			continue
@@ -255,13 +226,12 @@ func (c *hubClient) readStream(body io.Reader, watchdog *time.Timer, h streamHan
 	}
 }
 
-// dispatch gives one event to h. An event that fails its check is dropped. It gives true for
-// the kicked notice.
-func dispatch(event, id, data string, h streamHandlers, lastID *string) bool {
+// dispatch gives one event to h. An event that fails its check is dropped.
+func dispatch(event, id, data string, h streamHandlers, lastID *string) {
 	switch event {
 	case "joined":
 		if j, ok := decode[joinedEvent]([]byte(data)); ok {
-			h.state(link{kind: linkJoined, me: j.Me, gate: cmp.Or(j.Gate, wire.GateRun)})
+			h.state(link{kind: linkJoined, me: j.Me})
 		}
 	case "message":
 		if m, ok := decode[message]([]byte(data)); ok {
@@ -274,10 +244,8 @@ func dispatch(event, id, data string, h streamHandlers, lastID *string) bool {
 				*lastID = id
 			}
 			h.notice(n)
-			return n.Kind == noticeKicked
 		}
 	}
-	return false
 }
 
 // readError reads the error body of res and closes it. It gives nil when the body is not an

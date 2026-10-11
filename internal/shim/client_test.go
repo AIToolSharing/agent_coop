@@ -295,7 +295,7 @@ func TestResumeSendsTheLastEventID(t *testing.T) {
 		case 2:
 			openStream(w)
 			writeEvent(w, "joined", "", joinedA)
-			writeEvent(w, "notice", "43", notice{Kind: noticeRedacted, ID: "42", At: "2026-09-30T00:00:00.000Z"})
+			writeEvent(w, "notice", "43", notice{Kind: noticePeerLeft, Peer: "b@m", At: "2026-09-30T00:00:00.000Z"})
 		default:
 			writeError(w, 409, "conflict", "taken")
 		}
@@ -317,19 +317,20 @@ func TestResumeSendsTheLastEventID(t *testing.T) {
 		t.Fatalf("a 409 after a resume renamed the agent to %q", c.agent())
 	}
 	_, msgs, notices, _ := rec.snapshot()
-	if len(msgs) != 1 || msgs[0].ID != "42" || len(notices) != 1 || notices[0].Kind != noticeRedacted {
+	if len(msgs) != 1 || msgs[0].ID != "42" || len(notices) != 1 || notices[0].Kind != noticePeerLeft {
 		t.Fatalf("msgs %v notices %v", msgs, notices)
 	}
 }
 
-func TestRefusedAndRemovedEndTheLoop(t *testing.T) {
+// A token that the hub does not know (401), or a token of another role (403, the operator's),
+// ends the loop: a retry cannot change it.
+func TestRefusedEndsTheLoop(t *testing.T) {
 	for _, tc := range []struct {
 		status    int
 		code, msg string
-		want      string
 	}{
-		{401, "unauthorized", "missing or invalid token", linkRefused},
-		{403, "forbidden", "removed from session", linkRemoved},
+		{401, "unauthorized", "missing or invalid token"},
+		{403, "forbidden", "an operator token cannot act as an agent"},
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			writeError(w, tc.status, tc.code, tc.msg)
@@ -337,30 +338,8 @@ func TestRefusedAndRemovedEndTheLoop(t *testing.T) {
 		rec := &recorder{}
 		runToEnd(t, testClient(t, srv.URL, rec), rec)
 		srv.Close()
-		if states, _, _, _ := rec.snapshot(); !slices.Equal(states, []string{tc.want}) {
+		if states, _, _, _ := rec.snapshot(); !slices.Equal(states, []string{linkRefused}) {
 			t.Errorf("%d %s: states %v", tc.status, tc.msg, states)
-		}
-	}
-}
-
-func TestClosedAndNoSessionRetryEvery30Seconds(t *testing.T) {
-	for _, tc := range []struct {
-		status    int
-		code, msg string
-		want      string
-	}{
-		{403, "forbidden", "session closed", linkClosed},
-		{404, "not_found", "no session s", linkNoSession},
-	} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			writeError(w, tc.status, tc.code, tc.msg)
-		}))
-		rec := &recorder{}
-		runUntil(t, testClient(t, srv.URL, rec), rec, func() bool { _, _, _, s := rec.snapshot(); return len(s) >= 2 })
-		srv.Close()
-		states, _, _, sleeps := rec.snapshot()
-		if states[0] != tc.want || states[1] != tc.want || sleeps[0] != 30*time.Second || sleeps[1] != 30*time.Second {
-			t.Errorf("%d: states %v sleeps %v", tc.status, states, sleeps)
 		}
 	}
 }
@@ -394,21 +373,6 @@ func TestUnreachableServiceBacksOff(t *testing.T) {
 	}
 }
 
-func TestKickedNoticeRemovesTheAgent(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		openStream(w)
-		writeEvent(w, "joined", "", joinedA)
-		writeEvent(w, "notice", "9", notice{Kind: noticeKicked, At: "2026-09-30T00:00:00.000Z"})
-	}))
-	defer srv.Close()
-	rec := &recorder{}
-	runToEnd(t, testClient(t, srv.URL, rec), rec)
-	states, _, notices, _ := rec.snapshot()
-	if !slices.Equal(states, []string{linkJoined, linkRemoved}) || len(notices) != 1 || notices[0].Kind != noticeKicked {
-		t.Fatalf("states %v notices %v", states, notices)
-	}
-}
-
 func TestBadEventsAreSkipped(t *testing.T) {
 	good := message{ID: "7", From: "operator", To: "all", Text: "ok", SentAt: "2026-09-30T00:00:00.000Z"}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -420,7 +384,7 @@ func TestBadEventsAreSkipped(t *testing.T) {
 		writeEvent(w, "message", "", message{ID: "2", From: "b@m", To: "all", Text: "", SentAt: "2026-09-30T00:00:00.000Z"})
 		writeEvent(w, "message", "", message{ID: "3", From: "all@m", To: "all", Text: "x", SentAt: "2026-09-30T00:00:00.000Z"})
 		writeEvent(w, "notice", "", notice{Kind: "unknown", At: "2026-09-30T00:00:00.000Z"})
-		writeEvent(w, "notice", "", notice{Kind: noticeClosed, At: "yesterday"})
+		writeEvent(w, "notice", "", notice{Kind: noticePeerLeft, Peer: "b@m", At: "yesterday"})
 		writeEvent(w, "other", "", good)
 		// Two data lines make one value.
 		fmt.Fprint(w, "event: message\r\ndata: {\"id\":\"7\",\"from\":\"operator\",\"to\":\"all\",\r\ndata: \"text\":\"ok\",\"sent_at\":\"2026-09-30T00:00:00.000Z\"}\r\n\r\n")
@@ -495,7 +459,7 @@ func TestCallsFollowTheContract(t *testing.T) {
 		t.Fatalf("activity call %+v", got)
 	}
 
-	view := `{"session":"s","status":"open","me":"a@m","peers":[{"name":"b@m","state":"blocked","note":"n","online":false,"waiting_on":"operator"}]}`
+	view := `{"session":"s","me":"a@m","peers":[{"name":"b@m","state":"blocked","note":"n","online":false,"waiting_on":"operator"}]}`
 	srv, calls = restHub(t, 200, view)
 	c = testClient(t, srv.URL, &recorder{})
 	v, err := c.view(ctx)
@@ -528,7 +492,7 @@ func TestCallsGiveAgentTexts(t *testing.T) {
 		want   string
 	}{
 		{404, `{"error":"not_found","message":"no peer zed"}`, "no peer zed"},
-		{403, `{"error":"forbidden","message":"session closed"}`, "session closed"},
+		{403, `{"error":"forbidden","message":"not in a session"}`, "not in a session"},
 		{401, `{"error":"unauthorized","message":"missing or invalid token"}`, "not in a session: this machine is not allowed to join"},
 		{429, `{"error":"rate_limited","message":"too many messages"}`, "too many requests; wait a moment and try again"},
 		{503, `{"error":"unavailable","message":"internal error"}`, unreachable},

@@ -41,8 +41,8 @@ func skillPath() string {
 }
 
 // cmdSetup registers this binary with Claude Code as the MCP server `coop` (user scope),
-// writes the skill, and adds the gate hook to the user's settings. It is safe to run again: it
-// replaces a registration or a hook that points elsewhere.
+// writes the skill, and removes the hooks of an older coop from the user's settings. It is
+// safe to run again: it replaces a registration that points elsewhere.
 func cmdSetup(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 0 {
 		fmt.Fprintln(stderr, "usage: coop setup")
@@ -82,19 +82,14 @@ func cmdSetup(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "wrote %s\n", path)
-	// The gate hook and the hooks that report what the agent does, for every Claude Code
-	// session of this user, also one that another tool starts. A session in no coop session
-	// passes the hook at once.
 	if settings := claudeSettingsPath(); settings != "" {
-		changed, err := installHookFile(settings, exe)
+		changed, err := removeHookFile(settings)
 		switch {
 		case err != nil:
-			fmt.Fprintf(stderr, "cannot add the hooks of coop: %v\n", err)
+			fmt.Fprintf(stderr, "cannot remove the hooks of an older coop: %v\n", err)
 			return 1
 		case changed:
-			fmt.Fprintf(stdout, "added the gate hook and the activity hooks to %s (the file before: %s.before-coop)\n", settings, settings)
-		default:
-			fmt.Fprintf(stdout, "the gate hook and the activity hooks are in %s\n", settings)
+			fmt.Fprintf(stdout, "removed the hooks of an older coop from %s\n", settings)
 		}
 	}
 	cfg := config.Load(environ(), config.DefaultEnvFile(), func(string) {}, cwd())

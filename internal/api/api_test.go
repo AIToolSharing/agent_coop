@@ -17,7 +17,7 @@ func TestMethodNotAllowedAndNotFound(t *testing.T) {
 	}{
 		{"PUT", "/v1/sessions/x/stream", 405, "GET"},
 		{"PATCH", "/v1/admin/sessions", 405, "GET, POST"},
-		{"PUT", "/v1/admin/sessions/x", 405, "DELETE, GET"},
+		{"PUT", "/v1/admin/sessions/x", 405, "DELETE"},
 		{"POST", "/v1/sessions/x", 405, "GET"},
 		{"GET", "/nope", 404, ""},
 		{"GET", "/v1/sessions", 404, ""},

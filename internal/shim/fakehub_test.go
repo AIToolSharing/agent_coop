@@ -21,8 +21,6 @@ import (
 type sseOut struct {
 	event, id string
 	data      any
-	// last ends the stream after this event.
-	last bool
 }
 
 type fakeAgent struct {
@@ -35,11 +33,7 @@ type fakeAgent struct {
 }
 
 type fakeSession struct {
-	open bool
-	// gate is the gate that the joined event gives; "" gives none, as an earlier service.
-	gate   string
 	agents map[string]*fakeAgent // by address
-	kicked map[string]bool
 	msgs   []message
 	acts   []activity // Agent holds the address
 }
@@ -144,14 +138,6 @@ func (h *fakeHub) stream(w http.ResponseWriter, r *http.Request) {
 	addr := q.Get("agent") + "@" + machine
 	a := s.agents[addr]
 	switch {
-	case !s.open:
-		h.mu.Unlock()
-		writeError(w, 403, "forbidden", "session closed")
-		return
-	case s.kicked[addr]:
-		h.mu.Unlock()
-		writeError(w, 403, "forbidden", "removed from session")
-		return
 	case a != nil && a.online && a.instance != q.Get("instance"):
 		h.mu.Unlock()
 		writeError(w, 409, "conflict", "name "+addr+" is taken")
@@ -166,7 +152,7 @@ func (h *fakeHub) stream(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 
 	openStream(w)
-	writeEvent(w, "joined", "", joinedEvent{Me: addr, Session: r.PathValue("sid"), Gate: s.gate})
+	writeEvent(w, "joined", "", joinedEvent{Me: addr, Session: r.PathValue("sid")})
 	tick := time.NewTicker(h.ping)
 	defer tick.Stop()
 	defer h.left(s, a, out)
@@ -179,9 +165,6 @@ func (h *fakeHub) stream(w http.ResponseWriter, r *http.Request) {
 			w.(http.Flusher).Flush()
 		case ev := <-out:
 			writeEvent(w, ev.event, ev.id, ev.data)
-			if ev.last {
-				return
-			}
 		}
 	}
 }
@@ -223,11 +206,6 @@ func (h *fakeHub) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from := req.Agent + "@" + machine
-	if !s.open {
-		h.mu.Unlock()
-		writeError(w, 403, "forbidden", "session closed")
-		return
-	}
 	to, online, state := req.To, true, ""
 	if to != wire.Broadcast && to != wire.Operator {
 		var found []*fakeAgent
@@ -302,10 +280,7 @@ func (h *fakeHub) view(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	me := r.URL.Query().Get("agent") + "@" + machine
-	v := sessionView{Session: r.PathValue("sid"), Status: "closed", Me: me, Peers: []peer{}}
-	if s.open {
-		v.Status = "open"
-	}
+	v := sessionView{Session: r.PathValue("sid"), Me: me, Peers: []peer{}}
 	for _, a := range s.agents {
 		if a.addr != me {
 			v.Peers = append(v.Peers, peer{Name: a.addr, State: a.state, Note: a.note, Online: a.online})
@@ -344,7 +319,7 @@ func (h *fakeHub) history(w http.ResponseWriter, r *http.Request) {
 func (h *fakeHub) createSession(sid string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.sessions[sid] = &fakeSession{open: true, agents: map[string]*fakeAgent{}, kicked: map[string]bool{}}
+	h.sessions[sid] = &fakeSession{agents: map[string]*fakeAgent{}}
 }
 
 // operatorSend writes a message as the operator and gives its id.
@@ -358,42 +333,6 @@ func (h *fakeHub) operatorSend(sid, to, text, replyTo string) string {
 		return to == wire.Broadcast || to == a.addr
 	})
 	return m.ID
-}
-
-func (h *fakeHub) kick(sid, addr string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	s := h.sessions[sid]
-	s.kicked[addr] = true
-	ev := sseOut{event: "notice", id: h.nextID(), data: notice{Kind: noticeKicked, At: now()}, last: true}
-	s.emit(ev, func(a *fakeAgent) bool { return a.addr == addr })
-}
-
-func (h *fakeHub) setOpen(sid string, open bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	s := h.sessions[sid]
-	s.open = open
-	kind := noticeClosed
-	if open {
-		kind = noticeReopened
-	}
-	s.emit(sseOut{event: "notice", data: notice{Kind: kind, At: now()}}, func(*fakeAgent) bool { return true })
-}
-
-// gate tells one agent its new gate, as the operator's change does.
-func (h *fakeHub) gate(sid, addr, kind string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	ev := sseOut{event: "notice", id: h.nextID(), data: notice{Kind: kind, At: now()}}
-	h.sessions[sid].emit(ev, func(a *fakeAgent) bool { return a.addr == addr })
-}
-
-func (h *fakeHub) redact(sid, id string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	ev := sseOut{event: "notice", id: h.nextID(), data: notice{Kind: noticeRedacted, ID: id, At: now()}}
-	h.sessions[sid].emit(ev, func(*fakeAgent) bool { return true })
 }
 
 // activities gives what the agents reported, in order.

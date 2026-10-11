@@ -33,21 +33,6 @@ func RenderAgent(v *model.Session, address string, o Options) Rendered {
 		presence = Color("  ● online", "green")
 	}
 	add(Line{Bold(a.Address), presence}, "")
-	if a.Orchestrator {
-		add(kv("role", "orchestrator: it may pause and stop agents and set up sessions for you", Style{Color: "cyan"}), "")
-	}
-	if a.Kicked {
-		add(kv("removed", "by the operator; it cannot join until you allow it back (:allow)", Style{Color: "red"}), "")
-	}
-	switch a.Gate {
-	case "held":
-		add(kv("gate", "held: it waits for the orchestrator's task (p lets it go)", Style{Color: "yellow"}), "")
-	case "paused":
-		add(kv("gate", "paused: it does no work until you resume it (p)", Style{Color: "yellow"}), "")
-	}
-	if a.Online && !a.Gated {
-		add(kv("gate", "no gate: this agent was not started with coop claude; a pause is advice to it", Style{Color: "red"}), "")
-	}
 	state := a.State
 	if a.StateSince != "" {
 		state += " for " + Age(a.StateSince, o.Now)
@@ -69,17 +54,6 @@ func RenderAgent(v *model.Session, address string, o Options) Rendered {
 	add(kv("host", or(a.Host, "?"), Style{}), "")
 	add(kv("directory", or(a.Cwd, "?"), Style{}), "")
 	add(kv("client", or(a.Client, "?"), Style{}), "")
-	if a.Trace.Branch != "" {
-		add(kv("branch", a.Trace.Branch, Style{}), "")
-	}
-	if a.Online {
-		for _, it := range a.Trace.Running() {
-			add(kv("now", toolText(it)+" for "+Age(it.At, o.Now), Style{Color: "yellow"}), "")
-		}
-		if len(a.Trace.Items) == 0 && !a.Gated {
-			add(kv("activity", "none: this agent was not started with coop claude", Style{}), "")
-		}
-	}
 	joined := "?"
 	if a.JoinedAt != "" {
 		joined = Clock(a.JoinedAt, o.loc()) + " (" + Age(a.JoinedAt, o.Now) + " ago)"
@@ -89,7 +63,6 @@ func RenderAgent(v *model.Session, address string, o Options) Rendered {
 		add(kv("left", Clock(a.Left.At, o.loc())+" ("+a.Left.Reason+")", Style{}), "")
 	}
 	add(kv("messages", "sent "+itoa(int64(a.Sent)), Style{}), "")
-	agentTrace(v, a, o, add)
 	add(Line{S("")}, "")
 	add(Line{Bold("TIMELINE")}, "")
 	for _, it := range v.Timeline {
@@ -109,10 +82,7 @@ func RenderAgent(v *model.Session, address string, o Options) Rendered {
 		default:
 			continue
 		}
-		body := []string{"[withdrawn]"}
-		if !m.Redacted {
-			body = Wrap(m.Text, max(10, o.Width-Width(Plain(lead))))
-		}
+		body := Wrap(m.Text, max(10, o.Width-Width(Plain(lead))))
 		add(append(lead, S(body[0])), m.ID)
 		pad := strings.Repeat(" ", Width(Plain(lead)))
 		for _, line := range body[1:] {
@@ -141,9 +111,7 @@ func RenderMessage(v *model.Session, id string, o Options) Rendered {
 		r.IDs = append(r.IDs, lid)
 	}
 	head := Line{Bold("#" + m.ID)}
-	if m.Redacted {
-		head = append(head, Dim("  withdrawn"))
-	} else if m.To == "operator" {
+	if m.To == "operator" {
 		head = append(head, Styled("  for you", Style{Color: "yellow", Bold: true}))
 	}
 	add(head, "")
@@ -158,12 +126,8 @@ func RenderMessage(v *model.Session, id string, o Options) Rendered {
 		add(kv("answers", text, Style{}), m.ReplyTo)
 	}
 	add(Line{S("")}, "")
-	if m.Redacted {
-		add(Line{Dim("  [withdrawn by the operator]")}, "")
-	} else {
-		for _, line := range Wrap(m.Text, max(10, o.Width-2)) {
-			add(Line{S("  " + line)}, "")
-		}
+	for _, line := range Wrap(m.Text, max(10, o.Width-2)) {
+		add(Line{S("  " + line)}, "")
 	}
 	if len(m.Replies) > 0 {
 		add(Line{S("")}, "")

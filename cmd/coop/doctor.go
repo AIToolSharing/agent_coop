@@ -79,10 +79,6 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 			}
 			check(cfg.Token, wire.RoleMachine, "COOP_TOKEN")
 			check(cfg.OperatorToken, wire.RoleOperator, "COOP_OPERATOR_TOKEN")
-			// The orchestrator token is not needed on each machine.
-			if cfg.OrchestratorToken != "" {
-				check(cfg.OrchestratorToken, wire.RoleOrchestrator, "COOP_ORCHESTRATOR_TOKEN")
-			}
 			// The hub and its devices must have one version: a part drops a message that only a
 			// newer schema allows. A build from a clone is never equal, so this is a note.
 			switch {
@@ -127,15 +123,12 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 	} else {
 		ok("skill " + skillPath())
 	}
-	if hookInSettings(executable()) {
-		ok("gate hook in " + claudeSettingsPath() + ": every Claude Code session in a coop session is gated")
-	} else {
-		note("no gate hook in " + claudeSettingsPath() + ": only sessions started with coop claude are gated; run coop setup")
-	}
-	if missing := hooksMissing(readUserSettings(), executable()); len(missing) == 0 {
-		ok("activity hooks in " + claudeSettingsPath() + ": the operator sees the tool calls and the words of each agent")
-	} else if len(missing) < len(hookEvents) {
-		note("some hooks of coop are not in " + claudeSettingsPath() + ": only sessions started with coop claude report all their activity; run coop setup")
+	if path := claudeSettingsPath(); path != "" {
+		if raw, err := os.ReadFile(path); err == nil {
+			if _, old, _ := removeHooks(raw); old {
+				note("hooks of an older coop in " + path + ": run coop setup to remove them")
+			}
+		}
 	}
 	if cfg.Push {
 		ok("COOP_PUSH=1: this process advertises the channel")

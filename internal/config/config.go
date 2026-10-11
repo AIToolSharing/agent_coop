@@ -18,29 +18,19 @@ const ProjectFile = ".coop"
 
 // Config is what the coop command needs to reach the hub. An empty string means "not set".
 type Config struct {
-	URL string // the hub address, with no "/" at the end
-	// Token is the token that the agent uses: the machine token (COOP_TOKEN), or the token
-	// of Role.
-	Token         string
+	URL           string // the hub address, with no "/" at the end
+	Token         string // the machine token, COOP_TOKEN: the agents of this machine use it
 	OperatorToken string // the operator token, COOP_OPERATOR_TOKEN
-	// OrchestratorToken is the token of an orchestrator, COOP_ORCHESTRATOR_TOKEN.
-	OrchestratorToken string
-	CertSHA256        string // the pinned hub certificate, COOP_CERT_SHA256 (hex); "" = none
-	Session           string // the session, or "" when the agent is in no session
-	Agent             string // the agent name; never empty
-	// Role is the role that this process acts in: "" for an agent with the machine token,
-	// or orchestrator. It comes only from COOP_ROLE in env: the person who starts
-	// the process selects it.
-	Role  string
-	Push  bool // true when Claude Code loads the server as a channel
-	Gated bool // true when `coop claude` started the agent with the gate hook
+	CertSHA256    string // the pinned hub certificate, COOP_CERT_SHA256 (hex); "" = none
+	Session       string // the session, or "" when the agent is in no session
+	Agent         string // the agent name; never empty
+	Push          bool   // true when Claude Code loads the server as a channel
 }
 
 // Load finds the configuration. For each key, a value in env wins, and an empty value counts as
 // not set. COOP_SESSION and COOP_AGENT then come from the nearest .coop file (FindProjectFile)
 // from cwd, or else from CLAUDE_PROJECT_DIR in env. COOP_URL, the tokens (COOP_TOKEN,
-// COOP_OPERATOR_TOKEN, COOP_ORCHESTRATOR_TOKEN), COOP_CERT_SHA256 and
-// COOP_PUSH then come from the credential file. A .coop file cannot set an address or a
+// COOP_OPERATOR_TOKEN), COOP_CERT_SHA256 and COOP_PUSH then come from the credential file. A .coop file cannot set an address or a
 // token, because a repository can hold one. The default agent name always comes from cwd; in
 // the home directory (HOME in env) it is "agent".
 //
@@ -82,26 +72,15 @@ func Load(env map[string]string, file string, warn func(string), cwd string) Con
 		warn(fmt.Sprintf("%s %q is not a valid agent name; using %q", where("COOP_AGENT"), agent, fallback))
 		agent = fallback
 	}
-	cfg := Config{
-		URL:               strings.TrimRight(pick("COOP_URL", fromFile), "/"),
-		Token:             pick("COOP_TOKEN", fromFile),
-		OperatorToken:     pick("COOP_OPERATOR_TOKEN", fromFile),
-		OrchestratorToken: pick("COOP_ORCHESTRATOR_TOKEN", fromFile),
-		CertSHA256:        strings.ToLower(pick("COOP_CERT_SHA256", fromFile)),
-		Session:           session,
-		Agent:             agent,
-		Push:              pick("COOP_PUSH", fromFile) == "1",
-		// Only the launch environment says that the hook is there; a file cannot.
-		Gated: env["COOP_GATED"] == "1",
+	return Config{
+		URL:           strings.TrimRight(pick("COOP_URL", fromFile), "/"),
+		Token:         pick("COOP_TOKEN", fromFile),
+		OperatorToken: pick("COOP_OPERATOR_TOKEN", fromFile),
+		CertSHA256:    strings.ToLower(pick("COOP_CERT_SHA256", fromFile)),
+		Session:       session,
+		Agent:         agent,
+		Push:          pick("COOP_PUSH", fromFile) == "1",
 	}
-	switch role := env["COOP_ROLE"]; role {
-	case "", wire.RoleMachine:
-	case wire.RoleOrchestrator:
-		cfg.Role, cfg.Token = role, cfg.OrchestratorToken
-	default:
-		warn(fmt.Sprintf("COOP_ROLE %q is not orchestrator; ignoring it", role))
-	}
-	return cfg
 }
 
 // FindGitRoot returns the nearest directory, from dir upwards, that holds .git. A .git file

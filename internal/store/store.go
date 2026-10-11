@@ -1,5 +1,5 @@
 // Package store keeps the hub's state in one SQLite file: the event log, the sessions, the
-// kicks, the tokens, and what the hub knows about each agent. It replaces the NATS stream and
+// tokens, and what the hub knows about each agent. It replaces the NATS stream and
 // the KV buckets of the TypeScript hub.
 //
 // The store has no clock: the caller passes every time stamp. One connection serves all
@@ -29,8 +29,6 @@ var (
 	ErrExists = errors.New("session exists")
 	// ErrNotFound means there is no such session.
 	ErrNotFound = errors.New("no such session")
-	// ErrOpen means the session is open; close it first.
-	ErrOpen = errors.New("session is open")
 )
 
 // Store is one open database.
@@ -60,13 +58,6 @@ CREATE TABLE IF NOT EXISTS sessions (
 	closed_at  TEXT NOT NULL DEFAULT '',
 	revision   INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS kicks (
-	sid      TEXT NOT NULL,
-	target   TEXT NOT NULL,
-	at       TEXT NOT NULL,
-	revision INTEGER NOT NULL,
-	PRIMARY KEY (sid, target)
-);
 CREATE TABLE IF NOT EXISTS tokens (
 	name       TEXT PRIMARY KEY,
 	sha256     TEXT NOT NULL,
@@ -80,33 +71,12 @@ CREATE TABLE IF NOT EXISTS known (
 	state    TEXT NOT NULL,
 	note     TEXT NOT NULL DEFAULT '',
 	seen_seq INTEGER NOT NULL,
-	gate     TEXT NOT NULL DEFAULT 'run',
 	PRIMARY KEY (sid, agent)
 );
 `
 
-// added lists the columns that a later version added to a table. Open adds each one that a
-// database of an earlier version does not have. The definitions are the same as in schema.
-var added = []struct{ table, column, definition string }{
-	{"known", "gate", "TEXT NOT NULL DEFAULT 'run'"},
-}
-
-// migrate adds the columns that the database does not have yet.
-func migrate(db *sql.DB) error {
-	for _, c := range added {
-		var n int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.column).Scan(&n); err != nil {
-			return err
-		}
-		if n > 0 {
-			continue
-		}
-		if _, err := db.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.column + ` ` + c.definition); err != nil {
-			return err
-		}
-	}
-	return nil
-}
+// A database of an earlier version has more: the table kicks, the column known.gate, and
+// closed sessions (sessions.status, sessions.closed_at). This version does not read them.
 
 // Open opens or creates the database at path, with its directory.
 func Open(path string) (*Store, error) {
@@ -124,10 +94,6 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
-	}
-	if err := migrate(db); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
 	return &Store{db: db}, nil
 }
@@ -219,7 +185,7 @@ func (s *Store) LastSeq() (int64, error) {
 }
 
 // Events gives the events of a session with a sequence in [from, to], oldest first. With
-// kinds, only those kinds (msg, kick, redact, evt).
+// kinds, only those kinds (msg, evt).
 func (s *Store) Events(sid string, from, to int64, kinds ...string) ([]wire.Event, error) {
 	q := `SELECT seq, subject, payload FROM events WHERE sid = ? AND seq BETWEEN ? AND ?`
 	args := []any{sid, from, to}
@@ -272,17 +238,6 @@ func (s *Store) rows(q string, args ...any) ([]Row, error) {
 	return out, rs.Err()
 }
 
-// Delete erases one message of a session (a redact). It gives false when seq is not a
-// message of that session.
-func (s *Store) Delete(sid string, seq int64) (bool, error) {
-	res, err := s.db.Exec(`DELETE FROM events WHERE seq = ? AND sid = ? AND kind = ?`, seq, sid, wire.EventMsg)
-	if err != nil {
-		return false, err
-	}
-	n, err := res.RowsAffected()
-	return n == 1, err
-}
-
 // --- Sessions ------------------------------------------------------------------------------
 
 // SessionRow is one session with the revision of its record.
@@ -292,11 +247,11 @@ type SessionRow struct {
 	Revision int64
 }
 
-const sessionColumns = `sid, status, title, created_at, closed_at, revision`
+const sessionColumns = `sid, title, created_at, revision`
 
 func scanSession(sc interface{ Scan(...any) error }) (SessionRow, error) {
 	var r SessionRow
-	err := sc.Scan(&r.SID, &r.Record.Status, &r.Record.Title, &r.Record.CreatedAt, &r.Record.ClosedAt, &r.Revision)
+	err := sc.Scan(&r.SID, &r.Record.Title, &r.Record.CreatedAt, &r.Revision)
 	return r, err
 }
 
@@ -327,7 +282,7 @@ func (s *Store) Sessions() ([]SessionRow, error) {
 	return out, rs.Err()
 }
 
-// CreateSession makes an open session. ErrExists when there is one.
+// CreateSession makes a session. ErrExists when there is one.
 func (s *Store) CreateSession(sid, title, at string) (SessionRow, error) {
 	var row SessionRow
 	err := s.tx(func(tx *sql.Tx) error {
@@ -343,70 +298,22 @@ func (s *Store) CreateSession(sid, title, at string) (SessionRow, error) {
 			return err
 		}
 		_, err = tx.Exec(`INSERT INTO sessions (sid, status, title, created_at, closed_at, revision) VALUES (?, 'open', ?, ?, '', ?)`, sid, title, at, rev)
-		row = SessionRow{SID: sid, Record: wire.SessionRecord{Status: "open", Title: title, CreatedAt: at}, Revision: rev}
+		row = SessionRow{SID: sid, Record: wire.SessionRecord{Title: title, CreatedAt: at}, Revision: rev}
 		return err
 	})
 	return row, err
 }
 
-// SetStatus opens or closes a session and gives the new record. changed is false when the
-// session had that status already. A close records at as closed_at; an open clears it.
-func (s *Store) SetStatus(sid, status, at string) (row SessionRow, changed bool, err error) {
+// DeleteSession removes a session with its events and known agents. It gives the revision of
+// the removal. ErrNotFound for an unknown session.
+func (s *Store) DeleteSession(sid string) (rev int64, err error) {
 	err = s.tx(func(tx *sql.Tx) error {
-		old, err := scanSession(tx.QueryRow(`SELECT `+sessionColumns+` FROM sessions WHERE sid = ?`, sid))
-		if errors.Is(err, sql.ErrNoRows) {
+		var n int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM sessions WHERE sid = ?`, sid).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
 			return ErrNotFound
-		}
-		if err != nil {
-			return err
-		}
-		changed = old.Record.Status != status
-		rev, err := bump(tx)
-		if err != nil {
-			return err
-		}
-		closedAt := ""
-		if status == "closed" {
-			closedAt = at
-		}
-		if _, err := tx.Exec(`UPDATE sessions SET status = ?, closed_at = ?, revision = ? WHERE sid = ?`, status, closedAt, rev, sid); err != nil {
-			return err
-		}
-		row = old
-		row.Record.Status, row.Record.ClosedAt, row.Revision = status, closedAt, rev
-		return nil
-	})
-	return row, changed, err
-}
-
-// DeleteSession removes a closed session with its events, kicks and known agents. It gives
-// the revision of the removal and the removed kicks, each with its own removal revision.
-// ErrNotFound for an unknown session; ErrOpen for an open one.
-func (s *Store) DeleteSession(sid string) (rev int64, kicks []KickRow, err error) {
-	err = s.tx(func(tx *sql.Tx) error {
-		var status string
-		err := tx.QueryRow(`SELECT status FROM sessions WHERE sid = ?`, sid).Scan(&status)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		if err != nil {
-			return err
-		}
-		if status != "closed" {
-			return ErrOpen
-		}
-		rs, err := tx.Query(`SELECT sid, target, at, revision FROM kicks WHERE sid = ? ORDER BY target`, sid)
-		if err != nil {
-			return err
-		}
-		kicks, err = scanKicks(rs)
-		if err != nil {
-			return err
-		}
-		for i := range kicks {
-			if kicks[i].Revision, err = bump(tx); err != nil {
-				return err
-			}
 		}
 		if rev, err = bump(tx); err != nil {
 			return err
@@ -414,7 +321,6 @@ func (s *Store) DeleteSession(sid string) (rev int64, kicks []KickRow, err error
 		for _, q := range []string{
 			`DELETE FROM events WHERE sid = ?`,
 			`DELETE FROM known WHERE sid = ?`,
-			`DELETE FROM kicks WHERE sid = ?`,
 			`DELETE FROM sessions WHERE sid = ?`,
 		} {
 			if _, err := tx.Exec(q, sid); err != nil {
@@ -423,93 +329,25 @@ func (s *Store) DeleteSession(sid string) (rev int64, kicks []KickRow, err error
 		}
 		return nil
 	})
-	return rev, kicks, err
-}
-
-// --- Kicks ---------------------------------------------------------------------------------
-
-// KickRow is one removed agent of a session.
-type KickRow struct {
-	SID      string
-	Target   string // agent@machine
-	At       string
-	Revision int64
-}
-
-func scanKicks(rs *sql.Rows) ([]KickRow, error) {
-	defer rs.Close()
-	var out []KickRow
-	for rs.Next() {
-		var k KickRow
-		if err := rs.Scan(&k.SID, &k.Target, &k.At, &k.Revision); err != nil {
-			return nil, err
-		}
-		out = append(out, k)
-	}
-	return out, rs.Err()
-}
-
-// Kick records that target may not join sid, and gives the record's revision.
-func (s *Store) Kick(sid, target, at string) (int64, error) {
-	var rev int64
-	err := s.tx(func(tx *sql.Tx) (err error) {
-		if rev, err = bump(tx); err != nil {
-			return err
-		}
-		_, err = tx.Exec(`INSERT INTO kicks (sid, target, at, revision) VALUES (?, ?, ?, ?)
-			ON CONFLICT (sid, target) DO UPDATE SET at = excluded.at, revision = excluded.revision`, sid, target, at, rev)
-		return err
-	})
 	return rev, err
-}
-
-// Unkick removes the kick record and gives the revision of the removal.
-func (s *Store) Unkick(sid, target string) (int64, error) {
-	var rev int64
-	err := s.tx(func(tx *sql.Tx) (err error) {
-		if rev, err = bump(tx); err != nil {
-			return err
-		}
-		_, err = tx.Exec(`DELETE FROM kicks WHERE sid = ? AND target = ?`, sid, target)
-		return err
-	})
-	return rev, err
-}
-
-// Kicked reports whether target is removed from sid.
-func (s *Store) Kicked(sid, target string) (bool, error) {
-	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM kicks WHERE sid = ? AND target = ?`, sid, target).Scan(&n)
-	return n > 0, err
-}
-
-// Kicks gives every kick record, by session and target.
-func (s *Store) Kicks() ([]KickRow, error) {
-	rs, err := s.db.Query(`SELECT sid, target, at, revision FROM kicks ORDER BY sid, target`)
-	if err != nil {
-		return nil, err
-	}
-	return scanKicks(rs)
 }
 
 // --- Known agents --------------------------------------------------------------------------
 
-// KnownRow is an agent that was in a session: its last state, how far it saw the log, and
-// whether the operator lets it work.
+// KnownRow is an agent that was in a session: its last state, and how far it saw the log.
 type KnownRow struct {
 	SID     string
 	Agent   string // agent@machine
 	State   string
 	Note    string
 	SeenSeq int64
-	Gate    string // run or paused
 }
 
-const knownColumns = `sid, agent, state, note, seen_seq, gate`
+const knownColumns = `sid, agent, state, note, seen_seq`
 
 func scanKnown(sc interface{ Scan(...any) error }) (KnownRow, error) {
 	var k KnownRow
-	err := sc.Scan(&k.SID, &k.Agent, &k.State, &k.Note, &k.SeenSeq, &k.Gate)
+	err := sc.Scan(&k.SID, &k.Agent, &k.State, &k.Note, &k.SeenSeq)
 	return k, err
 }
 
@@ -531,28 +369,6 @@ func (s *Store) Known(sid string) ([]KnownRow, error) {
 	return out, rs.Err()
 }
 
-// SetGate sets the gate of one known agent of sid: run or paused. changed is false when
-// the agent is not known or has that gate already.
-func (s *Store) SetGate(sid, agent, gate string) (changed bool, err error) {
-	res, err := s.db.Exec(`UPDATE known SET gate = ? WHERE sid = ? AND agent = ? AND gate <> ?`, gate, sid, agent, gate)
-	if err != nil {
-		return false, err
-	}
-	n, err := res.RowsAffected()
-	return n > 0, err
-}
-
-// Forget removes one known agent of sid: the hub then has no state and no replay point for it.
-// It reports whether the agent was known.
-func (s *Store) Forget(sid, agent string) (bool, error) {
-	res, err := s.db.Exec(`DELETE FROM known WHERE sid = ? AND agent = ?`, sid, agent)
-	if err != nil {
-		return false, err
-	}
-	n, err := res.RowsAffected()
-	return n > 0, err
-}
-
 // KnownAgent gives one known agent of sid, or false.
 func (s *Store) KnownAgent(sid, agent string) (KnownRow, bool, error) {
 	k, err := scanKnown(s.db.QueryRow(`SELECT `+knownColumns+` FROM known WHERE sid = ? AND agent = ?`, sid, agent))
@@ -567,7 +383,7 @@ func (s *Store) KnownAgent(sid, agent string) (KnownRow, bool, error) {
 // TokenRow is one token: its name, role and dates. The secret is never stored.
 type TokenRow struct {
 	Name      string
-	Role      string // a wire role: machine, operator or orchestrator
+	Role      string // a wire role: machine or operator
 	CreatedAt string
 	RevokedAt string // "" while valid
 }

@@ -12,7 +12,7 @@ var token = rapid.StringMatching(`^[a-z0-9_-]{1,64}$`)
 
 // An agent name: a token that is not a reserved word.
 func agentName() *rapid.Generator[string] {
-	return token.Filter(func(s string) bool { return s != "operator" && s != "all" && s != "any" })
+	return token.Filter(func(s string) bool { return s != "operator" && s != "all" })
 }
 
 func address() *rapid.Generator[wire.Address] {
@@ -58,22 +58,10 @@ func TestKeysRoundTrip(t *testing.T) {
 		if got, ok := wire.ParsePresenceKey(wire.BuildPresenceKey(p)); !ok || got != p {
 			rt.Fatalf("presence %q -> %+v %v", wire.BuildPresenceKey(p), got, ok)
 		}
-		k := wire.SessionsKey{Kind: "kick", SID: p.SID, Target: p.Agent}
-		if got, ok := wire.ParseSessionsKey(wire.BuildSessionsKey(k)); !ok || got != k {
-			rt.Fatalf("kick %q -> %+v %v", wire.BuildSessionsKey(k), got, ok)
-		}
-		s := wire.SessionsKey{Kind: "session", SID: p.SID}
-		if got, ok := wire.ParseSessionsKey(wire.BuildSessionsKey(s)); !ok || got != s {
-			rt.Fatalf("session %q -> %+v %v", wire.BuildSessionsKey(s), got, ok)
-		}
 	})
 }
 
 func TestKeyExamplesFromTheTypeScriptFixture(t *testing.T) {
-	k, ok := wire.ParseSessionsKey("build-42.kick.vps-2.bob")
-	if !ok || k.Kind != "kick" || k.SID != "build-42" || k.Target != (wire.Address{Agent: "bob", Machine: "vps-2"}) {
-		t.Fatalf("%+v %v", k, ok)
-	}
 	p, ok := wire.ParsePresenceKey("build-42.mac-1.alice")
 	if !ok || p.SID != "build-42" || p.Agent != (wire.Address{Agent: "alice", Machine: "mac-1"}) {
 		t.Fatalf("%+v %v", p, ok)
@@ -90,7 +78,7 @@ func event() *rapid.Generator[wire.Event] {
 	text := rapid.StringN(1, 200, -1)
 	return rapid.Custom(func(t *rapid.T) wire.Event {
 		e := wire.Event{Seq: rapid.Int64Range(1, 1<<40).Draw(t, "seq"), SID: token.Draw(t, "sid")}
-		switch rapid.IntRange(0, 3).Draw(t, "kind") {
+		switch rapid.IntRange(0, 1).Draw(t, "kind") {
 		case 0:
 			e.Kind = wire.EventMsg
 			if rapid.Bool().Draw(t, "op") {
@@ -111,25 +99,11 @@ func event() *rapid.Generator[wire.Event] {
 				e.ReplyTo = id.Draw(t, "reply_to")
 			}
 			e.SentAt = iso.Draw(t, "sent_at")
-			if e.From != wire.Operator && rapid.Bool().Draw(t, "from orchestrator") {
-				e.FromRole = wire.RoleOrchestrator
-			}
-		case 1:
-			e.Kind = wire.EventKick
-			e.Target = address().Draw(t, "target").String()
-			e.At = iso.Draw(t, "at")
-			if rapid.Bool().Draw(t, "by orchestrator") {
-				e.By = token.Draw(t, "by")
-			}
-		case 2:
-			e.Kind = wire.EventRedact
-			e.ID = id.Draw(t, "id")
-			e.At = iso.Draw(t, "at")
 		default:
 			e.Kind = wire.EventActivity
 			e.From = address().Draw(t, "from").String()
 			a := wire.Activity{At: iso.Draw(t, "at")}
-			switch rapid.IntRange(0, 7).Draw(t, "akind") {
+			switch rapid.IntRange(0, 5).Draw(t, "akind") {
 			case 0:
 				a.Kind = "joined"
 				a.Host = token.Draw(t, "host")
@@ -159,15 +133,7 @@ func event() *rapid.Generator[wire.Event] {
 				a.TimeoutS = rapid.IntRange(1, 600).Draw(t, "timeout")
 			case 4:
 				a.Kind = "refused"
-				a.Reason = rapid.SampledFrom([]string{"removed", "taken"}).Draw(t, "why")
-			case 5:
-				a.Kind = "forgotten"
-			case 6:
-				a.Kind = "gate"
-				a.Gate = rapid.SampledFrom([]string{"run", "held", "paused"}).Draw(t, "gate")
-				if rapid.Bool().Draw(t, "gate by orchestrator") {
-					a.By = token.Draw(t, "gate by")
-				}
+				a.Reason = "taken"
 			default:
 				a.Kind = "wait_end"
 				a.Result = rapid.SampledFrom([]string{"message", "timeout", "cancelled"}).Draw(t, "result")
@@ -211,10 +177,6 @@ func TestDecodeMatchesTheTypeScriptWireFormat(t *testing.T) {
 			wire.Event{Kind: wire.EventMsg, Seq: 7, SID: "build-42", From: "alice@mac-1", To: "bob@vps-2", Text: "What is the shape of GET /users?", SentAt: "2026-09-30T12:00:20.000Z"}},
 		{"coop.build-42.ops", `{"kind":"msg","to":"all","text":"Please run the tests before you say done","sent_at":"2026-09-30T12:00:50.000Z"}`,
 			wire.Event{Kind: wire.EventMsg, Seq: 7, SID: "build-42", From: "operator", To: "all", Text: "Please run the tests before you say done", SentAt: "2026-09-30T12:00:50.000Z"}},
-		{"coop.build-42.ops", `{"kind":"redact","id":"14","at":"2026-09-30T12:00:45.000Z"}`,
-			wire.Event{Kind: wire.EventRedact, Seq: 7, SID: "build-42", ID: "14", At: "2026-09-30T12:00:45.000Z"}},
-		{"coop.build-42.ops", `{"kind":"kick","target":"bob@vps-2","at":"2026-09-30T12:01:00.000Z"}`,
-			wire.Event{Kind: wire.EventKick, Seq: 7, SID: "build-42", Target: "bob@vps-2", At: "2026-09-30T12:01:00.000Z"}},
 	}
 	for _, c := range cases {
 		got, ok := wire.DecodeEvent(c.subject, []byte(c.payload), 7)
@@ -222,19 +184,26 @@ func TestDecodeMatchesTheTypeScriptWireFormat(t *testing.T) {
 			t.Errorf("%s %s\n got %+v\nwant %+v", c.subject, c.payload, got, c.want)
 		}
 	}
-	// The delivery report left the protocol with v0.3.0; an old row of that kind is skipped.
-	if got, ok := wire.DecodeEvent("coop.build-42.evt.vps-2.bob", []byte(`{"kind":"delivered","id":"4","via":"pull","at":"2026-09-30T12:00:14.000Z"}`), 6); ok {
-		t.Fatalf("a delivered activity decoded: %+v", got)
+	// A kind that left the protocol is skipped: the delivery report (v0.3.0), and the kick,
+	// the redact, the gate and the forget (v0.11.0). The log of an older hub holds such rows.
+	for _, old := range []struct{ subject, payload string }{
+		{"coop.build-42.evt.vps-2.bob", `{"kind":"delivered","id":"4","via":"pull","at":"2026-09-30T12:00:14.000Z"}`},
+		{"coop.build-42.ops", `{"kind":"redact","id":"14","at":"2026-09-30T12:00:45.000Z"}`},
+		{"coop.build-42.ops", `{"kind":"kick","target":"bob@vps-2","at":"2026-09-30T12:01:00.000Z"}`},
+		{"coop.build-42.evt.vps-2.bob", `{"kind":"gate","gate":"paused","at":"2026-09-30T12:00:45.000Z"}`},
+		{"coop.build-42.evt.vps-2.bob", `{"kind":"forgotten","at":"2026-09-30T12:00:45.000Z"}`},
+		{"coop.build-42.evt.vps-2.bob", `{"kind":"refused","reason":"removed","at":"2026-09-30T12:00:45.000Z"}`},
+		{"coop.build-42.msg.mac-1.alice", `{"to":"all","text":"x","sent_at":"2026-09-30T12:00:20.000Z","role":"orchestrator"}`},
+	} {
+		if got, ok := wire.DecodeEvent(old.subject, []byte(old.payload), 6); ok {
+			t.Errorf("an old row decoded: %s %s -> %+v", old.subject, old.payload, got)
+		}
 	}
 	for _, bad := range []struct{ subject, payload string }{
 		{"coop.build-42.msg.mac-1.alice", `{"to":"bob@vps-2","sent_at":"x"}`},
 		{"coop.build-42.ops", `{"kind":"what"}`},
 		{"nope.build-42.ops", `{"kind":"redact","id":"1","at":"2026-09-30T12:00:45.000Z"}`},
 		{"coop.build-42.evt.mac-1.alice", `not json`},
-		// by names a token: no address, no other text. A message or a redact has no by.
-		{"coop.build-42.ops", `{"kind":"kick","target":"bob@vps-2","at":"2026-09-30T12:01:00.000Z","by":"pm@orch"}`},
-		{"coop.build-42.ops", `{"kind":"redact","id":"1","at":"2026-09-30T12:00:45.000Z","by":"orch"}`},
-		{"coop.build-42.evt.mac-1.alice", `{"kind":"gate","gate":"run","at":"2026-09-30T12:00:45.000Z","by":"Orch"}`},
 	} {
 		if _, ok := wire.DecodeEvent(bad.subject, []byte(bad.payload), 1); ok {
 			t.Errorf("accepted %s %s", bad.subject, bad.payload)
@@ -243,12 +212,12 @@ func TestDecodeMatchesTheTypeScriptWireFormat(t *testing.T) {
 }
 
 func TestAdminEventDecoding(t *testing.T) {
-	ev, err := wire.ParseAdminEvent([]byte(`{"kind":"event","seq":12,"subject":"coop.build-42.ops","payload":"{\"kind\":\"redact\",\"id\":\"14\",\"at\":\"2026-09-30T12:00:45.000Z\"}"}`))
-	if err != nil || ev.Kind != "event" || ev.Event == nil || ev.Event.Kind != wire.EventRedact || ev.Event.Seq != 12 || ev.Event.ID != "14" {
+	ev, err := wire.ParseAdminEvent([]byte(`{"kind":"event","seq":12,"subject":"coop.build-42.ops","payload":"{\"kind\":\"msg\",\"to\":\"all\",\"text\":\"hi\",\"sent_at\":\"2026-09-30T12:00:45.000Z\"}"}`))
+	if err != nil || ev.Kind != "event" || ev.Event == nil || ev.Event.Kind != wire.EventMsg || ev.Event.Seq != 12 || ev.Event.From != wire.Operator {
 		t.Fatalf("%+v %v", ev, err)
 	}
-	s, err := wire.ParseAdminEvent([]byte(`{"kind":"session","session":"docs","revision":3,"record":{"status":"closed","created_at":"2026-09-30T11:50:00.000Z","closed_at":"2026-09-30T11:59:00.000Z"}}`))
-	if err != nil || s.Session == nil || s.Session.SID != "docs" || s.Session.Revision != 3 || s.Session.Record == nil || s.Session.Record.Status != "closed" || s.Session.Record.ClosedAt != "2026-09-30T11:59:00.000Z" {
+	s, err := wire.ParseAdminEvent([]byte(`{"kind":"session","session":"docs","revision":3,"record":{"title":"Docs","created_at":"2026-09-30T11:50:00.000Z"}}`))
+	if err != nil || s.Session == nil || s.Session.SID != "docs" || s.Session.Revision != 3 || s.Session.Record == nil || s.Session.Record.Title != "Docs" {
 		t.Fatalf("%+v %v", s, err)
 	}
 	gone, err := wire.ParseAdminEvent([]byte(`{"kind":"presence","key":"build-42.vps-2.bob","revision":9,"record":null}`))
@@ -259,21 +228,9 @@ func TestAdminEventDecoding(t *testing.T) {
 	if err != nil || p.Presence.Record == nil || p.Presence.Record.Waiting == nil || p.Presence.Record.Waiting.On != "bob@vps-2" || p.Presence.Record.Client.Name != "claude-code" {
 		t.Fatalf("%+v %v", p, err)
 	}
-	k, err := wire.ParseAdminEvent([]byte(`{"kind":"kick","key":"build-42.kick.vps-2.bob","revision":2,"record":{"at":"2026-09-30T12:01:00.000Z"}}`))
-	if err != nil || k.Kick == nil || k.Kick.Record == nil || k.Kick.Record.At == "" {
-		t.Fatalf("%+v %v", k, err)
-	}
 	snap, err := wire.ParseAdminEvent([]byte(`{"kind":"snapshot","bucket":"presence"}`))
 	if err != nil || snap.Kind != "snapshot" || snap.Bucket != "presence" {
 		t.Fatalf("%+v %v", snap, err)
-	}
-	tr, err := wire.ParseAdminEvent([]byte(`{"kind":"trace","boot":1791000000000,"key":"build-42.mac-3.carol","branch":"main","items":[{"n":7,"at":"2026-09-30T12:02:00.000Z","kind":"tool_end","id":"t1","tool":"Edit","text":"a.go","ms":40,"file":"a.go"}],"files":[{"path":"a.go","count":2,"at":"2026-09-30T12:02:00.000Z"}]}`))
-	if err != nil || tr.Kind != "trace" || tr.Trace == nil || tr.Trace.Key != "build-42.mac-3.carol" || tr.Trace.Boot != 1791000000000 || tr.Trace.Branch != "main" ||
-		len(tr.Trace.Items) != 1 || tr.Trace.Items[0].N != 7 || tr.Trace.Items[0].File != "a.go" || len(tr.Trace.Files) != 1 || tr.Trace.Files[0].Count != 2 {
-		t.Fatalf("%+v %v", tr, err)
-	}
-	if _, err := wire.ParseAdminEvent([]byte(`{"kind":"trace","boot":1,"key":"not a key","items":[]}`)); err == nil {
-		t.Fatal("a trace with a bad key accepted")
 	}
 	if _, err := wire.ParseAdminEvent([]byte(`{"kind":"other"}`)); err == nil {
 		t.Fatal("unknown kind accepted")

@@ -57,7 +57,9 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	listen := fs.String("listen", "127.0.0.1:8090", "the address to listen on (plain HTTP; put TLS in front)")
 	data := fs.String("data", defaultDataDir(), "the directory of the database")
-	auto := fs.Bool("auto-create", true, "let the first agent that joins an unknown session create it")
+	// --auto-create was a flag of v0.10.0 and before. The first join always creates the session
+	// now. The flag stays, so that a unit that gives it still starts.
+	fs.Bool("auto-create", true, "ignored: the first agent that joins an unknown session creates it")
 	dist := fs.String("dist", "", "the directory of the release binaries that the hub gives to devices (default: dist in the data directory)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -78,7 +80,7 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 		return 1
 	}
 	logf := func(format string, a ...any) { fmt.Fprintf(stderr, "coop serve: "+format+"\n", a...) }
-	h := coophub.New(st, coophub.Options{AutoCreate: *auto})
+	h := coophub.New(st, coophub.Options{})
 	// A device installs and upgrades coop from its hub: the hub reports its version and gives
 	// the binaries of that version (deploy/install.sh puts them into the directory).
 	handler := api.New(h, logf)

@@ -105,11 +105,6 @@ func (a api) activity(sid string, body map[string]any) (int, []byte) {
 	return a.req(http.MethodPost, "/v1/sessions/"+sid+"/activity", body)
 }
 
-// gate asks whether the operator lets the agent work.
-func (a api) gate(sid, agent string) (int, []byte) {
-	return a.req(http.MethodPost, "/v1/sessions/"+sid+"/gate", map[string]any{"agent": agent})
-}
-
 func (a api) view(sid, agent string) (int, []byte) {
 	return a.req(http.MethodGet, "/v1/sessions/"+sid+"?agent="+agent, nil)
 }
@@ -386,41 +381,8 @@ func (a admin) create(session, title string) (int, []byte) {
 	return a.req(http.MethodPost, "/sessions", body)
 }
 
-func (a admin) close(sid string) (int, []byte) {
-	return a.req(http.MethodPost, "/sessions/"+sid+"/close", nil)
-}
-
-func (a admin) reopen(sid string) (int, []byte) {
-	return a.req(http.MethodPost, "/sessions/"+sid+"/reopen", nil)
-}
-
 func (a admin) delete(sid string) (int, []byte) {
 	return a.req(http.MethodDelete, "/sessions/"+sid, nil)
-}
-
-func (a admin) kick(sid, target string) (int, []byte) {
-	return a.req(http.MethodPost, "/sessions/"+sid+"/kick", map[string]any{"target": target})
-}
-
-func (a admin) unkick(sid, target string) (int, []byte) {
-	return a.req(http.MethodPost, "/sessions/"+sid+"/unkick", map[string]any{"target": target})
-}
-
-// gate sets the gate of one agent, or of every agent of the session when target is "".
-func (a admin) gate(sid, target, gate string) (int, []byte) {
-	body := map[string]any{"gate": gate}
-	if target != "" {
-		body["target"] = target
-	}
-	return a.req(http.MethodPost, "/sessions/"+sid+"/gate", body)
-}
-
-func (a admin) forget(sid, target string) (int, []byte) {
-	return a.req(http.MethodPost, "/sessions/"+sid+"/forget", map[string]any{"target": target})
-}
-
-func (a admin) redact(sid, id string) (int, []byte) {
-	return a.req(http.MethodPost, "/sessions/"+sid+"/redact", map[string]any{"id": id})
 }
 
 // send posts a message as the operator. An empty replyTo sends no reply_to.
@@ -449,31 +411,6 @@ type operator struct{ a admin }
 func (o operator) createSession(t *testing.T, sid string) {
 	t.Helper()
 	wantStatus(t, http.StatusOK)(o.a.create(sid, ""))
-}
-
-func (o operator) closeSession(t *testing.T, sid string) {
-	t.Helper()
-	wantStatus(t, http.StatusNoContent)(o.a.close(sid))
-}
-
-func (o operator) reopenSession(t *testing.T, sid string) {
-	t.Helper()
-	wantStatus(t, http.StatusNoContent)(o.a.reopen(sid))
-}
-
-func (o operator) kick(t *testing.T, sid, target string) {
-	t.Helper()
-	wantStatus(t, http.StatusNoContent)(o.a.kick(sid, target))
-}
-
-// redact gives false when id is not a message of the session, as Operator.redact does.
-func (o operator) redact(t *testing.T, sid, id string) bool {
-	t.Helper()
-	status, body := o.a.redact(sid, id)
-	if status != http.StatusNoContent && status != http.StatusNotFound {
-		t.Fatalf("redact %s %s: status %d: %s", sid, id, status, body)
-	}
-	return status == http.StatusNoContent
 }
 
 // send sends a message as the operator and gives its id.
@@ -600,8 +537,6 @@ type apiMessage struct {
 	Text    string `json:"text"`
 	ReplyTo string `json:"reply_to"`
 	SentAt  string `json:"sent_at"`
-	// FromRole is "orchestrator" for a message of an orchestrator.
-	FromRole string `json:"from_role"`
 }
 
 func (m *apiMessage) UnmarshalJSON(b []byte) error {
@@ -616,7 +551,6 @@ func (m *apiMessage) UnmarshalJSON(b []byte) error {
 		rule{validText(m.Text), "text"},
 		rule{m.ReplyTo == "" || wire.IsID(m.ReplyTo), "reply_to"},
 		rule{wire.IsTime(m.SentAt), "sent_at"},
-		rule{m.FromRole == "" || m.FromRole == wire.RoleOrchestrator, "from_role"},
 	)
 }
 
@@ -677,19 +611,17 @@ func (p *peer) UnmarshalJSON(b []byte) error {
 // sessionView is SessionView.
 type sessionView struct {
 	Session string `json:"session"`
-	Status  string `json:"status"`
 	Me      string `json:"me"`
 	Peers   []peer `json:"peers"`
 }
 
 func (v *sessionView) UnmarshalJSON(b []byte) error {
 	type plain sessionView
-	if err := strictDecode(b, (*plain)(v), "session", "status", "me", "peers"); err != nil {
+	if err := strictDecode(b, (*plain)(v), "session", "me", "peers"); err != nil {
 		return err
 	}
 	return checkRules(
 		rule{wire.IsToken(v.Session), "session"},
-		rule{v.Status == "open" || v.Status == "closed", "status"},
 		rule{isAddress(v.Me), "me"},
 	)
 }
@@ -708,36 +640,31 @@ func (h *historyResponse) UnmarshalJSON(b []byte) error {
 type joinedEvent struct {
 	Me      string `json:"me"`
 	Session string `json:"session"`
-	Gate    string `json:"gate"`
 }
 
 func (j *joinedEvent) UnmarshalJSON(b []byte) error {
 	type plain joinedEvent
-	if err := strictDecode(b, (*plain)(j), "me", "session", "gate"); err != nil {
+	if err := strictDecode(b, (*plain)(j), "me", "session"); err != nil {
 		return err
 	}
-	return checkRules(rule{isAddress(j.Me), "me"}, rule{wire.IsToken(j.Session), "session"}, rule{wire.IsGate(j.Gate), "gate"})
+	return checkRules(rule{isAddress(j.Me), "me"}, rule{wire.IsToken(j.Session), "session"})
 }
 
 // noticeEvent is NoticeEvent, the data of SSE event `notice`.
 type noticeEvent struct {
 	Kind string `json:"kind"`
-	ID   string `json:"id"`
 	Peer string `json:"peer"`
-	By   string `json:"by"`
 	At   string `json:"at"`
 }
 
 func (n *noticeEvent) UnmarshalJSON(b []byte) error {
 	type plain noticeEvent
-	if err := strictDecode(b, (*plain)(n), "kind", "at"); err != nil {
+	if err := strictDecode(b, (*plain)(n), "kind", "peer", "at"); err != nil {
 		return err
 	}
 	return checkRules(
-		rule{slices.Contains([]string{"kicked", "closed", "reopened", "redacted", "peer_left", "held", "paused", "released"}, n.Kind), "kind"},
-		rule{n.ID == "" || wire.IsID(n.ID), "id"},
-		rule{n.Peer == "" || isAddress(n.Peer), "peer"},
-		rule{n.By == "" || wire.IsToken(n.By), "by"},
+		rule{n.Kind == "peer_left", "kind"},
+		rule{isAddress(n.Peer), "peer"},
 		rule{wire.IsTime(n.At), "at"},
 	)
 }
@@ -786,13 +713,12 @@ type adminEvent struct {
 	Payload string
 	// session
 	Session string
-	// kick and presence
+	// presence
 	Key string
-	// session, kick and presence
+	// session and presence
 	Revision int64
 	// The record of a bucket entry, by kind. It is nil when the key is gone.
 	SessionRecord  *wire.SessionRecord
-	KickRecord     *wire.KickRecord
 	PresenceRecord *wire.PresenceRecord
 	// snapshot
 	Bucket string
@@ -814,7 +740,7 @@ func (e *adminEvent) UnmarshalJSON(b []byte) error {
 		fields = []string{"kind", "seq", "subject", "payload"}
 	case "session":
 		fields = []string{"kind", "session", "revision", "record"}
-	case "kick", "presence":
+	case "presence":
 		fields = []string{"kind", "key", "revision", "record"}
 	case "snapshot":
 		fields = []string{"kind", "bucket"}
@@ -847,11 +773,7 @@ func (e *adminEvent) UnmarshalJSON(b []byte) error {
 		return checkRules(rule{raw.Seq >= 1, "seq"})
 	case "session":
 		if err = checkRules(rule{wire.IsToken(raw.Session), "session"}, rule{raw.Revision >= 0, "revision"}); err == nil {
-			e.SessionRecord, err = bucketRecord[wire.SessionRecord](m["record"], "status", "created_at")
-		}
-	case "kick":
-		if err = checkRules(rule{raw.Revision >= 0, "revision"}); err == nil {
-			e.KickRecord, err = bucketRecord[wire.KickRecord](m["record"], "at")
+			e.SessionRecord, err = bucketRecord[wire.SessionRecord](m["record"], "created_at")
 		}
 	case "presence":
 		if err = checkRules(rule{raw.Revision >= 0, "revision"}); err == nil {

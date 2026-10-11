@@ -241,20 +241,6 @@ func TestOpenWaitGetsTheFirstMatchingMessage(t *testing.T) {
 	})
 }
 
-func TestNoticeEndsAFilteredWait(t *testing.T) {
-	h := newHarness(true, 0)
-	w := h.inbox.wait("bob")
-	closed := item{notice: &notice{Kind: noticeClosed, At: "2026-09-30T00:00:00.000Z"}}
-	h.inbox.accept(closed)
-	got, done := ended(w)
-	if !done || len(got) != 1 || got[0].notice != closed.notice {
-		t.Fatalf("got %+v (ended %v)", got, done)
-	}
-	if len(h.pushed) != 0 || len(h.delivered) != 0 {
-		t.Fatal("a notice was pushed or reported")
-	}
-}
-
 func TestStopGivesAResultThatCameFirst(t *testing.T) {
 	h := newHarness(false, 0)
 	w := h.inbox.wait("")

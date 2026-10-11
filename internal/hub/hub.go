@@ -71,8 +71,6 @@ type Limit struct {
 // normal use.
 type Limits struct {
 	Join, Msg, Activity Limit
-	// Trace limits the reports of what an agent does at its terminal.
-	Trace Limit
 }
 
 // DefaultLimits are the limits of the TypeScript hub.
@@ -80,14 +78,10 @@ var DefaultLimits = Limits{
 	Join:     Limit{Burst: 10, PerSecond: 1},
 	Msg:      Limit{Burst: 30, PerSecond: 5},
 	Activity: Limit{Burst: 120, PerSecond: 20},
-	Trace:    Limit{Burst: 240, PerSecond: 40},
 }
 
 // Options configures a Hub.
 type Options struct {
-	// AutoCreate lets the first join of an unknown session create it, open. A closed session
-	// stays closed.
-	AutoCreate bool
 	// Ping is the interval of the SSE ping, and of the check of each live connection's token
 	// and session. Zero means 15 s.
 	Ping time.Duration
@@ -113,11 +107,6 @@ type StreamQuery struct {
 	Instance                  string
 	Host, Cwd                 string
 	ClientName, ClientVersion string
-	// Gated is true when the agent's tool calls go through the gate (started by `coop claude`).
-	Gated bool
-	// Role is the role of the token that joins: machine or orchestrator. The API sets it from
-	// the token, never from the query.
-	Role string
 }
 
 // Message is a message as an agent gets it.
@@ -128,21 +117,13 @@ type Message struct {
 	Text    string `json:"text"`
 	ReplyTo string `json:"reply_to,omitempty"`
 	SentAt  string `json:"sent_at"`
-	// FromRole is "orchestrator" when an orchestrator sent the message: it speaks for the
-	// user in the session.
-	FromRole string `json:"from_role,omitempty"`
 }
 
-// Notice is something the agent must know that is not a message.
+// Notice is something the agent must know that is not a message: a peer left (peer_left).
 type Notice struct {
-	Kind string `json:"kind"` // kicked closed reopened redacted peer_left held paused released
-	ID   string `json:"id,omitempty"`
-	// Peer is the peer that left, for peer_left; for released, the orchestrator whose leave
-	// released the agent, or "".
+	Kind string `json:"kind"`
 	Peer string `json:"peer,omitempty"`
-	// By is the orchestrator token that changed the gate, for held, paused and released.
-	By string `json:"by,omitempty"`
-	At string `json:"at"`
+	At   string `json:"at"`
 }
 
 type SendRequest struct {
@@ -178,13 +159,10 @@ type Peer struct {
 	// written to.
 	Online    bool   `json:"online"`
 	WaitingOn string `json:"waiting_on,omitempty"`
-	// Role is "orchestrator" for a peer that may act for the user.
-	Role string `json:"role,omitempty"`
 }
 
 type SessionView struct {
 	Session string `json:"session"`
-	Status  string `json:"status"`
 	Me      string `json:"me"`
 	Peers   []Peer `json:"peers"`
 }
@@ -225,23 +203,13 @@ type Hub struct {
 	st             *store.Store
 	opt            Options
 	join, msg, act *limiter
-	traceLim       *limiter
 	mu             sync.Mutex
 	conns          map[string]*Conn // live connections, by presence key
 	feeds          map[*feed]struct{}
-	// refusedAt is when the hub last recorded a refused join, by presence key and reason.
+	// refusedAt is when the hub last recorded a refused join, by presence key.
 	refusedAt map[string]time.Time
-	// picked is when a send to `any` last chose an agent, by presence key. It outlives the
-	// connection: a worker that joins again for each task keeps its place in the turns. It
-	// ends when the operator forgets the agent or deletes the session.
-	picked map[string]time.Time
-	// traces is what each agent did at its terminal lately, by presence key. traceN numbers
-	// the items. boot names this run of the hub in the feed.
-	traces map[string]*traceLog
-	traceN int64
-	boot   int64
-	closed bool
-	wg     sync.WaitGroup
+	closed    bool
+	wg        sync.WaitGroup
 }
 
 // New makes a hub over st.
@@ -262,7 +230,6 @@ func New(st *store.Store, opt Options) *Hub {
 		Join:     pick(opt.Limits.Join, DefaultLimits.Join),
 		Msg:      pick(opt.Limits.Msg, DefaultLimits.Msg),
 		Activity: pick(opt.Limits.Activity, DefaultLimits.Activity),
-		Trace:    pick(opt.Limits.Trace, DefaultLimits.Trace),
 	}
 	return &Hub{
 		st:        st,
@@ -270,13 +237,9 @@ func New(st *store.Store, opt Options) *Hub {
 		join:      newLimiter(opt.Limits.Join, opt.Now),
 		msg:       newLimiter(opt.Limits.Msg, opt.Now),
 		act:       newLimiter(opt.Limits.Activity, opt.Now),
-		traceLim:  newLimiter(opt.Limits.Trace, opt.Now),
-		traces:    map[string]*traceLog{},
-		boot:      opt.Now().UnixMilli(),
 		conns:     map[string]*Conn{},
 		feeds:     map[*feed]struct{}{},
 		refusedAt: map[string]time.Time{},
-		picked:    map[string]time.Time{},
 	}
 }
 
@@ -348,17 +311,6 @@ type Conn struct {
 	state   string
 	note    string
 	waiting *wire.Waiting
-	// gate is whether the operator lets the agent work: run, held or paused.
-	gate  string
-	gated bool
-	// orchestrator: the agent joined with an orchestrator token.
-	orchestrator bool
-	// quiet is the sequence of a gate record that the agent gets no notice of, or 0.
-	quiet int64
-	// sent holds the ids of the messages written to the stream, for redact notices.
-	sent map[string]bool
-	// status is the session status this connection was told last.
-	status string
 	// rev is the revision of the last presence record sent for this connection.
 	rev int64
 
@@ -403,8 +355,6 @@ type Joined struct {
 	// CatchUpUntil is the last sequence that existed at the join; events up to it come from
 	// the store, later ones from the connection.
 	CatchUpUntil int64
-	// hold: this is the agent's first join, and an orchestrator is in the session.
-	hold bool
 }
 
 // Join checks a join and reserves the name. A Joined must be followed by Run.
@@ -417,19 +367,10 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 	if !h.join.take(machine) {
 		return nil, errf("rate_limited", "too many joins")
 	}
-	row, err := h.requireOpenLocked(sid, h.opt.AutoCreate)
-	if err != nil {
+	if err := h.ensureSessionLocked(sid); err != nil {
 		return nil, err
 	}
 	me := wire.Address{Agent: q.Agent, Machine: machine}
-	kicked, err := h.st.Kicked(sid, me.String())
-	if err != nil {
-		return nil, storeErr(err)
-	}
-	if kicked {
-		h.refusedLocked(sid, me, "removed")
-		return nil, errf("forbidden", "removed from session")
-	}
 	end, err := h.st.LastSeq()
 	if err != nil {
 		return nil, storeErr(err)
@@ -446,14 +387,10 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 		// A new process of an agent the hub knows gets what the agent missed.
 		startSeq = known.SeenSeq + 1
 	}
-	// An agent that the hub does not know starts held when an orchestrator is in the session.
-	// An orchestrator does not: it releases the others.
-	trusted := q.Role == wire.RoleOrchestrator
-	gate := gateOf(gateInput{Known: isKnown, Gate: known.Gate, Hold: h.orchestratorInLocked(sid), Trusted: trusted})
 	key := wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: me})
 	old := h.conns[key]
 	if old != nil && old.instance != q.Instance {
-		h.refusedLocked(sid, me, "taken")
+		h.refusedLocked(sid, me)
 		return nil, errf("conflict", "name %s is taken", me)
 	}
 	if old != nil {
@@ -464,13 +401,11 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 		host: q.Host, cwd: q.Cwd, client: wire.Client{Name: q.ClientName, Version: q.ClientVersion},
 		joinedAt: h.now(), resumed: old != nil,
 		out:   make(chan item, 256),
-		state: "idle", sent: map[string]bool{},
-		gate: gate, gated: q.Gated, orchestrator: trusted,
-		status: row.Record.Status, reason: "disconnected", done: make(chan struct{}),
+		state: "idle", reason: "disconnected", done: make(chan struct{}),
 	}
 	h.conns[key] = c
 	h.wg.Add(1)
-	return &Joined{Conn: c, StartSeq: startSeq, CatchUpUntil: end, hold: !isKnown && gate == wire.GateHeld}, nil
+	return &Joined{Conn: c, StartSeq: startSeq, CatchUpUntil: end}, nil
 }
 
 // refusedEvery is the least time between two records of a refused join of one agent. It is a
@@ -478,18 +413,17 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 // trying stays in view, and a retry loop does not fill the log.
 const refusedEvery = 4 * time.Minute
 
-// refusedLocked records a join that the hub did not let in, so that the operator sees it: the
-// agent is removed (a forgotten :allow must not look like an agent that never started), or
-// another session holds the name (reason taken).
-func (h *Hub) refusedLocked(sid string, me wire.Address, reason string) {
-	key := wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: me}) + "|" + reason
+// refusedLocked records a join that the hub did not let in because another session holds the
+// name, so that the operator sees it.
+func (h *Hub) refusedLocked(sid string, me wire.Address) {
+	key := wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: me})
 	now := h.opt.Now()
 	if last, ok := h.refusedAt[key]; ok && now.Sub(last) < refusedEvery {
 		return
 	}
 	h.refusedAt[key] = now
 	_, _ = h.publishLocked(wire.Event{Kind: wire.EventActivity, SID: sid, From: me.String(), Activity: &wire.Activity{
-		Kind: "refused", Reason: reason, At: h.now(),
+		Kind: "refused", Reason: "taken", At: h.now(),
 	}}, false, nil)
 }
 
@@ -505,20 +439,14 @@ func (h *Hub) Run(ctx context.Context, j *Joined, sink Sink) {
 		_, err := h.publishLocked(wire.Event{Kind: wire.EventActivity, SID: c.sid, From: me, Activity: &wire.Activity{
 			Kind: "joined", Host: c.host, Cwd: c.cwd, Client: c.client, At: c.joinedAt,
 		}}, true, nil)
-		if err == nil && j.hold {
-			// The first join in a session with an orchestrator: record the hold. The agent
-			// gets no notice of it: the joined event tells it the gate.
-			c.quiet, err = h.recordGateLocked(c.sid, me, wire.GateHeld, "")
-		}
 		if err != nil {
 			h.mu.Unlock()
 			return
 		}
 	}
 	h.putPresenceLocked(c)
-	gate := c.gate
 	h.mu.Unlock()
-	if sink.Write("joined", map[string]string{"me": me, "session": c.sid, "gate": gate}, "") != nil {
+	if sink.Write("joined", map[string]string{"me": me, "session": c.sid}, "") != nil {
 		return
 	}
 	if j.StartSeq <= j.CatchUpUntil {
@@ -527,7 +455,7 @@ func (h *Hub) Run(ctx context.Context, j *Joined, sink Sink) {
 		if err != nil {
 			return
 		}
-		missed = slices.DeleteFunc(missed, func(e wire.Event) bool { return deliveryFor(&e, me, nil) != "message" })
+		missed = slices.DeleteFunc(missed, func(e wire.Event) bool { return deliveryFor(&e, me) != "message" })
 		if len(missed) > ReplayMax {
 			missed = missed[len(missed)-ReplayMax:]
 		}
@@ -574,40 +502,12 @@ func (h *Hub) deliver(c *Conn, it item, sink Sink) bool {
 		return write("notice", it.notice, "")
 	}
 	e := it.ev
-	me := c.me.String()
-	h.mu.Lock()
-	wasSent := c.sent[e.ID]
-	quiet := c.quiet
-	h.mu.Unlock()
-	if e.Seq == quiet {
-		return true
-	}
-	switch deliveryFor(e, me, func(string) bool { return wasSent }) {
+	switch deliveryFor(e, c.me.String()) {
 	case "message":
 		m := toMessage(e)
-		h.mu.Lock()
-		c.sent[m.ID] = true
-		h.mu.Unlock()
 		return write("message", m, m.ID)
 	case "notice":
-		id := strconv.FormatInt(e.Seq, 10)
-		switch e.Kind {
-		case wire.EventKick:
-			write("notice", Notice{Kind: "kicked", At: e.At}, id)
-			c.close("kicked")
-			return false
-		case wire.EventRedact:
-			return write("notice", Notice{Kind: "redacted", ID: e.ID, At: e.At}, id)
-		case wire.EventActivity:
-			if e.Activity.Kind == "gate" {
-				n := Notice{Kind: gateNotice(e.Activity.Gate), By: e.Activity.By, At: e.Activity.At}
-				if e.Activity.Reason == "orchestrator_left" {
-					n.Peer = e.Activity.From
-				}
-				return write("notice", n, id)
-			}
-			return write("notice", Notice{Kind: "peer_left", Peer: e.From, At: e.Activity.At}, id)
-		}
+		return write("notice", Notice{Kind: "peer_left", Peer: e.From, At: e.Activity.At}, strconv.FormatInt(e.Seq, 10))
 	}
 	return true
 }
@@ -625,26 +525,11 @@ func (h *Hub) sweep(c *Conn) bool {
 		c.close("revoked")
 		return false
 	}
-	row, ok, err := h.st.Session(c.sid)
-	if err != nil {
-		return true
-	}
-	if !ok {
+	if _, ok, err := h.st.Session(c.sid); err == nil && !ok {
 		c.close("closed")
 		return false
 	}
-	if row.Record.Status != c.status {
-		c.status = row.Record.Status
-		c.push(item{notice: &Notice{Kind: statusNotice(c.status), At: h.now()}})
-	}
 	return true
-}
-
-func statusNotice(status string) string {
-	if status == "closed" {
-		return "closed"
-	}
-	return "reopened"
 }
 
 // leave takes the connection out of the session and records it.
@@ -667,36 +552,6 @@ func (h *Hub) leave(c *Conn) {
 	}
 	if rev, err := h.st.NextRevision(); err == nil {
 		h.feedAll("presence", presenceOut{Kind: "presence", Key: c.key, Revision: rev}, "")
-	}
-	if c.orchestrator && !h.orchestratorInLocked(c.sid) {
-		h.releaseHeldLocked(c.sid, c.me.String())
-	}
-}
-
-// releaseHeldLocked releases each held agent of a session whose last orchestrator left (an
-// orchestrator that comes back under the same name replaces its connection and does not
-// leave). Nobody would release them: the record says why, and the notice names the
-// orchestrator, so that the agent asks the user for its task.
-func (h *Hub) releaseHeldLocked(sid, orchestrator string) {
-	known, err := h.st.Known(sid)
-	if err != nil {
-		return
-	}
-	for _, k := range known {
-		if k.Gate != wire.GateHeld {
-			continue
-		}
-		if _, err := h.st.SetGate(sid, k.Agent, wire.GateRun); err != nil {
-			return
-		}
-		if a, ok := wire.ParseAddress(k.Agent); ok {
-			if c := h.conns[wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: a})]; c != nil {
-				c.gate = wire.GateRun
-			}
-		}
-		_, _ = h.publishLocked(wire.Event{Kind: wire.EventActivity, SID: sid, From: k.Agent, Activity: &wire.Activity{
-			Kind: "gate", Gate: wire.GateRun, Reason: "orchestrator_left", From: orchestrator, At: h.now(),
-		}}, false, nil)
 	}
 }
 
@@ -735,10 +590,7 @@ func (h *Hub) putPresenceLocked(c *Conn) {
 func (c *Conn) presence() wire.PresenceRecord {
 	r := wire.PresenceRecord{
 		Host: c.host, Cwd: c.cwd, Client: c.client, State: c.state, Note: c.note,
-		JoinedAt: c.joinedAt, Gated: c.gated,
-	}
-	if c.orchestrator {
-		r.Role = wire.RoleOrchestrator
+		JoinedAt: c.joinedAt,
 	}
 	if c.waiting != nil {
 		w := *c.waiting
@@ -759,18 +611,12 @@ func (h *Hub) Send(machine, sid string, req SendRequest) (SendResponse, error) {
 	if err != nil {
 		return SendResponse{}, err
 	}
-	if _, err := h.requireOpenLocked(sid, false); err != nil {
-		return SendResponse{}, err
-	}
 	to, err := h.recipientLocked(sid, req.To, c.me)
 	if err != nil {
 		return SendResponse{}, err
 	}
 	sentAt := h.now()
 	e := wire.Event{Kind: wire.EventMsg, SID: sid, From: c.me.String(), To: to, Text: req.Text, ReplyTo: req.ReplyTo, SentAt: sentAt}
-	if c.orchestrator {
-		e.FromRole = wire.RoleOrchestrator
-	}
 	seq, err := h.publishLocked(e, false, nil)
 	if err != nil {
 		return SendResponse{}, storeErr(err)
@@ -841,12 +687,8 @@ func (h *Hub) View(machine, sid, agent string) (SessionView, error) {
 	if err != nil {
 		return SessionView{}, err
 	}
-	row, ok, err := h.st.Session(sid)
-	if err != nil {
-		return SessionView{}, storeErr(err)
-	}
-	if !ok {
-		return SessionView{}, errf("not_found", "no session %s", sid)
+	if err := h.requireSessionLocked(sid); err != nil {
+		return SessionView{}, err
 	}
 	peers := []Peer{}
 	live := h.inSessionLocked(sid)
@@ -855,9 +697,6 @@ func (h *Hub) View(machine, sid, agent string) (SessionView, error) {
 			continue
 		}
 		peer := Peer{Name: p.me.String(), State: p.state, Note: p.note, Online: true}
-		if p.orchestrator {
-			peer.Role = wire.RoleOrchestrator
-		}
 		if p.waiting != nil {
 			peer.WaitingOn = p.waiting.On
 		}
@@ -873,7 +712,7 @@ func (h *Hub) View(machine, sid, agent string) (SessionView, error) {
 		}
 		peers = append(peers, Peer{Name: k.Agent, State: k.State, Note: k.Note, Online: false})
 	}
-	return SessionView{Session: sid, Status: row.Record.Status, Me: c.me.String(), Peers: peers}, nil
+	return SessionView{Session: sid, Me: c.me.String(), Peers: peers}, nil
 }
 
 func (h *Hub) History(machine, sid string, q HistoryQuery) ([]Message, error) {
@@ -919,92 +758,6 @@ func (h *Hub) History(machine, sid string, q HistoryQuery) ([]Message, error) {
 
 // --- The admin API: the operator token ---------------------------------------------------------
 
-// AgentView is one agent of a session as the operator sees it.
-type AgentView struct {
-	Name      string `json:"name"`
-	Online    bool   `json:"online"`
-	State     string `json:"state"`
-	Note      string `json:"note,omitempty"`
-	Gate      string `json:"gate"`
-	WaitingOn string `json:"waiting_on,omitempty"`
-	Role      string `json:"role,omitempty"`
-}
-
-// AdminSessionView is a session with each agent in it or known to it, except removed ones.
-type AdminSessionView struct {
-	wire.SessionInfo
-	Agents []AgentView `json:"agents"`
-}
-
-// AdminSession gives a session and its agents, by name: the live ones with their presence,
-// the others with what they reported last.
-func (h *Hub) AdminSession(sid string) (AdminSessionView, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	row, ok, err := h.st.Session(sid)
-	if err != nil {
-		return AdminSessionView{}, storeErr(err)
-	}
-	if !ok {
-		return AdminSessionView{}, errf("not_found", "no session %s", sid)
-	}
-	agents := []AgentView{}
-	for _, c := range h.inSessionLocked(sid) {
-		a := AgentView{Name: c.me.String(), Online: true, State: c.state, Note: c.note, Gate: c.gate}
-		if c.waiting != nil {
-			a.WaitingOn = c.waiting.On
-		}
-		if c.orchestrator {
-			a.Role = wire.RoleOrchestrator
-		}
-		agents = append(agents, a)
-	}
-	away, err := h.awayLocked(sid)
-	if err != nil {
-		return AdminSessionView{}, storeErr(err)
-	}
-	for _, k := range away {
-		agents = append(agents, AgentView{Name: k.Agent, State: k.State, Note: k.Note, Gate: k.Gate})
-	}
-	sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
-	return AdminSessionView{SessionInfo: wire.SessionInfo{Session: sid, SessionRecord: row.Record}, Agents: agents}, nil
-}
-
-// AllMessagesQuery pages through the messages of a session. With After, it gives the first
-// Limit messages after that id; without, the newest Limit.
-type AllMessagesQuery struct {
-	After int64
-	Limit int
-}
-
-// AllMessages gives the messages of a session, each one, also those between two agents,
-// oldest first. The operator and an orchestrator read them.
-func (h *Hub) AllMessages(sid string, q AllMessagesQuery) ([]Message, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err := h.requireSessionLocked(sid); err != nil {
-		return nil, err
-	}
-	last, err := h.st.LastSeq()
-	if err != nil {
-		return nil, storeErr(err)
-	}
-	events, err := h.st.Events(sid, q.After+1, last, wire.EventMsg)
-	if err != nil {
-		return nil, storeErr(err)
-	}
-	if q.After > 0 {
-		events = events[:min(len(events), q.Limit)]
-	} else {
-		events = events[max(0, len(events)-q.Limit):]
-	}
-	msgs := make([]Message, 0, len(events))
-	for i := range events {
-		msgs = append(msgs, toMessage(&events[i]))
-	}
-	return msgs, nil
-}
-
 func (h *Hub) ListSessions() ([]wire.SessionInfo, error) {
 	rows, err := h.st.Sessions()
 	if err != nil {
@@ -1031,285 +784,38 @@ func (h *Hub) CreateSession(sid, title string) (wire.SessionInfo, error) {
 	return wire.SessionInfo{Session: sid, SessionRecord: row.Record}, nil
 }
 
-func (h *Hub) CloseSession(sid string) error  { return h.setStatus(sid, "closed") }
-func (h *Hub) ReopenSession(sid string) error { return h.setStatus(sid, "open") }
-
-func (h *Hub) setStatus(sid, status string) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	row, changed, err := h.st.SetStatus(sid, status, h.now())
-	if errors.Is(err, store.ErrNotFound) {
-		return errf("not_found", "no session %s", sid)
-	}
-	if err != nil {
-		return storeErr(err)
-	}
-	h.feedSession(row)
-	if changed {
-		at := h.now()
-		for _, c := range h.inSessionLocked(sid) {
-			c.status = status
-			c.push(item{notice: &Notice{Kind: statusNotice(status), At: at}})
-		}
-	}
-	return nil
-}
-
+// DeleteSession removes a session with its messages. A session with an agent in it is a
+// conflict: the agent would join again at once, and the join creates the session again.
 func (h *Hub) DeleteSession(sid string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	rev, kicks, err := h.st.DeleteSession(sid)
+	if in := h.inSessionLocked(sid); len(in) > 0 {
+		names := make([]string, len(in))
+		for i, c := range in {
+			names[i] = c.me.String()
+		}
+		return errf("conflict", "agents are in session %s: %s", sid, strings.Join(names, ", "))
+	}
+	rev, err := h.st.DeleteSession(sid)
 	if errors.Is(err, store.ErrNotFound) {
 		return errf("not_found", "no session %s", sid)
 	}
-	if errors.Is(err, store.ErrOpen) {
-		return errf("conflict", "session %s is open; close it first", sid)
-	}
 	if err != nil {
 		return storeErr(err)
-	}
-	for _, k := range kicks {
-		h.feedAll("kick", kickOut{Kind: "kick", Key: kickKey(k.SID, k.Target), Revision: k.Revision}, "")
 	}
 	h.feedAll("session", sessionOut{Kind: "session", Session: sid, Revision: rev}, "")
-	h.dropSessionTraceLocked(sid)
-	for key := range h.picked {
-		if k, ok := wire.ParsePresenceKey(key); ok && k.SID == sid {
-			delete(h.picked, key)
-		}
-	}
-	for _, c := range h.inSessionLocked(sid) {
-		c.close("closed")
-	}
 	return nil
 }
 
-// Kick removes an agent from a session. by is the orchestrator token that does it, or "" for
-// the operator.
-func (h *Hub) Kick(sid string, target wire.Address, by string) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err := h.requireSessionLocked(sid); err != nil {
-		return err
-	}
-	at := h.now()
-	rev, err := h.st.Kick(sid, target.String(), at)
-	if err != nil {
-		return storeErr(err)
-	}
-	h.feedAll("kick", kickOut{Kind: "kick", Key: kickKey(sid, target.String()), Revision: rev, Record: &wire.KickRecord{At: at}}, "")
-	_, err = h.publishLocked(wire.Event{Kind: wire.EventKick, SID: sid, Target: target.String(), At: at, By: by}, false, nil)
-	return storeErr(err)
-}
-
-func (h *Hub) Unkick(sid string, target wire.Address) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err := h.requireSessionLocked(sid); err != nil {
-		return err
-	}
-	rev, err := h.st.Unkick(sid, target.String())
-	if err != nil {
-		return storeErr(err)
-	}
-	h.feedAll("kick", kickOut{Kind: "kick", Key: kickKey(sid, target.String()), Revision: rev}, "")
-	return nil
-}
-
-// Forget drops an agent that left from the session: it is no peer of the other agents, and
-// the operator's lists do not show it. Unlike Kick, the agent may join again; it then starts
-// as a new agent, with no replay of what it missed. An agent that is in the session cannot be
-// forgotten. An agent that the hub does not know is not an error.
-func (h *Hub) Forget(sid string, target wire.Address) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err := h.requireSessionLocked(sid); err != nil {
-		return err
-	}
-	if _, live := h.conns[wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: target})]; live {
-		return errf("conflict", "%s is in the session; only an agent that left can be forgotten", target)
-	}
-	known, err := h.st.Forget(sid, target.String())
-	if err != nil || !known {
-		return storeErr(err)
-	}
-	key := wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: target})
-	h.dropTraceLocked(key)
-	delete(h.picked, key)
-	_, err = h.publishLocked(wire.Event{Kind: wire.EventActivity, SID: sid, From: target.String(), Activity: &wire.Activity{
-		Kind: "forgotten", At: h.now(),
-	}}, false, nil)
-	return storeErr(err)
-}
-
-// --- The gate: whether the operator lets an agent work -------------------------------------------
-
-// GateRemoved is the answer of Gate for an agent that the operator removed.
-const GateRemoved = "removed"
-
-// gateInput is what the gate of an agent depends on.
-type gateInput struct {
-	Kicked bool   // the operator removed the agent
-	Known  bool   // the agent joined the session before
-	Gate   string // the gate of a known agent
-	Hold   bool   // an orchestrator is in the session: it holds an agent that joins for the first time
-	// Trusted: the agent is an orchestrator. The operator can pause or stop it, but it is
-	// not held at its first join.
-	Trusted bool
-}
-
-// gateOf gives the gate of an agent: removed, or run, held or paused. An agent that did not
-// join yet is held when an orchestrator is in the session, unless it is an orchestrator
-// itself. Thus a tool call that comes before the join does not get through. The hold is for
-// the workflow in which the orchestrator gives each worker its task: the operator never has
-// to release an agent.
-func gateOf(in gateInput) string {
-	switch {
-	case in.Kicked:
-		return GateRemoved
-	case in.Known:
-		return in.Gate
-	case in.Hold && !in.Trusted:
-		return wire.GateHeld
-	}
-	return wire.GateRun
-}
-
-// gateNotice is the kind of the notice that tells an agent its new gate.
-func gateNotice(gate string) string {
-	if gate == wire.GateRun {
-		return "released"
-	}
-	return gate
-}
-
-// orchestratorInLocked reports whether an orchestrator is in the session now.
-func (h *Hub) orchestratorInLocked(sid string) bool {
-	for _, c := range h.conns {
-		if c.sid == sid && c.orchestrator {
-			return true
-		}
-	}
-	return false
-}
-
-// Gate answers an agent's question before a tool call: may I work? The answer is run, held,
-// paused or removed. The agent does not have to be in the session.
-func (h *Hub) Gate(machine, sid, agent, role string) (string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if !h.act.take(machine) {
-		return "", errf("rate_limited", "too many updates")
-	}
-	me := wire.Address{Agent: agent, Machine: machine}.String()
-	in := gateInput{Hold: h.orchestratorInLocked(sid), Trusted: role == wire.RoleOrchestrator}
-	var err error
-	if in.Kicked, err = h.st.Kicked(sid, me); err != nil {
-		return "", storeErr(err)
-	}
-	k, known, err := h.st.KnownAgent(sid, me)
-	if err != nil {
-		return "", storeErr(err)
-	}
-	in.Known, in.Gate = known, k.Gate
-	return gateOf(in), nil
-}
-
-// recordGateLocked stores the gate of a known agent and appends the record of the change. The
-// agent, when it is in the session, gets the record as a notice.
-func (h *Hub) recordGateLocked(sid, agent, gate, by string) (seq int64, err error) {
-	if _, err := h.st.SetGate(sid, agent, gate); err != nil {
-		return 0, storeErr(err)
-	}
-	seq, err = h.publishLocked(wire.Event{Kind: wire.EventActivity, SID: sid, From: agent, Activity: &wire.Activity{
-		Kind: "gate", Gate: gate, At: h.now(), By: by,
-	}}, false, nil)
-	return seq, storeErr(err)
-}
-
-// SetGate sets the gate of one agent of a session, or of each agent that is not removed when
-// target is nil: run lets it work, paused and held stop its tool calls. An agent that has that
-// gate already gets no record. by is the orchestrator token that sets it, or "" for the
-// operator.
-func (h *Hub) SetGate(sid string, target *wire.Address, gate, by string) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err := h.requireSessionLocked(sid); err != nil {
-		return err
-	}
-	var rows []store.KnownRow
-	if target != nil {
-		k, ok, err := h.st.KnownAgent(sid, target.String())
-		if err != nil {
-			return storeErr(err)
-		}
-		if !ok {
-			return errf("not_found", "no agent %s in session %s", target, sid)
-		}
-		rows = []store.KnownRow{k}
-	} else {
-		known, err := h.st.Known(sid)
-		if err != nil {
-			return storeErr(err)
-		}
-		for _, k := range known {
-			if kicked, err := h.st.Kicked(sid, k.Agent); err != nil {
-				return storeErr(err)
-			} else if !kicked {
-				rows = append(rows, k)
-			}
-		}
-	}
-	for _, k := range rows {
-		if k.Gate == gate {
-			continue
-		}
-		if a, ok := wire.ParseAddress(k.Agent); ok {
-			if c := h.conns[wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: a})]; c != nil {
-				c.gate = gate
-			}
-		}
-		if _, err := h.recordGateLocked(sid, k.Agent, gate, by); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (h *Hub) Redact(sid, id string) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err := h.requireSessionLocked(sid); err != nil {
-		return err
-	}
-	seq, _ := strconv.ParseInt(id, 10, 64)
-	ok, err := h.st.Delete(sid, seq)
-	if err != nil {
-		return storeErr(err)
-	}
-	if !ok {
-		return errf("not_found", "no message %s in session %s", id, sid)
-	}
-	_, err = h.publishLocked(wire.Event{Kind: wire.EventRedact, SID: sid, ID: id, At: h.now()}, false, nil)
-	return storeErr(err)
-}
-
-// OperatorSend sends as the operator: to all, to any (the hub picks the peer), or to a peer
-// that is or was in the session.
+// OperatorSend sends as the operator: to all, or to a peer that is or was in the session.
 func (h *Hub) OperatorSend(sid string, req OperatorSendRequest) (OperatorSendResponse, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if _, err := h.requireOpenLocked(sid, false); err != nil {
+	if err := h.requireSessionLocked(sid); err != nil {
 		return OperatorSendResponse{}, err
 	}
 	to := wire.Broadcast
-	if req.To == wire.Any {
-		c, err := h.pickLocked(sid, nil)
-		if err != nil {
-			return OperatorSendResponse{}, err
-		}
-		to = c.me.String()
-	} else if req.To != wire.Broadcast {
+	if req.To != wire.Broadcast {
 		a, err := h.peerLocked(sid, req.To, nil, false)
 		if err != nil {
 			return OperatorSendResponse{}, err
@@ -1365,13 +871,6 @@ type sessionOut struct {
 	Record   *wire.SessionRecord `json:"record"`
 }
 
-type kickOut struct {
-	Kind     string           `json:"kind"`
-	Key      string           `json:"key"`
-	Revision int64            `json:"revision"`
-	Record   *wire.KickRecord `json:"record"`
-}
-
 type presenceOut struct {
 	Kind     string               `json:"kind"`
 	Key      string               `json:"key"`
@@ -1382,11 +881,6 @@ type presenceOut struct {
 type snapshotOut struct {
 	Kind   string `json:"kind"`
 	Bucket string `json:"bucket"`
-}
-
-func kickKey(sid, target string) string {
-	a, _ := wire.ParseAddress(target)
-	return wire.BuildSessionsKey(wire.SessionsKey{Kind: "kick", SID: sid, Target: a})
 }
 
 // feedAll gives one event to every open feed. The caller holds the mutex.
@@ -1402,9 +896,8 @@ func (h *Hub) feedSession(row store.SessionRow) {
 }
 
 // AdminFeed sends the operator's feed to sink until ctx ends or the token is revoked: the
-// current sessions and kicks, then `snapshot sessions`; the live presence, then `snapshot
-// presence`; the trace of each agent; every stored event from fromSeq; then every change as
-// it happens.
+// current sessions, then `snapshot sessions`; the live presence, then `snapshot presence`;
+// every stored event from fromSeq; then every change as it happens.
 func (h *Hub) AdminFeed(ctx context.Context, name string, sink Sink, fromSeq int64) {
 	f := &feed{name: name, out: make(chan feedItem, 1024), done: make(chan struct{})}
 	h.mu.Lock()
@@ -1417,14 +910,12 @@ func (h *Hub) AdminFeed(ctx context.Context, name string, sink Sink, fromSeq int
 	// The dump and the catch-up point come from the same critical section as the
 	// registration: a later change reaches the channel with a higher revision or sequence.
 	sessions, err1 := h.st.Sessions()
-	kicks, err2 := h.st.Kicks()
-	end, err3 := h.st.LastSeq()
+	end, err2 := h.st.LastSeq()
 	var presence []feedItem
 	for _, c := range h.conns {
 		rec := c.presence()
 		presence = append(presence, feedItem{event: "presence", data: presenceOut{Kind: "presence", Key: c.key, Revision: c.rev, Record: &rec}})
 	}
-	traces := h.traceDumpLocked()
 	h.mu.Unlock()
 	defer func() {
 		h.mu.Lock()
@@ -1432,7 +923,7 @@ func (h *Hub) AdminFeed(ctx context.Context, name string, sink Sink, fromSeq int
 		h.mu.Unlock()
 		h.wg.Done()
 	}()
-	if err1 != nil || err2 != nil || err3 != nil {
+	if err1 != nil || err2 != nil {
 		return
 	}
 	write := func(it feedItem) bool {
@@ -1441,11 +932,6 @@ func (h *Hub) AdminFeed(ctx context.Context, name string, sink Sink, fromSeq int
 	for _, s := range sessions {
 		rec := s.Record
 		if !write(feedItem{event: "session", data: sessionOut{Kind: "session", Session: s.SID, Revision: s.Revision, Record: &rec}}) {
-			return
-		}
-	}
-	for _, k := range kicks {
-		if !write(feedItem{event: "kick", data: kickOut{Kind: "kick", Key: kickKey(k.SID, k.Target), Revision: k.Revision, Record: &wire.KickRecord{At: k.At}}}) {
 			return
 		}
 	}
@@ -1463,17 +949,16 @@ func (h *Hub) AdminFeed(ctx context.Context, name string, sink Sink, fromSeq int
 	if !write(feedItem{event: "snapshot", data: snapshotOut{Kind: "snapshot", Bucket: "presence"}}) {
 		return
 	}
-	for _, t := range traces {
-		if !write(t) {
-			return
-		}
-	}
 	if fromSeq <= end {
 		rows, err := h.st.Rows(max(fromSeq, 1), end)
 		if err != nil {
 			return
 		}
 		for _, r := range rows {
+			// A row of a kind that this version dropped (see wire.DecodeEvent) is not sent.
+			if _, ok := wire.DecodeEvent(r.Subject, r.Payload, r.Seq); !ok {
+				continue
+			}
 			if !write(feedItem{event: "event", data: eventOut{Kind: "event", Seq: r.Seq, Subject: r.Subject, Payload: string(r.Payload)}, id: strconv.FormatInt(r.Seq, 10)}) {
 				return
 			}
@@ -1530,29 +1015,18 @@ func (h *Hub) requireSessionLocked(sid string) error {
 	return nil
 }
 
-// requireOpenLocked gives the session, open. With create, an unknown session is made.
-func (h *Hub) requireOpenLocked(sid string, create bool) (store.SessionRow, error) {
-	row, ok, err := h.st.Session(sid)
+// ensureSessionLocked makes the session when it does not exist: the first join creates it.
+func (h *Hub) ensureSessionLocked(sid string) error {
+	_, ok, err := h.st.Session(sid)
+	if err != nil || ok {
+		return storeErr(err)
+	}
+	row, err := h.st.CreateSession(sid, "", h.now())
 	if err != nil {
-		return row, storeErr(err)
+		return storeErr(err)
 	}
-	if !ok && create {
-		row, err = h.st.CreateSession(sid, "", h.now())
-		if err != nil && !errors.Is(err, store.ErrExists) {
-			return row, storeErr(err)
-		}
-		if err == nil {
-			h.feedSession(row)
-		}
-		ok = true
-	}
-	if !ok {
-		return row, errf("not_found", "no session %s", sid)
-	}
-	if row.Record.Status != "open" {
-		return row, errf("forbidden", "session closed")
-	}
-	return row, nil
+	h.feedSession(row)
+	return nil
 }
 
 func (h *Hub) inSessionLocked(sid string) []*Conn {
@@ -1566,27 +1040,16 @@ func (h *Hub) inSessionLocked(sid string) []*Conn {
 	return out
 }
 
-// awayLocked gives the agents that were in sid and have no live connection now. An agent the
-// operator removed is not one of them: it cannot come back, so it is no peer.
+// awayLocked gives the agents that were in sid and have no live connection now.
 func (h *Hub) awayLocked(sid string) ([]store.KnownRow, error) {
 	known, err := h.st.Known(sid)
 	if err != nil {
 		return nil, err
 	}
-	kicks, err := h.st.Kicks()
-	if err != nil {
-		return nil, err
-	}
-	removed := map[string]bool{}
-	for _, k := range kicks {
-		if k.SID == sid {
-			removed[k.Target] = true
-		}
-	}
 	var out []store.KnownRow
 	for _, k := range known {
 		a, ok := wire.ParseAddress(k.Agent)
-		if !ok || removed[k.Agent] {
+		if !ok {
 			continue
 		}
 		if _, live := h.conns[wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: a})]; !live {
@@ -1596,81 +1059,17 @@ func (h *Hub) awayLocked(sid string) ([]store.KnownRow, error) {
 	return out, nil
 }
 
-// recipientLocked resolves a `send` target: all, operator (the user), any (the hub picks the
-// peer), or a peer that is or was in the session.
+// recipientLocked resolves a `send` target: all, operator (the user), or a peer that is or
+// was in the session.
 func (h *Hub) recipientLocked(sid, input string, me wire.Address) (string, error) {
 	if input == wire.Broadcast || input == wire.Operator {
 		return input, nil
-	}
-	if input == wire.Any {
-		c, err := h.pickLocked(sid, &me)
-		if err != nil {
-			return "", err
-		}
-		return c.me.String(), nil
 	}
 	a, err := h.peerLocked(sid, input, &me, false)
 	if err != nil {
 		return "", err
 	}
 	return a.String(), nil
-}
-
-// busy reports an agent that takes no work from a send to `any`, and why: it is an
-// orchestrator, which gives work and takes none; the operator holds or paused it (its tool
-// calls are refused); or it works, or it waits for someone.
-func busy(c *Conn) string {
-	switch {
-	case c.orchestrator:
-		return wire.RoleOrchestrator
-	case c.gate != wire.GateRun:
-		return c.gate
-	case c.state == "working", c.state == "blocked":
-		return c.state
-	}
-	return ""
-}
-
-// pickLocked chooses the recipient of a send to `any`: a live peer of sid other than me (nil
-// for the operator) that is not busy, and thus no orchestrator. Of these, the one on the
-// machine with the fewest working agents, in every session, wins: that is the device with the
-// least load. On a tie, the one that `any` chose longest ago wins, so equal machines take
-// turns. The caller holds the mutex.
-//
-// The load is only the count of working agents, as the agents report it. When the agents are
-// not the only load of a machine, the state report needs a load figure.
-func (h *Hub) pickLocked(sid string, me *wire.Address) (*Conn, error) {
-	load := map[string]int{}
-	for _, c := range h.conns {
-		if c.state == "working" {
-			load[c.me.Machine]++
-		}
-	}
-	var best *Conn
-	var others []string
-	for _, c := range h.inSessionLocked(sid) {
-		if me != nil && c.me == *me {
-			continue
-		}
-		if why := busy(c); why != "" {
-			others = append(others, c.me.String()+" ("+why+")")
-			continue
-		}
-		if best == nil || load[c.me.Machine] < load[best.me.Machine] || load[c.me.Machine] == load[best.me.Machine] && h.picked[c.key].Before(h.picked[best.key]) {
-			best = c
-		}
-	}
-	if best == nil {
-		list := "none"
-		if len(others) > 0 {
-			list = strings.Join(others, ", ")
-		}
-		// A conflict with the state of the session, not a thing that is missing: the same send
-		// can pass a moment later.
-		return nil, errf("conflict", "no peer in this session can take work now; peers: %s", list)
-	}
-	h.picked[best.key] = h.opt.Now()
-	return best, nil
 }
 
 // peerLocked turns a peer as a client writes it (`name` or `name@machine`) into an address. A
@@ -1752,27 +1151,15 @@ func (h *Hub) peerLocked(sid, input string, me *wire.Address, allowUnknown bool)
 // --- Delivery rules (packages/core/src/deliver.ts) ---------------------------------------------
 
 // deliveryFor says what the hub pushes to me for one event: "message" for a message from
-// someone else to all or to me; "notice" for my own kick, the redact of a message I got, a
-// peer's leave, or a change of my own gate; "" for nothing.
-func deliveryFor(e *wire.Event, me string, wasSent func(string) bool) string {
+// someone else to all or to me; "notice" for a peer's leave; "" for nothing.
+func deliveryFor(e *wire.Event, me string) string {
 	switch e.Kind {
 	case wire.EventMsg:
 		if e.From != me && (e.To == wire.Broadcast || e.To == me) {
 			return "message"
 		}
-	case wire.EventKick:
-		if e.Target == me {
-			return "notice"
-		}
-	case wire.EventRedact:
-		if wasSent != nil && wasSent(e.ID) {
-			return "notice"
-		}
 	case wire.EventActivity:
-		if e.Activity == nil {
-			return ""
-		}
-		if e.Activity.Kind == "left" && e.From != me || e.Activity.Kind == "gate" && e.From == me {
+		if e.Activity != nil && e.Activity.Kind == "left" && e.From != me {
 			return "notice"
 		}
 	}
@@ -1791,5 +1178,5 @@ func between(e *wire.Event, me, peer string) bool {
 }
 
 func toMessage(e *wire.Event) Message {
-	return Message{ID: strconv.FormatInt(e.Seq, 10), From: e.From, To: e.To, Text: e.Text, ReplyTo: e.ReplyTo, SentAt: e.SentAt, FromRole: e.FromRole}
+	return Message{ID: strconv.FormatInt(e.Seq, 10), From: e.From, To: e.To, Text: e.Text, ReplyTo: e.ReplyTo, SentAt: e.SentAt}
 }

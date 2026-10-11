@@ -27,7 +27,8 @@ func At(s float64) string {
 }
 
 // Fixture is the session of packages/tui/test/fixture.ts: Alice asks Bob, Bob answers, Carol
-// broadcasts, the operator steps in, a message is withdrawn, one question stays open.
+// broadcasts, the operator steps in, one question stays open. One sequence number belongs to
+// no event of the session (the row of a kind that the model does not read).
 func Fixture() []model.Update {
 	client := wire.Client{Name: "claude-code", Version: "2.1"}
 	var seq int64
@@ -46,8 +47,8 @@ func Fixture() []model.Update {
 		return ev(wire.Event{Kind: wire.EventMsg, From: from, To: to, Text: text, ReplyTo: replyTo, SentAt: sentAt})
 	}
 	updates = append(updates,
-		model.Update{Session: &wire.SessionUpdate{SID: SID, Record: &wire.SessionRecord{Status: "open", CreatedAt: At(-60)}}},
-		model.Update{Session: &wire.SessionUpdate{SID: "docs", Record: &wire.SessionRecord{Status: "closed", CreatedAt: At(-600), ClosedAt: At(-60)}}},
+		model.Update{Session: &wire.SessionUpdate{SID: SID, Record: &wire.SessionRecord{CreatedAt: At(-60)}}},
+		model.Update{Session: &wire.SessionUpdate{SID: "docs", Record: &wire.SessionRecord{CreatedAt: At(-600)}}},
 	)
 	act(Alice, wire.Activity{Kind: "joined", Host: "mac-1", Cwd: "/src/app", Client: client, At: At(0)})
 	act(Bob, wire.Activity{Kind: "joined", Host: "vps-2", Cwd: "/srv/api", Client: wire.Client{Name: "codex", Version: "0.9"}, At: At(2)})
@@ -58,8 +59,8 @@ func Fixture() []model.Update {
 	act(Bob, wire.Activity{Kind: "state", State: "working", Note: "answering alice", At: At(21.5)})
 	msg(Bob.String(), Alice.String(), "{ id: number, name: string, email: string }", q, At(30))
 	act(Alice, wire.Activity{Kind: "wait_end", Result: "message", At: At(30.1)})
-	wrong := msg(Carol.String(), Bob.String(), "the password is hunter2", "", At(40))
-	ev(wire.Event{Kind: wire.EventRedact, ID: wrong, At: At(45)})
+	msg(Carol.String(), Bob.String(), "I renamed the users fixture", "", At(40))
+	seq++
 	op := msg(wire.Operator, "all", "Please run the tests before you say done", "", At(50))
 	msg(Bob.String(), wire.Operator, "Will do; CI is running", op, At(55))
 	q2 := msg(Carol.String(), Bob.String(), "Can I change the users table?", "", At(60))

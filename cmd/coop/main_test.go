@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -33,11 +34,10 @@ func TestUsageAndVersion(t *testing.T) {
 	}
 }
 
-// hub stands in for a hub that knows an operator token and a machine token, and the token
-// orch.3 (orchestrator).
+// hub stands in for a hub that knows an operator token and a machine token.
 func hub(t *testing.T, operator, machine string) *httptest.Server {
 	t.Helper()
-	roles := map[string]string{operator: "operator", machine: "machine", "orch.3": "orchestrator"}
+	roles := map[string]string{operator: "operator", machine: "machine"}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		switch {
@@ -62,9 +62,6 @@ func TestProbeTokenTellsTheRole(t *testing.T) {
 		t.Fatal(role, err)
 	}
 	if role, err := probeToken(ctx, srv.Client(), srv.URL, "mac.2"); err != nil || role != "machine" {
-		t.Fatal(role, err)
-	}
-	if role, err := probeToken(ctx, srv.Client(), srv.URL, "orch.3"); err != nil || role != "orchestrator" {
 		t.Fatal(role, err)
 	}
 	// A hub of a version before the roles has no whoami: the error says to upgrade it.
@@ -97,19 +94,6 @@ func TestLoginStoresTheTokenUnderTheKeyOfItsRole(t *testing.T) {
 	got := config.ReadEnvFile(file, func(s string) { t.Fatal(s) })
 	if got["COOP_URL"] != srv.URL || got["COOP_OPERATOR_TOKEN"] != "op.1" || got["COOP_TOKEN"] != "mac.2" {
 		t.Fatalf("env file %v", got)
-	}
-	// The tokens of the two other roles get keys of their own: no token replaces another.
-	for _, tok := range []string{"orch.3"} {
-		if code := run([]string{"login", srv.URL, tok}, &out, &errOut); code != 0 {
-			t.Fatalf("%s: code %d: %s", tok, code, errOut.String())
-		}
-	}
-	got = config.ReadEnvFile(file, func(s string) { t.Fatal(s) })
-	if got["COOP_ORCHESTRATOR_TOKEN"] != "orch.3" || got["COOP_TOKEN"] != "mac.2" || got["COOP_OPERATOR_TOKEN"] != "op.1" {
-		t.Fatalf("env file %v", got)
-	}
-	if !strings.Contains(out.String(), "coop --orchestrator claude") {
-		t.Fatalf("stdout %q", out.String())
 	}
 	if !strings.Contains(out.String(), "operator token for") || !strings.Contains(out.String(), "next:  coop tui") {
 		t.Fatalf("stdout %q", out.String())
@@ -149,24 +133,52 @@ func TestSessionWritesTheProjectFile(t *testing.T) {
 }
 
 func TestClaudeCommandLine(t *testing.T) {
-	session, argv, err := claudeCommand([]string{"build-42", "--model", "opus"}, map[string]string{}, "")
-	if err != nil || session != "build-42" || strings.Join(argv, " ") != "claude --dangerously-load-development-channels server:coop --model opus" {
-		t.Fatalf("%q %v %v", session, argv, err)
+	session, argv := claudeCommand([]string{"build-42", "--model", "opus"}, map[string]string{})
+	if session != "build-42" || strings.Join(argv, " ") != "claude --dangerously-load-development-channels server:coop --model opus" {
+		t.Fatalf("%q %v", session, argv)
 	}
-	session, argv, err = claudeCommand([]string{"-p", "hi"}, map[string]string{"COOP_CHANNEL": "plugin:coop@coop"}, "")
-	if err != nil || session != "" || strings.Join(argv, " ") != "claude --dangerously-load-development-channels plugin:coop@coop -p hi" {
-		t.Fatalf("%q %v %v", session, argv, err)
+	session, argv = claudeCommand([]string{"-p", "hi"}, map[string]string{"COOP_CHANNEL": "plugin:coop@coop"})
+	if session != "" || strings.Join(argv, " ") != "claude --dangerously-load-development-channels plugin:coop@coop -p hi" {
+		t.Fatalf("%q %v", session, argv)
 	}
-	// The settings with the gate hook come before the user's arguments.
-	_, argv, err = claudeCommand([]string{"-p", "hi"}, map[string]string{}, `{"hooks":{}}`)
-	if err != nil || strings.Join(argv, " ") != `claude --dangerously-load-development-channels server:coop --settings {"hooks":{}} -p hi` {
-		t.Fatalf("%v %v", argv, err)
+	// The user's own --settings goes to Claude Code as it is.
+	if _, argv := claudeCommand([]string{"--settings", "x.json"}, map[string]string{}); strings.Join(argv, " ") != "claude --dangerously-load-development-channels server:coop --settings x.json" {
+		t.Fatalf("%v", argv)
 	}
-	// Claude Code takes one --settings: a second one is refused, not dropped.
-	for _, args := range [][]string{{"--settings", "x.json"}, {"-p", "hi", "--settings=x.json"}} {
-		if _, _, err := claudeCommand(args, map[string]string{}, `{"hooks":{}}`); err == nil || !strings.Contains(err.Error(), "--settings") {
-			t.Fatalf("%v: error %v", args, err)
+}
+
+// The shim of one Claude Code process must use the same session and agent name in whatever
+// directory the agent works later. coop claude puts both in the environment.
+func TestLaunchEnvNamesTheSessionAndTheAgent(t *testing.T) {
+	load := func(env map[string]string) config.Config {
+		// As config.Load does: the environment wins, then the project (here: "from-dir").
+		c := config.Config{Session: env["COOP_SESSION"], Agent: env["COOP_AGENT"]}
+		if c.Agent == "" {
+			c.Agent = "from-dir"
 		}
+		return c
+	}
+	env := launchEnv(map[string]string{"PATH": "/bin", "COOP_SESSION": "old"}, "build-42", load)
+	for _, kv := range []string{"PATH=/bin", "COOP_PUSH=1", "COOP_SESSION=build-42", "COOP_AGENT=from-dir"} {
+		if !slices.Contains(env, kv) {
+			t.Errorf("missing %s in %v", kv, env)
+		}
+	}
+	// Each name one time: a second COOP_SESSION could win in the child.
+	seen := map[string]int{}
+	for _, e := range env {
+		k, _, _ := strings.Cut(e, "=")
+		seen[k]++
+	}
+	for k, n := range seen {
+		if n != 1 {
+			t.Errorf("%s is %d times in the environment", k, n)
+		}
+	}
+	// No session: nothing is named, and the agent gets no tools.
+	env = launchEnv(map[string]string{"PATH": "/bin"}, "", load)
+	if slices.ContainsFunc(env, func(e string) bool { return strings.HasPrefix(e, "COOP_SESSION=") || e == "COOP_AGENT=from-dir" }) {
+		t.Errorf("no session, but %v", env)
 	}
 }
 
@@ -217,20 +229,23 @@ func TestSetupRegistersTheBinaryAndWritesTheSkill(t *testing.T) {
 	if !strings.Contains(out.String(), "registered coop with Claude Code") || !strings.Contains(out.String(), "coop login") {
 		t.Fatalf("stdout %q", out.String())
 	}
-	// The hooks are in the user's settings: a session that another tool starts (a plain
-	// claude) is then gated too, and reports what it does.
+	// coop writes no settings file.
 	settings := filepath.Join(home, ".claude", "settings.json")
-	if text, err := os.ReadFile(settings); err != nil || len(hooksMissing(text, "/opt/coop/coop")) != 0 || !strings.Contains(out.String(), "added the gate hook and the activity hooks to "+settings) {
-		t.Fatalf("settings: %v %q\nstdout %q", err, text, out.String())
+	if _, err := os.Stat(settings); !os.IsNotExist(err) {
+		t.Fatalf("a settings file: %v", err)
 	}
-	// A second run with the same binary changes nothing.
+	// The hooks of an older coop go; the other settings stay.
+	old := `{"model":"opus","hooks":{"PreToolUse":[{"matcher":"","hooks":[{"type":"command","command":"'/opt/coop/coop' hook pretool","timeout":30}]}]}}`
+	if err := os.WriteFile(settings, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	f.calls = nil
 	out.Reset()
 	if code := run([]string{"setup"}, &out, &errOut); code != 0 || strings.Join(f.calls, " | ") != "mcp get coop" {
 		t.Fatalf("second run: code %d calls %v", code, f.calls)
 	}
-	if !strings.Contains(out.String(), "the gate hook and the activity hooks are in "+settings) {
-		t.Fatalf("second run stdout %q", out.String())
+	if text, _ := os.ReadFile(settings); strings.Contains(string(text), "hook") || !strings.Contains(string(text), "opus") || !strings.Contains(out.String(), "removed the hooks of an older coop from "+settings) {
+		t.Fatalf("settings %s\nstdout %q", text, out.String())
 	}
 	// A registration that points elsewhere is replaced.
 	f.registered = "/old/coop"
@@ -354,20 +369,17 @@ func TestGlobalAgentFlagSetsTheAgentName(t *testing.T) {
 	}
 }
 
-// --orchestrator goes only with claude, and needs the token of the role.
-func TestRoleFlagsGoWithClaudeAndNeedTheirToken(t *testing.T) {
-	home := t.TempDir()
-	setHome(t, home)
-	t.Setenv("COOP_ORCHESTRATOR_TOKEN", "")
-	t.Setenv("CLAUDE_CONFIG_DIR", "")
-	defer func() { launchRole = "" }()
+// The flag --orchestrator of v0.10.0 and before is gone; an old `coop hook` entry in the
+// settings of Claude Code exits 0, so that it does not stop the agent.
+func TestTheOrchestratorFlagIsGoneAndAnOldHookPasses(t *testing.T) {
 	var out, errOut bytes.Buffer
-	if code := run([]string{"--orchestrator", "tui"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "goes with claude") {
-		t.Fatalf("--orchestrator tui: code %d stderr %q", code, errOut.String())
+	if code := run([]string{"--orchestrator", "claude", "pipe-1"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), `unknown command "--orchestrator"`) {
+		t.Fatalf("--orchestrator: code %d stderr %q", code, errOut.String())
 	}
-	errOut.Reset()
-	if code := run([]string{"--orchestrator", "--agent", "pm", "claude", "pipe-1"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "no orchestrator token (COOP_ORCHESTRATOR_TOKEN)") {
-		t.Fatalf("no orchestrator token: code %d stderr %q", code, errOut.String())
+	for _, arg := range oldHookArgs {
+		if code := run([]string{"hook", arg}, &out, &errOut); code != 0 {
+			t.Fatalf("hook %s: code %d", arg, code)
+		}
 	}
 }
 

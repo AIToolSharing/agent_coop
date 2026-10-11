@@ -21,64 +21,34 @@ type message struct {
 	Text    string `json:"text"`
 	ReplyTo string `json:"reply_to,omitempty"`
 	SentAt  string `json:"sent_at"`
-	// FromRole is "orchestrator" for a message of the orchestrator: it speaks for the user.
-	FromRole string `json:"from_role,omitempty"`
 }
 
 func (m message) valid() bool {
 	return wire.IsID(m.ID) && (m.From == wire.Operator || isAddress(m.From)) && isTo(m.To) &&
-		validText(m.Text) && optionalID(m.ReplyTo) && wire.IsTime(m.SentAt) &&
-		(m.FromRole == "" || m.FromRole == wire.RoleOrchestrator && isAddress(m.From))
+		validText(m.Text) && optionalID(m.ReplyTo) && wire.IsTime(m.SentAt)
 }
 
-// Notice kinds.
-const (
-	noticeKicked   = "kicked"
-	noticeClosed   = "closed"
-	noticeReopened = "reopened"
-	noticeRedacted = "redacted"
-	noticePeerLeft = "peer_left"
-	// The operator's gate: held and paused stop the agent's work, released lets it go on.
-	noticeHeld     = "held"
-	noticePaused   = "paused"
-	noticeReleased = "released"
-	// noticeOrchestrator tells an agent that its session has an orchestrator. The shim makes
-	// it; the hub never sends it.
-	noticeOrchestrator = "orchestrator"
-)
+// noticePeerLeft is the one notice kind: a peer left the session.
+const noticePeerLeft = "peer_left"
 
 // notice is something the agent must know that is not a message.
 type notice struct {
 	Kind string `json:"kind"`
-	// ID is the withdrawn message, for redacted.
-	ID string `json:"id,omitempty"`
-	// Peer is the peer that left, for peer_left; the orchestrator, for orchestrator; for
-	// released, the orchestrator whose leave released the agent, or "".
-	Peer string `json:"peer,omitempty"`
-	// By is the orchestrator that changed the gate, for held, paused and released; "" for
-	// the user.
-	By string `json:"by,omitempty"`
-	At string `json:"at"`
+	Peer string `json:"peer"`
+	At   string `json:"at"`
 }
 
 func (n notice) valid() bool {
-	kinds := []string{noticeKicked, noticeClosed, noticeReopened, noticeRedacted, noticePeerLeft, noticeHeld, noticePaused, noticeReleased}
-	return slices.Contains(kinds, n.Kind) && optionalID(n.ID) && (n.Peer == "" || isAddress(n.Peer)) &&
-		(n.By == "" || wire.IsToken(n.By)) && wire.IsTime(n.At)
+	return n.Kind == noticePeerLeft && isAddress(n.Peer) && wire.IsTime(n.At)
 }
 
 // joinedEvent is the first event of a stream.
 type joinedEvent struct {
 	Me      string `json:"me"`
 	Session string `json:"session"`
-	// Gate is whether the user lets the agent work: run, held or paused. A service of an
-	// earlier version gives none; that counts as run.
-	Gate string `json:"gate"`
 }
 
-func (j joinedEvent) valid() bool {
-	return isAddress(j.Me) && wire.IsToken(j.Session) && (j.Gate == "" || wire.IsGate(j.Gate))
-}
+func (j joinedEvent) valid() bool { return isAddress(j.Me) && wire.IsToken(j.Session) }
 
 type sendRequest struct {
 	Agent   string `json:"agent"`
@@ -124,27 +94,23 @@ type peer struct {
 	Note      string `json:"note,omitempty"`
 	Online    bool   `json:"online"`
 	WaitingOn string `json:"waiting_on,omitempty"`
-	// Role is "orchestrator" for the peer that speaks for the user.
-	Role string `json:"role,omitempty"`
 }
 
 var agentStates = []string{"working", "blocked", "done", "idle"}
 
 func (p peer) valid() bool {
 	return isAddress(p.Name) && slices.Contains(agentStates, p.State) && utf8.RuneCountInString(p.Note) <= 500 &&
-		(p.WaitingOn == "" || p.WaitingOn == wire.Operator || isAddress(p.WaitingOn)) &&
-		(p.Role == "" || p.Role == wire.RoleOrchestrator)
+		(p.WaitingOn == "" || p.WaitingOn == wire.Operator || isAddress(p.WaitingOn))
 }
 
 type sessionView struct {
 	Session string `json:"session"`
-	Status  string `json:"status"`
 	Me      string `json:"me"`
 	Peers   []peer `json:"peers"`
 }
 
 func (v sessionView) valid() bool {
-	if !wire.IsToken(v.Session) || (v.Status != "open" && v.Status != "closed") || !isAddress(v.Me) || v.Peers == nil {
+	if !wire.IsToken(v.Session) || !isAddress(v.Me) || v.Peers == nil {
 		return false
 	}
 	for _, p := range v.Peers {

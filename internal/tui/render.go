@@ -2,8 +2,6 @@ package tui
 
 import (
 	"context"
-	"slices"
-	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -103,28 +101,19 @@ var help = [][2]string{
 	{"pgup pgdn home end", "scroll the main pane; end follows the newest message again"},
 	{"space", "follow the newest message on or off"},
 	{"[", "hide or show the sidebar"},
-	{"1 2 3", "views: transcript, threads, activity (what the agents do at their terminals)"},
+	{"1 2", "views: transcript, threads"},
 	{"mouse", "click selects, a second click opens, the wheel scrolls"},
 	{"WRITE", ""},
 	{"m", "message the session; tab picks the target; \"@agent text\" also works"},
 	{"r", "reply to the selected message, to its sender, in its thread"},
 	{"alt+enter", "a new line in the composer"},
 	{"a", "go to the next thing that needs you: a message for you, a stale ask, a blocked agent"},
-	{"/", "search in the message text, or in the activity; an empty search clears"},
-	{"STEER  (an agent selected in the sidebar, or its details open)", ""},
-	{"p", "pause the agent at its next tool call, or resume it; it also lets a held agent go"},
-	{"x", "stop the agent: remove it (:allow lets it back)"},
-	{"P  R", "pause each working agent; resume each paused one"},
+	{"/", "search in the message text; an empty search clears"},
 	{"COMMANDS  (: then tab completes)", ""},
 	{":new <name>", "create a session"},
-	{":close  :reopen  :delete", "the shown session; delete needs a closed session"},
-	{":kick <agent>  :allow <agent>", "remove an agent from the session; let it back in"},
-	{":forget [agent]", "drop an agent that left from the lists; without a name: each one that left"},
-	{":pause [agent]  :resume [agent]", "stop an agent's work at its next tool call; let it go on (a held one too); no name: each one"},
-	{":withdraw [#id]", "withdraw a message (default: the selected one)"},
-	{":filter [agent]", "only messages, or activity, of one agent; without a name: off"},
+	{":delete", "delete the shown session and its messages; only with no agent in it"},
+	{":filter [agent]", "only the messages of one agent; without a name: off"},
 	{":sys", "system lines on or off"},
-	{":brief [every <N>m | off]", "a summary of the session by a local Claude Code run; repeat it, or stop the repeats"},
 	{":help  :quit", "this help; quit"},
 }
 
@@ -144,7 +133,7 @@ func helpLines(width int) view.Rendered {
 	return r
 }
 
-var commands = []string{"new", "close", "reopen", "delete", "kick", "allow", "forget", "pause", "resume", "withdraw", "filter", "sys", "brief", "help", "quit"}
+var commands = []string{"new", "delete", "filter", "sys", "help", "quit"}
 
 // Complete finishes a command line: the command word, or an agent name for the commands that
 // take one.
@@ -165,7 +154,7 @@ func Complete(value string, agents []*model.Agent) string {
 		}
 		return commonPrefix(hits)
 	}
-	if !slices.Contains([]string{"kick", "allow", "forget", "filter", "pause", "resume"}, word) {
+	if word != "filter" {
 		return value
 	}
 	arg = strings.TrimSpace(arg)
@@ -238,164 +227,13 @@ func (a *App) command(line string, s screen) tea.Cmd {
 		return a.act(func(ctx context.Context) (string, error) {
 			return "created " + arg, a.op.CreateSession(ctx, arg)
 		})
-	case "close":
-		if session == "" {
-			return needSession()
-		}
-		return confirm("close "+session+"? agents in it are told (y/n)", func() tea.Cmd {
-			return a.act(func(ctx context.Context) (string, error) { return "closed " + session, a.op.CloseSession(ctx, session) })
-		})
-	case "reopen":
-		if session == "" {
-			return needSession()
-		}
-		return a.act(func(ctx context.Context) (string, error) {
-			return "reopened " + session, a.op.ReopenSession(ctx, session)
-		})
 	case "delete":
 		if session == "" {
 			return needSession()
 		}
-		if rec := a.store.Sessions[session]; rec == nil || rec.Status != "closed" {
-			return a.setStatus("close the session first (:close)")
-		}
 		return confirm("delete "+session+" and its messages? (y/n)", func() tea.Cmd {
 			return a.act(func(ctx context.Context) (string, error) {
 				return "deleted " + session, a.op.DeleteSession(ctx, session)
-			})
-		})
-	case "kick":
-		if session == "" {
-			return needSession()
-		}
-		ag := agentOf(arg)
-		if ag == nil {
-			return a.setStatus("which agent? :kick <name>")
-		}
-		return confirm("remove "+ag.Address+" from "+session+"? it cannot come back until :allow (y/n)", func() tea.Cmd {
-			return a.act(func(ctx context.Context) (string, error) {
-				return "removed " + ag.Address, a.op.Kick(ctx, session, ag.Address)
-			})
-		})
-	case "allow":
-		if session == "" {
-			return needSession()
-		}
-		ag := agentOf(arg)
-		if ag == nil {
-			return a.setStatus("which agent? :allow <name>")
-		}
-		return a.act(func(ctx context.Context) (string, error) {
-			return ag.Address + " may join again", a.op.Unkick(ctx, session, ag.Address)
-		})
-	case "forget":
-		if session == "" {
-			return needSession()
-		}
-		// Without a name: each agent that joined and is not in the session now.
-		var targets []*model.Agent
-		if arg == "" {
-			for _, ag := range s.v.AgentList() {
-				if !ag.Online && !ag.Forgotten && ag.JoinedAt != "" {
-					targets = append(targets, ag)
-				}
-			}
-			if len(targets) == 0 {
-				return a.setStatus("no agent that left in " + session)
-			}
-		} else {
-			ag := agentOf(arg)
-			if ag == nil {
-				return a.setStatus("which agent? :forget <name>")
-			}
-			if ag.Online {
-				return a.setStatus(ag.Address + " is in the session; :kick removes it")
-			}
-			targets = []*model.Agent{ag}
-		}
-		forget := func() tea.Cmd {
-			return a.act(func(ctx context.Context) (string, error) {
-				for _, ag := range targets {
-					if err := a.op.Forget(ctx, session, ag.Address); err != nil {
-						return "", err
-					}
-				}
-				if len(targets) == 1 {
-					return "forgot " + targets[0].Address, nil
-				}
-				return "forgot " + strconv.Itoa(len(targets)) + " agents", nil
-			})
-		}
-		if arg != "" {
-			return forget()
-		}
-		return confirm("forget "+strconv.Itoa(len(targets))+" agents that left "+session+"? they may join again (y/n)", forget)
-	case "pause", "resume":
-		if session == "" {
-			return needSession()
-		}
-		// pause takes running agents to paused; resume takes paused and held ones to run.
-		want, applies := wire.GatePaused, func(ag *model.Agent) bool { return ag.Gate == wire.GateRun }
-		done := "paused"
-		if cmd == "resume" {
-			want, applies = wire.GateRun, func(ag *model.Agent) bool { return ag.Gate != wire.GateRun }
-			done = "resumed"
-		}
-		if len(fields) > 2 {
-			return a.setStatus("usage: :" + cmd + " [agent]")
-		}
-		if len(fields) > 1 {
-			name := fields[1]
-			ag := agentOf(name)
-			if ag == nil {
-				return a.setStatus("no agent " + name)
-			}
-			if !applies(ag) {
-				return a.setStatus(ag.Address + " is " + ag.Gate + " already")
-			}
-			return a.act(func(ctx context.Context) (string, error) {
-				return done + " " + ag.Address, a.op.SetGate(ctx, session, ag.Address, want)
-			})
-		}
-		// No name: each agent that the command applies to. A removed agent has no gate.
-		var targets []*model.Agent
-		for _, ag := range s.v.AgentList() {
-			if !ag.Kicked && !ag.Forgotten && ag.JoinedAt != "" && applies(ag) {
-				targets = append(targets, ag)
-			}
-		}
-		if len(targets) == 0 {
-			return a.setStatus("no agent to " + cmd + " in " + session)
-		}
-		return a.act(func(ctx context.Context) (string, error) {
-			for _, ag := range targets {
-				if err := a.op.SetGate(ctx, session, ag.Address, want); err != nil {
-					return "", err
-				}
-			}
-			if len(targets) == 1 {
-				return done + " " + targets[0].Address, nil
-			}
-			return done + " " + strconv.Itoa(len(targets)) + " agents", nil
-		})
-	case "withdraw":
-		if session == "" {
-			return needSession()
-		}
-		id := strings.TrimPrefix(arg, "#")
-		if id == "" {
-			id = s.current
-		}
-		if s.v.Msgs[id] == nil {
-			return a.setStatus("which message? :withdraw #<id>")
-		}
-		return confirm("withdraw #"+id+"? (y/n)", func() tea.Cmd {
-			return a.act(func(ctx context.Context) (string, error) {
-				ok, err := a.op.Redact(ctx, session, id)
-				if err == nil && !ok {
-					return "#" + id + " is not a message of this session", nil
-				}
-				return "withdrew #" + id, err
 			})
 		})
 	case "filter":
@@ -415,23 +253,6 @@ func (a *App) command(line string, s screen) tea.Cmd {
 			return a.setStatus("system lines on")
 		}
 		return a.setStatus("system lines off")
-	case "brief":
-		if session == "" {
-			return needSession()
-		}
-		every, off, err := parseBrief(arg)
-		switch {
-		case err != nil:
-			return a.setStatus(err.Error())
-		case off:
-			a.briefEvery = 0
-			return a.setStatus("brief: repeats off")
-		}
-		a.briefEvery = every
-		if every > 0 {
-			a.briefNext = a.now().Add(every)
-		}
-		return a.startBrief(session, s.v)
 	case "help":
 		a.overlay = &overlay{kind: "help"}
 		a.scroll = 0

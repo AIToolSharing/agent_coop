@@ -20,15 +20,7 @@ import (
 // Operator is what the shell asks the hub to do. *admin.Client is one.
 type Operator interface {
 	CreateSession(ctx context.Context, sid string) error
-	CloseSession(ctx context.Context, sid string) error
-	ReopenSession(ctx context.Context, sid string) error
 	DeleteSession(ctx context.Context, sid string) error
-	Kick(ctx context.Context, sid, target string) error
-	Unkick(ctx context.Context, sid, target string) error
-	Forget(ctx context.Context, sid, target string) error
-	// SetGate sets whether an agent may work: run or paused.
-	SetGate(ctx context.Context, sid, target, gate string) error
-	Redact(ctx context.Context, sid, id string) (bool, error)
 	Send(ctx context.Context, sid, to, text, replyTo string) (string, error)
 }
 
@@ -40,21 +32,17 @@ type Options struct {
 	Op      Operator
 	Now     func() time.Time
 	Loc     *time.Location
-	// Brief writes a short summary of a session from its text, with a local Claude Code run.
-	// Nil means runBrief (brief.go).
-	Brief func(ctx context.Context, input string) (string, error)
 }
 
 const (
 	viewTranscript = "transcript"
 	viewThreads    = "threads"
-	viewActivity   = "activity"
 	wheelLines     = 3
 	actionTimeout  = 10 * time.Second
 )
 
 type overlay struct {
-	kind string // message, agent, help, brief
+	kind string // message, agent, help
 	id   string
 }
 
@@ -95,15 +83,6 @@ type App struct {
 	status        string
 	attn          int
 
-	// The brief of the shown session: see brief.go.
-	brief        func(ctx context.Context, input string) (string, error)
-	briefText    string
-	briefAt      time.Time
-	briefEvery   time.Duration
-	briefNext    time.Time
-	briefSID     string
-	briefRunning bool
-
 	transcripts map[string]*view.Transcript
 	ta          textarea.Model
 	last        screen
@@ -130,15 +109,12 @@ func New(o Options) *App {
 	if o.Loc == nil {
 		o.Loc = time.Local
 	}
-	if o.Brief == nil {
-		o.Brief = runBrief
-	}
 	ta := textarea.New()
 	ta.Prompt = ""
 	ta.ShowLineNumbers = false
 	ta.CharLimit = wire.MaxText
 	return &App{
-		store: o.Store, updates: o.Updates, op: o.Op, now: o.Now, loc: o.Loc, brief: o.Brief,
+		store: o.Store, updates: o.Updates, op: o.Op, now: o.Now, loc: o.Loc,
 
 		width: 80, height: 24,
 		sid: model.AllSessions, view: viewTranscript, focus: "main", sidebar: true,
@@ -228,16 +204,12 @@ func (a *App) screen() screen {
 	switch {
 	case a.overlay != nil && a.overlay.kind == "help":
 		s.main = helpLines(s.mainW)
-	case a.overlay != nil && a.overlay.kind == "brief":
-		s.main = briefLines(a.briefText, a.briefAt, a.loc, s.mainW)
 	case a.overlay != nil && a.overlay.kind == "message":
 		s.main = view.RenderMessage(s.v, a.overlay.id, o)
 	case a.overlay != nil && a.overlay.kind == "agent":
 		s.main = view.RenderAgent(s.v, a.overlay.id, o)
 	case a.view == viewThreads:
 		s.main = view.RenderThreads(s.v, o)
-	case a.view == viewActivity:
-		s.main = view.RenderActivity(s.v, o)
 	default:
 		t := a.transcripts[a.sid]
 		if t == nil {
@@ -348,10 +320,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, a.readFeed()
 	case tickMsg:
-		return a, tea.Batch(tick(), a.briefTick(a.now()))
-	case briefMsg:
-		a.briefDone(m)
-		return a, nil
+		// The repaint moves the relative times ("2m ago").
+		return a, tick()
 	case statusMsg:
 		a.status = string(m)
 		return a, nil
@@ -496,9 +466,6 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 	case isKey(k, tea.KeyEnter):
 		return a.openCurrent(s)
 	}
-	if cmd, ok := a.gateKey(k.Text, s); ok {
-		return cmd
-	}
 	if a.overlay != nil {
 		return nil
 	}
@@ -507,8 +474,6 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 		a.view, a.scroll = viewTranscript, -1
 	case "2":
 		a.view, a.scroll = viewThreads, -1
-	case "3":
-		a.view, a.scroll = viewActivity, -1
 	case " ":
 		a.follow, a.scroll = !a.follow, -1
 		if a.follow {
@@ -537,54 +502,6 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 		a.compose(m.From, &reply{id: m.ID, to: m.From})
 	}
 	return nil
-}
-
-// selectedAgent is the agent that the gate keys act on: the one whose details are open, or
-// the one under the sidebar cursor. Nil when neither is the case.
-func (a *App) selectedAgent(s screen) *model.Agent {
-	address := ""
-	switch {
-	case a.overlay != nil && a.overlay.kind == "agent":
-		address = a.overlay.id
-	case a.overlay == nil && a.focus == "sidebar":
-		if i := a.cursorOf(s); i >= 0 && i < len(s.sidebar.Rows) && s.sidebar.Rows[i] != nil {
-			address = s.sidebar.Rows[i].Address
-		}
-	}
-	if address == "" {
-		return nil
-	}
-	return s.v.Agents[address]
-}
-
-// gateKey handles the keys that steer agents: p pause or resume, x stop, for the selected
-// agent; P pause and R resume, for the shown session. ok is false for another key, and for an
-// agent key with no agent selected.
-func (a *App) gateKey(key string, s screen) (cmd tea.Cmd, ok bool) {
-	session := a.sid
-	if session == model.AllSessions || a.overlay != nil && a.overlay.kind != "agent" {
-		return nil, false
-	}
-	switch key {
-	case "P":
-		return a.command("pause", s), true
-	case "R":
-		return a.command("resume", s), true
-	}
-	ag := a.selectedAgent(s)
-	if ag == nil {
-		return nil, false
-	}
-	switch key {
-	case "p":
-		if ag.Gate != wire.GateRun {
-			return a.command("resume "+ag.Address, s), true
-		}
-		return a.command("pause "+ag.Address, s), true
-	case "x":
-		return a.command("kick "+ag.Address, s), true
-	}
-	return nil, false
 }
 
 func (a *App) compose(to string, r *reply) {
@@ -626,7 +543,7 @@ func (a *App) inputKey(k tea.KeyPressMsg, s screen) tea.Cmd {
 			return nil
 		}
 		if m.kind == "compose" && m.reply == nil {
-			targets := []string{wire.Broadcast, wire.Any}
+			targets := []string{wire.Broadcast}
 			for _, ag := range s.v.AgentList() {
 				targets = append(targets, ag.Address)
 			}
@@ -879,9 +796,6 @@ func (a *App) submit(m mode, s screen) tea.Cmd {
 		if !direct(m.reply.to) {
 			return a.setStatus("no agent " + m.reply.to)
 		}
-	case m.to == wire.Any:
-		// The hub picks the recipient.
-		to = wire.Any
 	case m.to == wire.Broadcast && strings.HasPrefix(value, "@"):
 		name, rest, _ := strings.Cut(value[1:], " ")
 		rest = strings.TrimSpace(rest)
@@ -978,19 +892,13 @@ func (a *App) hint() string {
 	case "confirm":
 		return "y yes · n no"
 	}
-	if a.overlay != nil && a.overlay.kind == "agent" {
-		return "p pause/resume · x stop · esc back · ↑↓ scroll · ? help · q quit"
-	}
 	if a.overlay != nil {
 		return "esc back · ↑↓ scroll · ? help · q quit"
 	}
 	if a.focus == "sidebar" {
-		return "↑↓ move · enter open · on an agent: p pause/resume · x stop · P pause all · R resume all · tab main · ? help"
+		return "↑↓ move · enter open · tab main · ? help"
 	}
-	if a.view == viewActivity {
-		return "1 transcript · 2 threads · ↑↓ scroll · space follow · / search · :filter <agent> · tab sidebar · ? help · q quit"
-	}
-	return "↑↓ enter esc · 3 activity · m message · r reply · a attention · / search · : command · tab sidebar · ? help · q quit"
+	return "↑↓ enter esc · m message · r reply · a attention · / search · : command · tab sidebar · ? help · q quit"
 }
 
 func (a *App) promptLines(s screen) []string {

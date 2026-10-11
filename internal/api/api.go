@@ -51,29 +51,21 @@ type kind int
 
 const (
 	kindAny      kind = iota // each valid token
-	kindAgent                // acts as an agent in a session
-	kindRead                 // reads what the operator sees
-	kindAct                  // changes sessions and agents for the operator
-	kindOperator             // speaks as the operator: only the human
+	kindAgent                // acts as an agent in a session: a machine token
+	kindOperator             // the admin API: an operator token, only the human
 )
 
 // mayUse is the rule of the token roles: for each kind of route, the roles that may use it.
-// An orchestrator is an agent that may also act for the operator. It sends as itself, so that
-// agents and the gates of a workflow can tell it from the human.
 var mayUse = map[kind][]string{
-	kindAny:      {wire.RoleMachine, wire.RoleOperator, wire.RoleOrchestrator},
-	kindAgent:    {wire.RoleMachine, wire.RoleOrchestrator},
-	kindRead:     {wire.RoleOperator, wire.RoleOrchestrator},
-	kindAct:      {wire.RoleOperator, wire.RoleOrchestrator},
+	kindAny:      {wire.RoleMachine, wire.RoleOperator},
+	kindAgent:    {wire.RoleMachine},
 	kindOperator: {wire.RoleOperator},
 }
 
 // refusal is what a role that may not use a kind of route reads.
 var refusal = map[kind]string{
 	kindAgent:    "cannot act as an agent",
-	kindRead:     "cannot use the admin API",
-	kindAct:      "cannot change sessions or agents",
-	kindOperator: "cannot send as the operator",
+	kindOperator: "cannot use the admin API",
 }
 
 // New makes the handler. log gets internal errors; nil discards them.
@@ -87,23 +79,12 @@ func New(h *hub.Hub, log func(format string, args ...any)) *Server {
 	s.add("POST", "/v1/sessions/{sid}/messages", kindAgent, s.send)
 	s.add("GET", "/v1/sessions/{sid}/messages", kindAgent, s.history)
 	s.add("POST", "/v1/sessions/{sid}/activity", kindAgent, s.activity)
-	s.add("POST", "/v1/sessions/{sid}/gate", kindAgent, s.gate)
-	s.add("POST", "/v1/sessions/{sid}/trace", kindAgent, s.trace)
 	s.add("GET", "/v1/sessions/{sid}", kindAgent, s.view)
-	s.add("GET", "/v1/admin/sessions", kindRead, s.adminSessions)
-	s.add("GET", "/v1/admin/sessions/{sid}", kindRead, s.adminSession)
-	s.add("GET", "/v1/admin/sessions/{sid}/messages", kindRead, s.adminMessages)
-	s.add("POST", "/v1/admin/sessions", kindAct, s.adminCreate)
-	s.add("POST", "/v1/admin/sessions/{sid}/close", kindAct, s.adminClose)
-	s.add("POST", "/v1/admin/sessions/{sid}/reopen", kindAct, s.adminReopen)
-	s.add("DELETE", "/v1/admin/sessions/{sid}", kindAct, s.adminDelete)
-	s.add("POST", "/v1/admin/sessions/{sid}/kick", kindAct, s.adminKick)
-	s.add("POST", "/v1/admin/sessions/{sid}/unkick", kindAct, s.adminUnkick)
-	s.add("POST", "/v1/admin/sessions/{sid}/forget", kindAct, s.adminForget)
-	s.add("POST", "/v1/admin/sessions/{sid}/gate", kindAct, s.adminGate)
-	s.add("POST", "/v1/admin/sessions/{sid}/redact", kindAct, s.adminRedact)
+	s.add("GET", "/v1/admin/sessions", kindOperator, s.adminSessions)
+	s.add("POST", "/v1/admin/sessions", kindOperator, s.adminCreate)
+	s.add("DELETE", "/v1/admin/sessions/{sid}", kindOperator, s.adminDelete)
 	s.add("POST", "/v1/admin/sessions/{sid}/messages", kindOperator, s.adminSend)
-	s.add("GET", "/v1/admin/stream", kindRead, s.adminStream)
+	s.add("GET", "/v1/admin/stream", kindOperator, s.adminStream)
 	return s
 }
 
@@ -348,7 +329,6 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, owner hub.Owner,
 		writeHubError(w, err)
 		return
 	}
-	q.Role = owner.Role
 	joined, err := s.hub.Join(owner.Name, sid, q, r.Header.Get("Last-Event-ID"))
 	if err != nil {
 		writeHubError(w, err)
@@ -390,37 +370,6 @@ func (s *Server) activity(w http.ResponseWriter, r *http.Request, owner hub.Owne
 		return
 	}
 	w.WriteHeader(204)
-}
-
-func (s *Server) gate(w http.ResponseWriter, r *http.Request, owner hub.Owner, sid string) {
-	b, ok := body(w, r)
-	if !ok {
-		return
-	}
-	agent, err := parseAgentBody(b)
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	gate, err := s.hub.Gate(owner.Name, sid, agent, owner.Role)
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	writeJSON(w, 200, map[string]string{"gate": gate})
-}
-
-func (s *Server) trace(w http.ResponseWriter, r *http.Request, owner hub.Owner, sid string) {
-	b, ok := body(w, r)
-	if !ok {
-		return
-	}
-	req, err := parseTrace(b)
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	s.done(w, s.hub.Trace(owner.Name, sid, req))
 }
 
 func (s *Server) view(w http.ResponseWriter, r *http.Request, owner hub.Owner, sid string) {
@@ -488,117 +437,8 @@ func (s *Server) done(w http.ResponseWriter, err error) {
 	w.WriteHeader(204)
 }
 
-func (s *Server) adminClose(w http.ResponseWriter, _ *http.Request, _ hub.Owner, sid string) {
-	s.done(w, s.hub.CloseSession(sid))
-}
-
-func (s *Server) adminReopen(w http.ResponseWriter, _ *http.Request, _ hub.Owner, sid string) {
-	s.done(w, s.hub.ReopenSession(sid))
-}
-
 func (s *Server) adminDelete(w http.ResponseWriter, _ *http.Request, _ hub.Owner, sid string) {
 	s.done(w, s.hub.DeleteSession(sid))
-}
-
-// actor is what the record of an admin change names: the orchestrator token, or "" for the
-// operator.
-func actor(owner hub.Owner) string {
-	if owner.Role == wire.RoleOrchestrator {
-		return owner.Name
-	}
-	return ""
-}
-
-func (s *Server) adminSession(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
-	if _, err := query(r.URL.Query()); err != nil {
-		writeHubError(w, err)
-		return
-	}
-	v, err := s.hub.AdminSession(sid)
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	writeJSON(w, 200, v)
-}
-
-func (s *Server) adminMessages(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
-	q, err := parseAllMessagesQuery(r.URL.Query())
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	msgs, err := s.hub.AllMessages(sid, q)
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	writeJSON(w, 200, map[string]any{"messages": msgs})
-}
-
-func (s *Server) adminKick(w http.ResponseWriter, r *http.Request, owner hub.Owner, sid string) {
-	b, ok := body(w, r)
-	if !ok {
-		return
-	}
-	target, err := parseTarget(b)
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	s.done(w, s.hub.Kick(sid, target, actor(owner)))
-}
-
-func (s *Server) adminUnkick(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
-	b, ok := body(w, r)
-	if !ok {
-		return
-	}
-	target, err := parseTarget(b)
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	s.done(w, s.hub.Unkick(sid, target))
-}
-
-func (s *Server) adminForget(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
-	b, ok := body(w, r)
-	if !ok {
-		return
-	}
-	target, err := parseTarget(b)
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	s.done(w, s.hub.Forget(sid, target))
-}
-
-func (s *Server) adminGate(w http.ResponseWriter, r *http.Request, owner hub.Owner, sid string) {
-	b, ok := body(w, r)
-	if !ok {
-		return
-	}
-	target, gate, err := parseGate(b)
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	s.done(w, s.hub.SetGate(sid, target, gate, actor(owner)))
-}
-
-func (s *Server) adminRedact(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
-	b, ok := body(w, r)
-	if !ok {
-		return
-	}
-	id, err := parseRedact(b)
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	s.done(w, s.hub.Redact(sid, id))
 }
 
 func (s *Server) adminSend(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {

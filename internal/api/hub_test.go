@@ -48,14 +48,13 @@ func TestHub(t *testing.T) {
 	t.Run("authentication", x.authentication)
 	t.Run("joining", x.joining)
 	t.Run("messages", x.messages)
-	t.Run("send to any", x.sendToAny)
 	t.Run("rate limits", rateLimits)
 	t.Run("resume", x.resume)
 	t.Run("operator actions reach agents", x.operatorActions)
 	t.Run("peer presence", x.peerPresence)
 	t.Run("peers that left", x.peersThatLeft)
 	t.Run("activity and presence", x.activityAndPresence)
-	t.Run("session auto-create", x.autoCreate)
+	t.Run("the first join creates the session", x.autoCreate)
 	t.Run("admin API", x.adminAPI)
 	t.Run("admin feed", x.adminFeed)
 }
@@ -93,19 +92,12 @@ func (x *hubSuite) joining(t *testing.T) {
 		defer s.close()
 		wantStatus(t, 200)(s.status(), s.body)
 		got := data[joinedEvent](t, s.wait(t, nil))
-		if want := (joinedEvent{Me: "alice@mac-1", Session: sid, Gate: "run"}); got != want {
+		if want := (joinedEvent{Me: "alice@mac-1", Session: sid}); got != want {
 			t.Fatalf("joined %+v, want %+v", got, want)
 		}
 		if _, ok := x.h.presence(sid + ".mac-1.alice"); !ok {
 			t.Fatal("no presence record")
 		}
-	})
-
-	t.Run("an unknown session is 404 and a closed session is 403", func(t *testing.T) {
-		wantStatus(t, 404)(x.mac1.stream("nosuch", "alice").result())
-		sid := x.session(t)
-		x.op.closeSession(t, sid)
-		wantStatus(t, 403)(x.mac1.stream(sid, "alice").result())
 	})
 
 	t.Run("a taken name is 409; the same instance takes over its old stream", func(t *testing.T) {
@@ -143,7 +135,7 @@ func (x *hubSuite) joining(t *testing.T) {
 	})
 
 	// Asked for by the operator: a session that is refused because the name is in use must
-	// show, as a removed agent that tries to join does.
+	// show.
 	t.Run("a join refused for a name in use leaves a refused record; a repeat soon after leaves none", func(t *testing.T) {
 		sid := x.session(t)
 		a := x.mac1.stream(sid, "alice")
@@ -168,6 +160,16 @@ func (x *hubSuite) joining(t *testing.T) {
 		}
 		// The agent that holds the name is not disturbed.
 		a.none(t, eventIs("notice"), 200*time.Millisecond)
+	})
+
+	// A shim of v0.10.0 or before joins with gated=1. The hub of now has no gate; the join is
+	// accepted, so that a device that did not upgrade yet keeps its messages.
+	t.Run("a join with the gated parameter of an older shim is accepted", func(t *testing.T) {
+		sid := x.session(t)
+		a := x.mac1.stream(sid, "alice", withQuery("gated", "1"))
+		defer a.close()
+		wantStatus(t, 200)(a.status(), a.body)
+		wantStatus(t, 422)(x.mac1.stream(sid, "bob", withQuery("hold", "1")).result())
 	})
 
 	t.Run("the same name on two machines is allowed", func(t *testing.T) {
@@ -381,68 +383,6 @@ func (x *hubSuite) resume(t *testing.T) {
 }
 
 func (x *hubSuite) operatorActions(t *testing.T) {
-	t.Run("kick: notice, stream ends, rejoin and sends refused", func(t *testing.T) {
-		sid := x.session(t)
-		b := x.vps2.stream(sid, "bob")
-		defer b.close()
-		b.wait(t, nil)
-		x.op.kick(t, sid, "bob@vps-2")
-		if n := data[noticeEvent](t, b.wait(t, eventIs("notice"))); n.Kind != "kicked" {
-			t.Fatalf("notice %+v", n)
-		}
-		if err := b.ended(0); err != nil {
-			t.Fatal(err)
-		}
-		wantStatus(t, 403)(x.vps2.stream(sid, "bob").result())
-		wantStatus(t, 403)(x.vps2.send(sid, "bob", "all", "x", ""))
-	})
-
-	t.Run("close and reopen: notices, and sends refused while closed", func(t *testing.T) {
-		sid := x.session(t)
-		a := x.mac1.stream(sid, "alice")
-		defer a.close()
-		a.wait(t, nil)
-		x.op.closeSession(t, sid)
-		if n := data[noticeEvent](t, a.wait(t, eventIs("notice"))); n.Kind != "closed" {
-			t.Fatalf("notice %+v", n)
-		}
-		status, body := x.mac1.send(sid, "alice", "all", "x", "")
-		if e := parse[errBody](t, body); status != 403 || e.Message != "session closed" {
-			t.Fatalf("got [%d %q], want [403 session closed]", status, e.Message)
-		}
-		x.op.reopenSession(t, sid)
-		if n := data[noticeEvent](t, a.wait(t, eventIs("notice"))); n.Kind != "reopened" {
-			t.Fatalf("notice %+v", n)
-		}
-		wantStatus(t, 200)(x.mac1.send(sid, "alice", "all", "x", ""))
-	})
-
-	t.Run("redact: only agents that got the message get a notice; history drops it", func(t *testing.T) {
-		sid := x.session(t)
-		a := x.mac1.stream(sid, "alice")
-		defer a.close()
-		b := x.vps2.stream(sid, "bob")
-		defer b.close()
-		c := x.mac3.stream(sid, "carol")
-		defer c.close()
-		for _, s := range []*stream{a, b, c} {
-			s.wait(t, nil)
-		}
-		id := parse[sendResponse](t, jsonOf(x.mac1.send(sid, "alice", "bob", "oops", ""))).ID
-		b.wait(t, isMsg)
-		if !x.op.redact(t, sid, id) {
-			t.Fatal("redact gave false")
-		}
-		if n := data[noticeEvent](t, b.wait(t, eventIs("notice"))); n.Kind != "redacted" || n.ID != id {
-			t.Fatalf("notice %+v, want kind redacted and id %s", n, id)
-		}
-		c.none(t, eventIs("notice"), 500*time.Millisecond)
-		hist := parse[historyResponse](t, jsonOf(x.vps2.history(sid, "bob", "")))
-		if ids := messageIDs(hist.Messages); slices.Contains(ids, id) {
-			t.Fatalf("history %v has %s", ids, id)
-		}
-	})
-
 	// Found in the end-to-end run: an agent could not answer the operator ("send can't address operator").
 	t.Run("an agent can answer the operator; no other agent receives it", func(t *testing.T) {
 		sid := x.session(t)
@@ -703,16 +643,7 @@ func (x *hubSuite) activityAndPresence(t *testing.T) {
 		defer a.close()
 		a.wait(t, nil)
 		a.close()
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			if _, ok := x.h.presence(sid + ".mac-1.alice"); !ok {
-				break
-			}
-			if time.Now().After(deadline) {
-				t.Fatal("presence not removed")
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
+		waitGone(t, x.h, sid+".mac-1.alice")
 		left := slices.ContainsFunc(x.h.events(sid), func(e wire.Event) bool {
 			return e.Kind == wire.EventActivity && e.Activity != nil && e.Activity.Kind == "left"
 		})
@@ -723,32 +654,23 @@ func (x *hubSuite) activityAndPresence(t *testing.T) {
 }
 
 func (x *hubSuite) autoCreate(t *testing.T) {
-	t.Run("with the option on, the first join creates an open session; off, it is 404", func(t *testing.T) {
-		auto := startHub(t, limits{}, options{autoCreate: true})
+	t.Run("a join of an unknown session creates it; the operator sees it", func(t *testing.T) {
+		auto := startHub(t, limits{}, options{})
 		op := operator{admin{auto.base, auto.operatorToken("op")}}
 		mac := api{auto.base, auto.token("mac-1")}
 		s := mac.stream("fresh", "alice")
 		defer s.close()
 		wantStatus(t, 200)(s.status(), s.body)
 		got := data[joinedEvent](t, s.wait(t, nil))
-		if want := (joinedEvent{Me: "alice@mac-1", Session: "fresh", Gate: "run"}); got != want {
+		if want := (joinedEvent{Me: "alice@mac-1", Session: "fresh"}); got != want {
 			t.Fatalf("joined %+v, want %+v", got, want)
 		}
-		if rec, ok := op.getSession(t, "fresh"); !ok || rec.Status != "open" {
-			t.Fatalf("session fresh %v %+v, want status open", ok, rec)
+		if rec, ok := op.getSession(t, "fresh"); !ok || rec.CreatedAt == "" {
+			t.Fatalf("session fresh %v %+v, want a created_at", ok, rec)
 		}
 		if ids := sessionIDs(op.listSessions(t)); !slices.Equal(ids, []string{"fresh"}) {
 			t.Fatalf("sessions %v, want [fresh]", ids)
 		}
-		// A closed session stays closed: auto-create never reopens.
-		s.close()
-		if err := s.ended(0); err != nil {
-			t.Fatal(err)
-		}
-		op.closeSession(t, "fresh")
-		wantStatus(t, 403)(mac.stream("fresh", "alice").result())
-		auto.stop()
-		wantStatus(t, 404)(x.mac1.stream("fresh", "alice").result())
 	})
 }
 
@@ -764,12 +686,12 @@ func (x *hubSuite) adminAPI(t *testing.T) {
 		wantStatus(t, 401)(admin{x.h.base, "nope"}.sessions())
 	})
 
-	t.Run("session lifecycle: create, list, close, reopen, delete", func(t *testing.T) {
+	t.Run("session lifecycle: create, list, delete", func(t *testing.T) {
 		x.n++
 		sid := fmt.Sprintf("adm%d", x.n)
 		created := parse[wire.SessionInfo](t, wantStatus(t, 200)(adm.create(sid, "Admin test")))
-		if created.Session != sid || created.Status != "open" || created.Title != "Admin test" {
-			t.Fatalf("created %+v, want session %s, status open, title Admin test", created, sid)
+		if created.Session != sid || created.CreatedAt == "" || created.Title != "Admin test" {
+			t.Fatalf("created %+v, want session %s, a created_at, title Admin test", created, sid)
 		}
 		wantStatus(t, 409)(adm.create(sid, ""))
 		list := parse[sessionList](t, jsonOf(adm.sessions()))
@@ -779,148 +701,21 @@ func (x *hubSuite) adminAPI(t *testing.T) {
 		a := x.mac1.stream(sid, "alice")
 		defer a.close()
 		a.wait(t, nil)
-		wantStatus(t, 409)(adm.delete(sid))
-		wantStatus(t, 204)(adm.close(sid))
-		if n := data[noticeEvent](t, a.wait(t, eventIs("notice"))); n.Kind != "closed" {
-			t.Fatalf("notice %+v", n)
-		}
-		wantStatus(t, 204)(adm.reopen(sid))
-		if n := data[noticeEvent](t, a.wait(t, eventIs("notice"))); n.Kind != "reopened" {
-			t.Fatalf("notice %+v", n)
+		// A session with an agent in it is not deleted: the agent would create it again.
+		if m := parse[errBody](t, wantStatus(t, 409)(adm.delete(sid))).Message; !strings.Contains(m, "alice@mac-1") {
+			t.Fatalf("message %q", m)
 		}
 		a.close()
-		wantStatus(t, 204)(adm.close(sid))
+		waitGone(t, x.h, sid+".mac-1.alice")
 		wantStatus(t, 204)(adm.delete(sid))
 		after := parse[sessionList](t, jsonOf(adm.sessions()))
 		if ids := sessionIDs(after.Sessions); slices.Contains(ids, sid) {
 			t.Fatalf("sessions %v have %s", ids, sid)
 		}
-		wantStatus(t, 404)(adm.close("nosuch"))
 		wantStatus(t, 404)(adm.delete("nosuch"))
 	})
 
-	t.Run("kick and unkick reach the agent and the kick record", func(t *testing.T) {
-		sid := x.session(t)
-		b := x.vps2.stream(sid, "bob")
-		defer b.close()
-		b.wait(t, nil)
-		wantStatus(t, 204)(adm.kick(sid, "bob@vps-2"))
-		if n := data[noticeEvent](t, b.wait(t, eventIs("notice"))); n.Kind != "kicked" {
-			t.Fatalf("notice %+v", n)
-		}
-		if err := b.ended(0); err != nil {
-			t.Fatal(err)
-		}
-		wantStatus(t, 403)(x.vps2.stream(sid, "bob").result())
-		wantStatus(t, 204)(adm.unkick(sid, "bob@vps-2"))
-		again := x.vps2.stream(sid, "bob")
-		defer again.close()
-		wantStatus(t, 200)(again.status(), again.body)
-		again.close()
-		wantStatus(t, 404)(adm.kick("nosuch", "bob@vps-2"))
-	})
-
-	// Found in use: an agent the operator removed stayed a peer for the others, listed as away
-	// and accepted as a recipient, although it could not come back.
-	t.Run("a removed agent is no longer a peer; allow brings it back", func(t *testing.T) {
-		sid := x.session(t)
-		a := x.mac1.stream(sid, "alice")
-		defer a.close()
-		a.wait(t, nil)
-		b := x.vps2.stream(sid, "bob")
-		b.wait(t, nil)
-		b.close()
-		a.wait(t, eventIs("notice"))
-		away := []peer{{Name: "bob@vps-2", State: "idle", Online: false}}
-		if v := parse[sessionView](t, jsonOf(x.mac1.view(sid, "alice"))); !slices.Equal(v.Peers, away) {
-			t.Fatalf("peers before the kick %+v, want %+v", v.Peers, away)
-		}
-		wantStatus(t, 204)(adm.kick(sid, "bob@vps-2"))
-		if v := parse[sessionView](t, jsonOf(x.mac1.view(sid, "alice"))); len(v.Peers) != 0 {
-			t.Fatalf("peers after the kick %+v, want none", v.Peers)
-		}
-		wantStatus(t, 404)(x.mac1.send(sid, "alice", "bob", "hi", ""))
-		wantStatus(t, 204)(adm.unkick(sid, "bob@vps-2"))
-		if v := parse[sessionView](t, jsonOf(x.mac1.view(sid, "alice"))); !slices.Equal(v.Peers, away) {
-			t.Fatalf("peers after the allow %+v, want %+v", v.Peers, away)
-		}
-	})
-
-	// Found in use: three agents of a test run each joined for some seconds, and stayed peers
-	// of the session for ever (smoke-researcher, smoke2, eng-t1). The only way to drop one was
-	// a kick, and a kick also keeps the name out. Forget drops the agent and keeps the name free.
-	t.Run("a forgotten agent is no longer a peer; it may join again as a new agent", func(t *testing.T) {
-		sid := x.session(t)
-		a := x.mac1.stream(sid, "alice")
-		defer a.close()
-		a.wait(t, nil)
-		b := x.vps2.stream(sid, "smoke2")
-		b.wait(t, nil)
-		// An agent that is in the session cannot be forgotten.
-		wantStatus(t, 409)(adm.forget(sid, "smoke2@vps-2"))
-		b.close()
-		a.wait(t, eventIs("notice"))
-		wantStatus(t, 200)(x.mac1.send(sid, "alice", "smoke2", "for later", ""))
-		if v := parse[sessionView](t, jsonOf(x.mac1.view(sid, "alice"))); len(v.Peers) != 1 {
-			t.Fatalf("peers before the forget %+v, want smoke2 away", v.Peers)
-		}
-		forgotten := func() int {
-			n := 0
-			for _, e := range x.h.events(sid) {
-				if e.Kind == wire.EventActivity && e.From == "smoke2@vps-2" && e.Activity != nil && e.Activity.Kind == "forgotten" {
-					n++
-				}
-			}
-			return n
-		}
-		wantStatus(t, 204)(adm.forget(sid, "smoke2@vps-2"))
-		if v := parse[sessionView](t, jsonOf(x.mac1.view(sid, "alice"))); len(v.Peers) != 0 {
-			t.Fatalf("peers after the forget %+v, want none", v.Peers)
-		}
-		wantStatus(t, 404)(x.mac1.send(sid, "alice", "smoke2", "hi", ""))
-		// A second forget, and a forget of an agent that never joined, change nothing.
-		wantStatus(t, 204)(adm.forget(sid, "smoke2@vps-2"))
-		wantStatus(t, 204)(adm.forget(sid, "nobody@vps-2"))
-		if n := forgotten(); n != 1 {
-			t.Fatalf("%d forgotten records, want 1", n)
-		}
-		// The name is free: the agent joins again, as a new agent with no replay.
-		b2 := x.vps2.stream(sid, "smoke2")
-		defer b2.close()
-		b2.wait(t, nil)
-		b2.none(t, isMsg, 300*time.Millisecond)
-		if v := parse[sessionView](t, jsonOf(x.mac1.view(sid, "alice"))); len(v.Peers) != 1 || !v.Peers[0].Online {
-			t.Fatalf("peers after the new join %+v, want smoke2 online", v.Peers)
-		}
-		wantStatus(t, 404)(adm.forget("no-such-session", "smoke2@vps-2"))
-		wantStatus(t, 422)(adm.forget(sid, "smoke2"))
-	})
-
-	// Asked for by the operator: a removed agent that tries to join must show. Without a record
-	// a forgotten :allow looks like an agent that never started.
-	t.Run("a removed agent that tries to join leaves a refused record; a repeat soon after leaves none", func(t *testing.T) {
-		sid := x.session(t)
-		wantStatus(t, 204)(adm.kick(sid, "bob@vps-2"))
-		refused := func() int {
-			n := 0
-			for _, e := range x.h.events(sid) {
-				if e.Kind == wire.EventActivity && e.From == "bob@vps-2" && e.Activity != nil && e.Activity.Kind == "refused" && e.Activity.Reason == "removed" {
-					n++
-				}
-			}
-			return n
-		}
-		wantStatus(t, 403)(x.vps2.stream(sid, "bob").result())
-		if n := refused(); n != 1 {
-			t.Fatalf("%d refused records after the first try, want 1", n)
-		}
-		wantStatus(t, 403)(x.vps2.stream(sid, "bob").result())
-		if n := refused(); n != 1 {
-			t.Fatalf("%d refused records after a second try soon after, want 1", n)
-		}
-	})
-
-	t.Run("the operator sends, in a thread, and redacts", func(t *testing.T) {
+	t.Run("the operator sends, in a thread", func(t *testing.T) {
 		sid := x.session(t)
 		a := x.mac1.stream(sid, "alice")
 		defer a.close()
@@ -943,13 +738,6 @@ func (x *hubSuite) adminAPI(t *testing.T) {
 			t.Fatalf("text %q", m.Text)
 		}
 		wantStatus(t, 404)(adm.send(sid, "zed", "hi", ""))
-		id := parse[sendResponse](t, jsonOf(x.vps2.send(sid, "bob", "alice", "oops", ""))).ID
-		a.wait(t, isMsg)
-		wantStatus(t, 204)(adm.redact(sid, id))
-		if n := data[noticeEvent](t, a.wait(t, eventIs("notice"))); n.Kind != "redacted" || n.ID != id {
-			t.Fatalf("notice %+v, want kind redacted and id %s", n, id)
-		}
-		wantStatus(t, 404)(adm.redact(sid, "999999"))
 	})
 }
 
@@ -968,8 +756,8 @@ func (x *hubSuite) adminFeed(t *testing.T) {
 		rec := data[adminEvent](t, s.wait(t, func(e sseEvent) bool {
 			return e.event == "session" && strings.Contains(e.data, `"`+sid+`"`)
 		}))
-		if rec.Kind != "session" || rec.Session != sid || rec.SessionRecord == nil || rec.SessionRecord.Status != "open" {
-			t.Fatalf("session event %+v, want session %s with status open", rec, sid)
+		if rec.Kind != "session" || rec.Session != sid || rec.SessionRecord == nil || rec.SessionRecord.CreatedAt == "" {
+			t.Fatalf("session event %+v, want session %s with a created_at", rec, sid)
 		}
 		markers := []string{
 			data[adminEvent](t, s.wait(t, eventIs("snapshot"))).Bucket,
@@ -1012,22 +800,17 @@ func (x *hubSuite) adminFeed(t *testing.T) {
 		}
 	})
 
-	t.Run("a kick record appears, and goes away with unkick", func(t *testing.T) {
+	// The database of a hub of v0.10.0 or before holds kinds that this version dropped. The
+	// feed must not send them: the TUI cannot read them.
+	t.Run("a row of a dropped kind in the log does not reach the feed", func(t *testing.T) {
 		sid := x.session(t)
-		s := adm.stream()
+		before := x.op.send(t, sid, "all", "before")
+		x.h.appendRaw(sid, "coop."+sid+".ops", `{"kind":"kick","target":"bob@vps-2","at":"2026-09-30T12:01:00.000Z"}`)
+		after := x.op.send(t, sid, "all", "after")
+		s := adm.stream(before)
 		defer s.close()
-		// Both snapshots must be done: a listing that runs during the kick would send it once more.
-		s.wait(t, eventIs("snapshot"))
-		s.wait(t, eventIs("snapshot"))
-		key := sid + ".kick.mac-1.alice"
-		myKick := func(e sseEvent) bool { return e.event == "kick" && strings.Contains(e.data, key) }
-		adm.kick(sid, "alice@mac-1")
-		if k := data[adminEvent](t, s.wait(t, myKick)); k.Kind != "kick" || k.Key != key || k.KickRecord == nil {
-			t.Fatalf("kick event %+v, want key %s with a record", k, key)
-		}
-		adm.unkick(sid, "alice@mac-1")
-		if k := data[adminEvent](t, s.wait(t, myKick)); k.Kind != "kick" || k.KickRecord != nil {
-			t.Fatalf("kick event %+v, want a null record", k)
+		if e := s.wait(t, eventIs("event")); e.id != after {
+			t.Fatalf("first event %q (%s), want %q", e.id, e.data, after)
 		}
 	})
 
@@ -1063,4 +846,19 @@ func (x *hubSuite) adminFeed(t *testing.T) {
 		}
 		wantStatus(t, 401)(temp.stream().result())
 	})
+}
+
+// waitGone waits until the hub has no live presence record of key.
+func waitGone(t *testing.T, h *harness, key string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, ok := h.presence(key); !ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("presence %s not removed", key)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }

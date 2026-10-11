@@ -37,7 +37,7 @@ func get(t *testing.T, url, token string) (int, http.Header, []byte) {
 
 // A device gets the install script before it has a token: the script holds no secret.
 func TestTheHubServesTheInstallScriptWithoutAToken(t *testing.T) {
-	h := startHub(t, limits{}, options{autoCreate: true})
+	h := startHub(t, limits{}, options{})
 	status, header, body := get(t, h.base+"/install.sh", "")
 	if status != 200 || !strings.HasPrefix(string(body), "#!/bin/sh\n") {
 		t.Fatalf("GET /install.sh: %d %.60q", status, body)
@@ -55,7 +55,7 @@ func TestTheHubServesTheInstallScriptWithoutAToken(t *testing.T) {
 
 // coop upgrade and coop doctor compare the version of the device with the version of the hub.
 func TestWhoamiGivesTheVersionOfTheHub(t *testing.T) {
-	h := startHub(t, limits{}, options{autoCreate: true, version: "v9.8.7"})
+	h := startHub(t, limits{}, options{version: "v9.8.7"})
 	status, _, body := get(t, h.base+"/v1/whoami", h.token("mac"))
 	var me map[string]string
 	if err := json.Unmarshal(body, &me); err != nil || status != 200 {
@@ -95,9 +95,9 @@ func distDir(t *testing.T) (dir string, files map[string]string) {
 // A device downloads the binary of its platform from the hub, with its token.
 func TestTheHubGivesItsBinariesToEachValidToken(t *testing.T) {
 	dir, files := distDir(t)
-	h := startHub(t, limits{}, options{autoCreate: true, dist: dir})
-	for _, role := range []string{wire.RoleMachine, wire.RoleOperator, wire.RoleOrchestrator} {
-		status, header, body := get(t, h.base+"/dl/coop-linux-amd64", h.roleToken("t-"+role, role))
+	h := startHub(t, limits{}, options{dist: dir})
+	for role, token := range map[string]string{wire.RoleMachine: h.token("t-machine"), wire.RoleOperator: h.operatorToken("t-operator")} {
+		status, header, body := get(t, h.base+"/dl/coop-linux-amd64", token)
 		if status != 200 || string(body) != files["coop-linux-amd64"] || header.Get("Content-Type") != "application/octet-stream" {
 			t.Errorf("%s token: %d %q %q", role, status, body, header.Get("Content-Type"))
 		}
@@ -121,7 +121,7 @@ func TestTheHubGivesItsBinariesToEachValidToken(t *testing.T) {
 		t.Errorf("POST: %d, Allow %q", status, header.Get("Allow"))
 	}
 	// A hub with no directory gives no binary.
-	none := startHub(t, limits{}, options{autoCreate: true})
+	none := startHub(t, limits{}, options{})
 	if status, _, _ := get(t, none.base+"/dl/coop-linux-amd64", none.token("mac")); status != 404 {
 		t.Errorf("a hub with no directory: %d", status)
 	}
@@ -147,7 +147,7 @@ func httpDo(t *testing.T, method, url, token string) (int, http.Header, []byte) 
 // binaries, or nothing. No path reaches another file.
 func TestDownloadPathsReachOnlyTheBinaries(t *testing.T) {
 	dir, files := distDir(t)
-	h := startHub(t, limits{}, options{autoCreate: true, dist: dir})
+	h := startHub(t, limits{}, options{dist: dir})
 	tok := h.token("mac")
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	part := rapid.SampledFrom([]string{

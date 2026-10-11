@@ -3,6 +3,7 @@ package api_test
 // A real hub on a free port with a fresh store, as packages/hub/test/harness.ts starts one.
 
 import (
+	"database/sql"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -24,11 +25,9 @@ type limit struct {
 // limits are the rate limits of a test hub; a zero limit means the hub's default.
 type limits struct{ join, msg, activity limit }
 
-// options of a test hub; autoCreate false means the operator creates sessions.
-// version is the version that the hub reports, and dist is the directory of the binaries
-// that it gives to devices.
+// options of a test hub: version is the version that the hub reports, and dist is the
+// directory of the binaries that it gives to devices.
 type options struct {
-	autoCreate    bool
 	version, dist string
 }
 
@@ -39,6 +38,7 @@ const testPing = 200 * time.Millisecond
 type harness struct {
 	base string
 	t    *testing.T
+	path string // the database file
 	st   *store.Store
 	l    limits
 	o    options
@@ -54,11 +54,12 @@ type harness struct {
 // in t.Cleanup.
 func startHub(t *testing.T, l limits, o options) *harness {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "coop.db"))
+	path := filepath.Join(t.TempDir(), "coop.db")
+	st, err := store.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, st: st, l: l, o: o, addr: "127.0.0.1:0"}
+	h := &harness{t: t, path: path, st: st, l: l, o: o, addr: "127.0.0.1:0"}
 	h.start()
 	t.Cleanup(func() {
 		h.stop()
@@ -79,9 +80,8 @@ func (h *harness) start() {
 	h.base = "http://" + h.addr
 	conv := func(l limit) hub.Limit { return hub.Limit{Burst: l.burst, PerSecond: l.perSecond} }
 	h.h = hub.New(h.st, hub.Options{
-		AutoCreate: h.o.autoCreate,
-		Ping:       testPing,
-		Limits:     hub.Limits{Join: conv(h.l.join), Msg: conv(h.l.msg), Activity: conv(h.l.activity)},
+		Ping:   testPing,
+		Limits: hub.Limits{Join: conv(h.l.join), Msg: conv(h.l.msg), Activity: conv(h.l.activity)},
 	})
 	srv := coopapi.New(h.h, h.t.Logf)
 	srv.Version, srv.Dist = h.o.version, h.o.dist
@@ -160,6 +160,20 @@ func (h *harness) presence(key string) (wire.PresenceRecord, bool) {
 	hb := h.h
 	h.mu.Unlock()
 	return hb.Presence(key)
+}
+
+// appendRaw writes one row into the event log as an older hub wrote it, past the store's
+// encoder.
+func (h *harness) appendRaw(sid, subject, payload string) {
+	h.t.Helper()
+	db, err := sql.Open("sqlite", h.path)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO events (sid, kind, subject, payload) VALUES (?, 'kick', ?, ?)`, sid, subject, []byte(payload)); err != nil {
+		h.t.Fatal(err)
+	}
 }
 
 // events gives every stored event of a session, oldest first.

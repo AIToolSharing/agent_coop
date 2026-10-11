@@ -9,8 +9,7 @@ import (
 
 // Summary is one session row of the sidebar.
 type Summary struct {
-	SID      string
-	Status   string // open, closed, or all
+	SID      string // model.AllSessions for the row of all traffic
 	Online   int
 	Agents   int
 	OpenAsks int
@@ -18,7 +17,7 @@ type Summary struct {
 	PerMinute int
 }
 
-// RefusedFor is how long a removed agent that tried to join stays in the list.
+// RefusedFor is how long the line of a refused second session stays under an agent.
 const RefusedFor = 5 * time.Minute
 
 // LeftFor is how long an agent that left stays in the list.
@@ -40,16 +39,13 @@ func gone(a *model.Agent, now time.Time) bool {
 }
 
 // Listed gives the agents that the sidebar shows and the session count takes: every agent but
-// those the operator removed or forgot, and those that left LeftFor ago or earlier. A short
-// run, such as a headless agent that did its task, must not fill the list for good. A removed
-// agent that tried to join lately is listed, so that the operator sees that it waits for
-// :allow. AgentList keeps every agent, for :allow, for :forget and for the history.
+// those that left LeftFor ago or earlier. A short run, such as a headless agent that did its
+// task, must not fill the list for good. AgentList keeps every agent, for the history.
 func Listed(v *model.Session, now time.Time) []*model.Agent {
 	all := v.AgentList()
 	out := all[:0]
 	for _, a := range all {
-		hidden := a.Kicked || a.Forgotten || gone(a, now)
-		if !hidden || a.Online || lately(a.RefusedAt, now) {
+		if a.Online || !gone(a, now) {
 			out = append(out, a)
 		}
 	}
@@ -59,9 +55,9 @@ func Listed(v *model.Session, now time.Time) []*model.Agent {
 // Summaries gives the all-traffic row, then every session in name order.
 func Summaries(s *model.Store, now time.Time) []Summary {
 	minuteAgo := now.Add(-time.Minute).UTC().Format(time.RFC3339Nano)
-	one := func(sid, status string) Summary {
+	one := func(sid string) Summary {
 		v := s.View(sid)
-		sum := Summary{SID: sid, Status: status, OpenAsks: len(v.OpenAsks())}
+		sum := Summary{SID: sid, OpenAsks: len(v.OpenAsks())}
 		for _, a := range Listed(v, now) {
 			sum.Agents++
 			if a.Online {
@@ -84,9 +80,9 @@ func Summaries(s *model.Store, now time.Time) []Summary {
 		}
 		return sum
 	}
-	out := []Summary{one(model.AllSessions, "all")}
+	out := []Summary{one(model.AllSessions)}
 	for _, sid := range s.SessionIDs() {
-		out = append(out, one(sid, s.Sessions[sid].Status))
+		out = append(out, one(sid))
 	}
 	return out
 }
@@ -94,20 +90,6 @@ func Summaries(s *model.Store, now time.Time) []Summary {
 func mustTime(iso string) time.Time {
 	t, _ := parseTime(iso)
 	return t
-}
-
-// gateText is what the agent list shows in place of the state for an agent that the operator
-// does not let work: held or paused. An agent with no gate hook gets the gate only as advice:
-// the text then says "soft". "" for an agent that may work.
-func gateText(a *model.Agent) string {
-	if a.Gate != "held" && a.Gate != "paused" {
-		return ""
-	}
-	if a.Online && !a.Gated {
-		// Short, so that the name stays whole: the agent's details say the rest.
-		return a.Gate + " (soft)"
-	}
-	return a.Gate
 }
 
 // Row says what a sidebar line stands for: a session or an agent. Headers have no row.
@@ -136,14 +118,6 @@ func SidebarWidth(sums []Summary, agents []*model.Agent, maxWidth int, now time.
 	}
 	for _, a := range agents {
 		longest = max(longest, Width(a.Address)+18)
-		if g := gateText(a); g != "" {
-			// icon, name, space, gate, and the wait mark when the agent waits.
-			wait := 0
-			if a.Waiting != nil {
-				wait = 6
-			}
-			longest = max(longest, 2+Width(a.Address)+1+Width(g)+wait+1)
-		}
 		if lately(a.DuplicateAt, now) {
 			longest = max(longest, 30) // "  ↳ duplicate refused 59m ago"
 		}
@@ -163,7 +137,7 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 	for _, s := range sums {
 		here := len(sb.Rows) == sel.Cursor
 		current := s.SID == sel.SID
-		if s.Status == "all" {
+		if s.SID == model.AllSessions {
 			rate := ""
 			if s.PerMinute > 0 {
 				rate = "  " + itoa(int64(s.PerMinute)) + "/min"
@@ -171,11 +145,8 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 			add(Line{Dim("* "), Styled("all traffic", Style{Bold: current, Inverse: here}), Dim(rate)}, &Row{SID: s.SID})
 			continue
 		}
-		live := s.Status == "open" && s.Online > 0
 		icon, color := "○ ", "gray"
-		if s.Status == "closed" {
-			icon = "✕ "
-		} else if live {
+		if s.Online > 0 {
 			icon, color = "● ", "green"
 		}
 		l := Line{Color(icon, color), Styled(s.SID, Style{Bold: current, Inverse: here}), Dim(" " + itoa(int64(s.Online)) + "/" + itoa(int64(s.Agents)))}
@@ -185,9 +156,6 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 				plural = "s"
 			}
 			l = append(l, Color(" "+itoa(int64(s.OpenAsks))+" ask"+plural, "yellow"))
-		}
-		if s.Status == "closed" {
-			l = append(l, Dim(" closed"))
 		}
 		add(l, &Row{SID: s.SID})
 	}
@@ -202,18 +170,6 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 	for _, a := range agents {
 		here := len(sb.Rows) == sel.Cursor
 		state := Color(a.State, StateColor(a.State))
-		if g := gateText(a); g != "" {
-			// The gate matters more than the state the agent gave itself: it does no work.
-			state = Color(g, "yellow")
-		}
-		if a.Kicked {
-			// Short, so that the name stays whole: the agent's details say the rest.
-			text := "removed"
-			if lately(a.RefusedAt, now) {
-				text = "refused " + Age(a.RefusedAt, now) + " ago"
-			}
-			state = Color(text, "red")
-		}
 		wait := 0
 		if a.Waiting != nil {
 			wait = 6
@@ -223,21 +179,11 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 		if a.Online {
 			icon, color = "● ", "green"
 		}
-		mark := Seg{}
-		if a.Orchestrator {
-			// The agent that may act for the operator.
-			mark = Color("★", "cyan")
-			nameW = max(6, nameW-1)
-		}
-		l := Line{Color(icon, color), Styled(strings.TrimRight(Cut(a.Address, nameW), " "), Style{Bold: true, Inverse: here}), mark, S(" "), state}
+		l := Line{Color(icon, color), Styled(strings.TrimRight(Cut(a.Address, nameW), " "), Style{Bold: true, Inverse: here}), S(" "), state}
 		if a.Waiting != nil {
 			l = append(l, Color(" ⏳"+Age(a.Waiting.Since, now), "yellow"))
 		}
 		add(l, &Row{Address: a.Address})
-		if l := NowLine(a, now); l != nil {
-			// What the agent does at this moment. The line has no row of its own.
-			add(l, nil)
-		}
 		if lately(a.DuplicateAt, now) {
 			// A second session asked for this name and the hub refused it. It has no row of
 			// its own: its address is this agent's.

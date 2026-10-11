@@ -131,17 +131,9 @@ func (t *Transcript) message(v *model.Session, m *model.Msg, o Options) {
 	if m.ReplyTo != "" {
 		quote := "↩ #" + m.ReplyTo
 		if p := v.Msgs[m.ReplyTo]; p != nil {
-			text := p.Text
-			if p.Redacted {
-				text = "[withdrawn]"
-			}
-			quote += " " + p.From + ": " + text
+			quote += " " + p.From + ": " + p.Text
 		}
 		t.add(Line{S(indent), Styled(quote, Style{Color: "cyan", Dim: true})}, "", o)
-	}
-	if m.Redacted {
-		t.add(Line{S(indent), Dim("[withdrawn]")}, "", o)
-		return
 	}
 	for _, line := range Wrap(m.Text, o.Width-len(indent)) {
 		t.add(Line{S(indent), S(line)}, "", o)

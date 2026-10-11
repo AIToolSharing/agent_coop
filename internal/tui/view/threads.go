@@ -45,12 +45,8 @@ func RenderThreads(v *model.Session, o Options) Rendered {
 		}
 		add(head, m.ID)
 		pad := strings.Repeat(" ", Width(prefix)+2)
-		if m.Redacted {
-			add(Line{S(pad), Dim("[withdrawn]")}, "")
-		} else {
-			for _, line := range Wrap(m.Text, o.Width-Width(pad)) {
-				add(Line{S(pad), S(line)}, "")
-			}
+		for _, line := range Wrap(m.Text, o.Width-Width(pad)) {
+			add(Line{S(pad), S(line)}, "")
 		}
 		for _, c := range m.Replies {
 			walk(c, depth+1)

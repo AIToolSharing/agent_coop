@@ -20,9 +20,8 @@ var errBadToken = errors.New("the hub refused the token")
 
 // roleKeys is the key of the credential file for the token of each role.
 var roleKeys = map[string]string{
-	wire.RoleMachine:      "COOP_TOKEN",
-	wire.RoleOperator:     "COOP_OPERATOR_TOKEN",
-	wire.RoleOrchestrator: "COOP_ORCHESTRATOR_TOKEN",
+	wire.RoleMachine:  "COOP_TOKEN",
+	wire.RoleOperator: "COOP_OPERATOR_TOKEN",
 }
 
 // hubIdentity is what the hub says of a token and of itself.
@@ -110,8 +109,6 @@ func cmdLogin(args []string, stdout, stderr io.Writer) int {
 	switch role {
 	case wire.RoleOperator:
 		fmt.Fprintln(stdout, "next:  coop tui")
-	case wire.RoleOrchestrator:
-		fmt.Fprintln(stdout, "next:  coop --orchestrator claude <session>   # an agent that may also act for the operator")
 	default:
 		fmt.Fprintln(stdout, "next:  cd <project> && coop session <name>   # put the project's agents in a session")
 		fmt.Fprintln(stdout, "       coop claude                           # Claude Code with the coop channel")

@@ -195,14 +195,9 @@ func (c *Client) dispatch(data string, lastID *string, seen map[string]map[strin
 	case "session":
 		seen["sessions"][ev.Session.SID] = true
 		return emit(model.Update{Session: ev.Session})
-	case "kick":
-		seen["sessions"][ev.Kick.Key] = true
-		return emit(model.Update{Kick: ev.Kick})
 	case "presence":
 		seen["presence"][ev.Presence.Key] = true
 		return emit(model.Update{Presence: ev.Presence})
-	case "trace":
-		return emit(model.Update{Trace: ev.Trace})
 	case "snapshot":
 		snap := &model.Snapshot{Bucket: ev.Bucket, Seen: map[string]bool{}}
 		for k := range seen[ev.Bucket] {
@@ -265,129 +260,12 @@ func (c *Client) do(ctx context.Context, method, path string, body any) error {
 
 func sessionPath(sid string) string { return "/sessions/" + url.PathEscape(sid) }
 
-func (c *Client) ListSessions(ctx context.Context) ([]wire.SessionInfo, error) {
-	res, err := c.call(ctx, http.MethodGet, "/sessions", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	var list struct {
-		Sessions []wire.SessionInfo `json:"sessions"`
-	}
-	if err := json.NewDecoder(res.Body).Decode(&list); err != nil {
-		return nil, err
-	}
-	return list.Sessions, nil
-}
-
 func (c *Client) CreateSession(ctx context.Context, sid string) error {
 	return c.do(ctx, http.MethodPost, "/sessions", map[string]string{"session": sid})
 }
 
-func (c *Client) CloseSession(ctx context.Context, sid string) error {
-	return c.do(ctx, http.MethodPost, sessionPath(sid)+"/close", nil)
-}
-
-func (c *Client) ReopenSession(ctx context.Context, sid string) error {
-	return c.do(ctx, http.MethodPost, sessionPath(sid)+"/reopen", nil)
-}
-
 func (c *Client) DeleteSession(ctx context.Context, sid string) error {
 	return c.do(ctx, http.MethodDelete, sessionPath(sid), nil)
-}
-
-// Agent is one agent of a session as GET /v1/admin/sessions/{sid} gives it.
-type Agent struct {
-	Name      string `json:"name"`
-	Online    bool   `json:"online"`
-	State     string `json:"state"`
-	Note      string `json:"note,omitempty"`
-	Gate      string `json:"gate"`
-	WaitingOn string `json:"waiting_on,omitempty"`
-	Role      string `json:"role,omitempty"`
-}
-
-// Session is a session with its agents.
-type Session struct {
-	wire.SessionInfo
-	Agents []Agent `json:"agents"`
-}
-
-// Session gives a session with its agents.
-func (c *Client) Session(ctx context.Context, sid string) (Session, error) {
-	var s Session
-	res, err := c.call(ctx, http.MethodGet, sessionPath(sid), nil)
-	if err != nil {
-		return s, err
-	}
-	defer res.Body.Close()
-	err = json.NewDecoder(res.Body).Decode(&s)
-	return s, err
-}
-
-// Message is one message of a session.
-type Message struct {
-	ID      string `json:"id"`
-	From    string `json:"from"`
-	To      string `json:"to"`
-	Text    string `json:"text"`
-	ReplyTo string `json:"reply_to,omitempty"`
-	SentAt  string `json:"sent_at"`
-}
-
-// Messages gives the messages of a session, also those between two agents, oldest first.
-// With after (a message id), it gives the first limit messages after it; with "", the newest
-// limit.
-func (c *Client) Messages(ctx context.Context, sid, after string, limit int) ([]Message, error) {
-	q := url.Values{"limit": {strconv.Itoa(limit)}}
-	if after != "" {
-		q.Set("after", after)
-	}
-	res, err := c.call(ctx, http.MethodGet, sessionPath(sid)+"/messages?"+q.Encode(), nil)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	var list struct {
-		Messages []Message `json:"messages"`
-	}
-	err = json.NewDecoder(res.Body).Decode(&list)
-	return list.Messages, err
-}
-
-// Kick keeps an agent out of a session. target is an address.
-func (c *Client) Kick(ctx context.Context, sid, target string) error {
-	return c.do(ctx, http.MethodPost, sessionPath(sid)+"/kick", map[string]string{"target": target})
-}
-
-// Unkick lets a kicked agent back in.
-func (c *Client) Unkick(ctx context.Context, sid, target string) error {
-	return c.do(ctx, http.MethodPost, sessionPath(sid)+"/unkick", map[string]string{"target": target})
-}
-
-// SetGate sets whether an agent may work: run or paused. An empty target means every
-// agent of the session.
-func (c *Client) SetGate(ctx context.Context, sid, target, gate string) error {
-	body := map[string]string{"gate": gate}
-	if target != "" {
-		body["target"] = target
-	}
-	return c.do(ctx, http.MethodPost, sessionPath(sid)+"/gate", body)
-}
-
-// Forget drops an agent that left from a session's lists. The agent may join again.
-func (c *Client) Forget(ctx context.Context, sid, target string) error {
-	return c.do(ctx, http.MethodPost, sessionPath(sid)+"/forget", map[string]string{"target": target})
-}
-
-// Redact withdraws a message. It gives false when id is not a message of this session.
-func (c *Client) Redact(ctx context.Context, sid, id string) (bool, error) {
-	err := c.do(ctx, http.MethodPost, sessionPath(sid)+"/redact", map[string]string{"id": id})
-	var apiErr *APIError
-	if errors.As(err, &apiErr) && apiErr.Status == 404 {
-		return false, nil
-	}
-	return err == nil, err
 }
 
 // Send writes a message as the operator. to is Broadcast or a peer; replyTo may be empty.

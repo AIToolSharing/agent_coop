@@ -5,9 +5,8 @@ package shim
 //  2. an open wait whose filter matches,
 //  3. a push into the session (channel), when push is on,
 //  4. the queue, for inbox and later wait calls.
-// Notices (removed, closed, reopened, withdrawn) follow the same order, without step 1.
-// A peer_left notice only ends the asks and the filtered waits on that peer. It goes nowhere
-// else, so that presence changes never wake an agent that did not wait for that peer.
+// A notice (peer_left) only ends the asks and the filtered waits on that peer. It goes
+// nowhere else, so that presence changes never wake an agent that did not wait for that peer.
 //
 // The inbox does no I/O and starts no timer. The caller gives it the push and the delivery
 // report as functions, and limits each wait with its own timer (see pending.stop).
@@ -51,8 +50,6 @@ type inboxOptions struct {
 	onDelivered func(id, via string)
 	// cap is the queue size; the oldest items go first when it is full. Zero means 1000.
 	cap int
-	// onQueued, when set, is called after an item went to the queue.
-	onQueued func()
 }
 
 // askResult ends an ask: the answer, or the asked peer left. A timeout is the zero value.
@@ -146,7 +143,7 @@ func (b *inbox) accept(it item) {
 		}
 	}
 	for i, w := range b.waiters {
-		if w.from == "" || it.notice != nil || matchesPeer(w.from, it.from()) {
+		if w.from == "" || matchesPeer(w.from, it.from()) {
 			b.waiters = slices.Delete(b.waiters, i, i+1)
 			w.c <- []item{it}
 			b.mu.Unlock()
@@ -169,16 +166,6 @@ func (b *inbox) accept(it item) {
 		b.queue = slices.Clone(b.queue[n-b.o.cap:])
 	}
 	b.mu.Unlock()
-	if b.o.onQueued != nil {
-		b.o.onQueued()
-	}
-}
-
-// peek gives a copy of the queue, oldest first. The queue does not change.
-func (b *inbox) peek() []item {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return slices.Clone(b.queue)
 }
 
 // take gives everything queued, oldest first. The queue is then empty.
@@ -191,12 +178,12 @@ func (b *inbox) take() []item {
 	return items
 }
 
-// wait starts a wait for the next item from peer from ("" for any peer). A notice always
-// matches. A queued item that matches ends the wait at once.
+// wait starts a wait for the next item from peer from ("" for any peer). A queued item that
+// matches ends the wait at once.
 func (b *inbox) wait(from string) *pending[[]item] {
 	b.mu.Lock()
 	i := slices.IndexFunc(b.queue, func(it item) bool {
-		return from == "" || it.notice != nil || matchesPeer(from, it.from())
+		return from == "" || matchesPeer(from, it.from())
 	})
 	if i >= 0 {
 		it := b.queue[i]

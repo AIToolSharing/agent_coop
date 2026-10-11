@@ -1,8 +1,6 @@
 package api
 
-// The request checks of packages/core/src/api.ts, by hand. The served document carries the
-// same rules; the contract test (Schemathesis, positive and negative data) checks that the
-// two agree. A check here that the document does not state is a bug in one of the two.
+// The request checks, by hand: each field of each request, at the trust boundary of the hub.
 
 import (
 	"bytes"
@@ -38,7 +36,7 @@ func isPeerInput(s string) bool {
 }
 
 func isRecipientInput(s string) bool {
-	return s == wire.Broadcast || s == wire.Operator || s == wire.Any || isPeerInput(s)
+	return s == wire.Broadcast || s == wire.Operator || isPeerInput(s)
 }
 
 func isWaitTargetInput(s string) bool { return s == wire.Operator || isPeerInput(s) }
@@ -68,26 +66,6 @@ func (o *optString) UnmarshalJSON(b []byte) error {
 		return errors.New("null is not allowed")
 	}
 	o.set = true
-	return json.Unmarshal(b, &o.val)
-}
-
-// optBool is an optional true or false. As with optString, a null is not an absent field.
-type optBool struct{ val bool }
-
-func (o *optBool) UnmarshalJSON(b []byte) error {
-	if string(b) == "null" {
-		return errors.New("null is not allowed")
-	}
-	return json.Unmarshal(b, &o.val)
-}
-
-// optInt is an optional integer.
-type optInt struct{ val int64 }
-
-func (o *optInt) UnmarshalJSON(b []byte) error {
-	if string(b) == "null" {
-		return errors.New("null is not allowed")
-	}
 	return json.Unmarshal(b, &o.val)
 }
 
@@ -121,6 +99,7 @@ func query(q url.Values, keys ...string) (map[string]string, error) {
 // --- Agent routes ----------------------------------------------------------------------------
 
 func parseStreamQuery(q url.Values) (hub.StreamQuery, error) {
+	// gated is a parameter of an older shim (v0.10.0 and before). It changes nothing now.
 	m, err := query(q, "agent", "instance", "host", "cwd", "client_name", "client_version", "gated")
 	if err != nil {
 		return hub.StreamQuery{}, err
@@ -138,12 +117,6 @@ func parseStreamQuery(q url.Values) (hub.StreamQuery, error) {
 		return s, invalid("instance: not a UUID")
 	case runes(s.Host) > 256, runes(s.Cwd) > 4096, runes(s.ClientName) > 64, runes(s.ClientVersion) > 64:
 		return s, invalid("a query value is too long")
-	}
-	if gated, ok := m["gated"]; ok {
-		if !oneOf(gated, "0", "1") {
-			return s, invalid("gated: 0 or 1")
-		}
-		s.Gated = gated == "1"
 	}
 	return s, nil
 }
@@ -181,100 +154,6 @@ func parseHistoryQuery(q url.Values) (hub.HistoryQuery, error) {
 	return h, nil
 }
 
-// parseAllMessagesQuery reads the paging of GET /v1/admin/sessions/{sid}/messages: after, a
-// message id, and limit, 1 to 200 (default 50).
-func parseAllMessagesQuery(q url.Values) (hub.AllMessagesQuery, error) {
-	m, err := query(q, "after", "limit")
-	if err != nil {
-		return hub.AllMessagesQuery{}, err
-	}
-	r := hub.AllMessagesQuery{Limit: 50}
-	if after, ok := m["after"]; ok {
-		if !wire.IsID(after) {
-			return r, invalid("after: not a message id")
-		}
-		r.After, _ = strconv.ParseInt(after, 10, 64)
-	}
-	if limit, ok := m["limit"]; ok {
-		n, err := strconv.Atoi(limit)
-		if err != nil || n < 1 || n > 200 {
-			return r, invalid("limit: an integer from 1 to 200")
-		}
-		r.Limit = n
-	}
-	return r, nil
-}
-
-// parseAgentBody reads a body that holds only the agent name.
-func parseAgentBody(body []byte) (string, error) {
-	var b struct {
-		Agent string `json:"agent"`
-	}
-	if err := decodeStrict(body, &b); err != nil {
-		return "", err
-	}
-	if !wire.IsAgentName(b.Agent) {
-		return "", invalid("agent: not a valid agent name")
-	}
-	return b.Agent, nil
-}
-
-// maxTraceMS is the longest run of a tool call that a report may give: one day.
-const maxTraceMS = 86_400_000
-
-type traceItemBody struct {
-	Kind   string    `json:"kind"`
-	ID     optString `json:"id"`
-	Tool   optString `json:"tool"`
-	Text   optString `json:"text"`
-	Failed optBool   `json:"failed"`
-	MS     optInt    `json:"ms"`
-	File   optString `json:"file"`
-	Final  optBool   `json:"final"`
-	Before optString `json:"before"`
-}
-
-type traceBody struct {
-	Agent  string          `json:"agent"`
-	Branch optString       `json:"branch"`
-	Items  []traceItemBody `json:"items"`
-}
-
-func parseTrace(body []byte) (hub.TraceRequest, error) {
-	var b traceBody
-	if err := decodeStrict(body, &b); err != nil {
-		return hub.TraceRequest{}, err
-	}
-	r := hub.TraceRequest{Agent: b.Agent, Branch: b.Branch.val}
-	switch {
-	case !wire.IsAgentName(r.Agent):
-		return r, invalid("agent: not a valid agent name")
-	case runes(r.Branch) > 256:
-		return r, invalid("branch: at most 256 characters")
-	case len(b.Items) < 1 || len(b.Items) > wire.MaxTraceItems:
-		return r, invalid("items: 1 to 20 items")
-	}
-	for _, it := range b.Items {
-		switch {
-		case !wire.IsTraceKind(it.Kind):
-			return r, invalid("kind: tool_start, tool_end, say or prompt")
-		case runes(it.ID.val) > wire.MaxTraceName, runes(it.Tool.val) > wire.MaxTraceName, runes(it.Before.val) > wire.MaxTraceName:
-			return r, invalid("id, tool and before: at most 128 characters")
-		case runes(it.Text.val) > wire.MaxTraceText:
-			return r, invalid("text: at most 2000 characters")
-		case runes(it.File.val) > wire.MaxTracePath:
-			return r, invalid("file: at most 1024 characters")
-		case it.MS.val < 0 || it.MS.val > maxTraceMS:
-			return r, invalid("ms: an integer from 0 to 86400000")
-		}
-		r.Items = append(r.Items, wire.TraceItem{
-			Kind: it.Kind, ID: it.ID.val, Tool: it.Tool.val, Text: it.Text.val,
-			Failed: it.Failed.val, MS: it.MS.val, File: it.File.val, Final: it.Final.val, Before: it.Before.val,
-		})
-	}
-	return r, nil
-}
-
 type sendBody struct {
 	Agent   string    `json:"agent"`
 	To      string    `json:"to"`
@@ -292,7 +171,7 @@ func parseSend(body []byte) (hub.SendRequest, error) {
 	case !wire.IsAgentName(r.Agent):
 		return r, invalid("agent: not a valid agent name")
 	case !isRecipientInput(r.To):
-		return r, invalid("to: all, any, operator, or a peer")
+		return r, invalid("to: all, operator, or a peer")
 	case !isText(r.Text):
 		return r, invalid("text: 1 to 8000 characters")
 	case b.ReplyTo.set && !wire.IsID(r.ReplyTo):
@@ -401,55 +280,6 @@ func parseCreateSession(body []byte) (sid, title string, err error) {
 	return b.Session, b.Title.val, nil
 }
 
-func parseTarget(body []byte) (wire.Address, error) {
-	var b struct {
-		Target string `json:"target"`
-	}
-	if err := decodeStrict(body, &b); err != nil {
-		return wire.Address{}, err
-	}
-	a, ok := wire.ParseAddress(b.Target)
-	if !ok {
-		return a, invalid("target: not an address agent@machine")
-	}
-	return a, nil
-}
-
-// parseGate reads a gate change. No target means every agent of the session.
-func parseGate(body []byte) (target *wire.Address, gate string, err error) {
-	var b struct {
-		Target optString `json:"target"`
-		Gate   string    `json:"gate"`
-	}
-	if err := decodeStrict(body, &b); err != nil {
-		return nil, "", err
-	}
-	if !wire.IsGate(b.Gate) {
-		return nil, "", invalid("gate: run, held or paused")
-	}
-	if b.Target.set {
-		a, ok := wire.ParseAddress(b.Target.val)
-		if !ok {
-			return nil, "", invalid("target: not an address agent@machine")
-		}
-		target = &a
-	}
-	return target, b.Gate, nil
-}
-
-func parseRedact(body []byte) (string, error) {
-	var b struct {
-		ID string `json:"id"`
-	}
-	if err := decodeStrict(body, &b); err != nil {
-		return "", err
-	}
-	if !wire.IsID(b.ID) {
-		return "", invalid("id: not a message id")
-	}
-	return b.ID, nil
-}
-
 type operatorSendBody struct {
 	To      string    `json:"to"`
 	Text    string    `json:"text"`
@@ -463,8 +293,8 @@ func parseOperatorSend(body []byte) (hub.OperatorSendRequest, error) {
 	}
 	r := hub.OperatorSendRequest{To: b.To, Text: b.Text, ReplyTo: b.ReplyTo.val}
 	switch {
-	case r.To != wire.Broadcast && r.To != wire.Any && !isPeerInput(r.To):
-		return r, invalid("to: all, any, or a peer")
+	case r.To != wire.Broadcast && !isPeerInput(r.To):
+		return r, invalid("to: all, or a peer")
 	case !isText(r.Text):
 		return r, invalid("text: 1 to 8000 characters")
 	case b.ReplyTo.set && !wire.IsID(r.ReplyTo):

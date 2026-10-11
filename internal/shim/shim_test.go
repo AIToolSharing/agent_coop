@@ -648,12 +648,10 @@ func TestInboxDrainsTheQueueAndReportsPulls(t *testing.T) {
 	joined(t, b)
 	m1 := b.json("send", map[string]any{"to": "alice", "text": "one"})
 	m2 := b.json("send", map[string]any{"to": "all", "text": "two"})
-	h.redact("s", fmt.Sprint(m1["id"]))
-	eventually(t, "three items are queued", func() bool { return a.json("status", nil)["unread"] == float64(3) })
+	eventually(t, "two items are queued", func() bool { return a.json("status", nil)["unread"] == float64(2) })
 	expect(t, a.json("inbox", nil), map[string]any{
 		"messages": []any{map[string]any{"id": m1["id"], "text": "one"}, map[string]any{"id": m2["id"], "text": "two"}},
-		"notices": []any{map[string]any{"kind": "redacted", "id": m1["id"],
-			"text": fmt.Sprintf("The user withdrew message %s. Disregard what it said.", m1["id"])}},
+		"notices":  []any{},
 	})
 	if got := a.tool("inbox", nil).text; got != "{\n \"messages\": [],\n \"notices\": []\n}" {
 		t.Fatalf("a second inbox %q", got)
@@ -692,7 +690,7 @@ func TestStatusListsPeersWithTheirState(t *testing.T) {
 		t.Fatalf("set_state %v", got)
 	}
 	expect(t, a.json("status", nil), map[string]any{
-		"joined": true, "session": "s", "session_open": true, "me": "alice@mac-1",
+		"joined": true, "session": "s", "me": "alice@mac-1",
 		"peers":  []any{map[string]any{"name": "bob@vps-2", "state": "blocked", "note": "need the schema", "online": true}},
 		"unread": 0,
 	})
@@ -766,68 +764,7 @@ func TestBadArgumentsAreReportedToTheAgent(t *testing.T) {
 	}
 }
 
-// --- operator actions as the agent sees them -------------------------------------------------
-
-func TestKickGivesANoticeThenEveryToolSaysRemoved(t *testing.T) {
-	h := newFakeHub(t)
-	h.createSession("s")
-	b := start(t, options(h, "vps-2", "s", "bob", true))
-	joined(t, b)
-	h.kick("s", "bob@vps-2")
-	eventually(t, "bob gets the kicked notice", func() bool {
-		return slices.ContainsFunc(b.pushes(), func(p push) bool { return p.Meta["notice"] == noticeKicked })
-	})
-	p := b.pushes()[0]
-	want := push{Content: "The user removed you from the shared session. You can no longer send or receive messages.", Meta: map[string]string{"kind": "notice", "notice": "kicked"}}
-	if fmt.Sprint(p) != fmt.Sprint(want) {
-		t.Fatalf("push %+v", p)
-	}
-	eventually(t, "status says removed", func() bool { return b.json("status", nil)["reason"] == "removed from session" })
-	if r := b.tool("send", map[string]any{"to": "all", "text": "x"}); !r.isError || r.text != "removed from session" {
-		t.Fatalf("send %+v", r)
-	}
-}
-
-func TestCloseAndReopenGiveNoticesAndSendingFailsWhileClosed(t *testing.T) {
-	h := newFakeHub(t)
-	h.createSession("s")
-	a := start(t, options(h, "mac-1", "s", "alice", true))
-	joined(t, a)
-	h.setOpen("s", false)
-	eventually(t, "alice gets the closed notice", func() bool {
-		return slices.ContainsFunc(a.pushes(), func(p push) bool { return p.Meta["notice"] == noticeClosed })
-	})
-	if r := a.tool("send", map[string]any{"to": "all", "text": "x"}); !r.isError || r.text != "session closed" {
-		t.Fatalf("send %+v", r)
-	}
-	expect(t, a.json("status", nil), map[string]any{"session_open": false})
-	h.setOpen("s", true)
-	eventually(t, "alice gets the reopened notice", func() bool {
-		return slices.ContainsFunc(a.pushes(), func(p push) bool { return p.Meta["notice"] == noticeReopened })
-	})
-	if r := a.tool("send", map[string]any{"to": "all", "text": "x"}); r.isError {
-		t.Fatalf("send %+v", r)
-	}
-}
-
-func TestRedactTellsTheAgentToDisregardTheMessage(t *testing.T) {
-	h := newFakeHub(t)
-	h.createSession("s")
-	a := start(t, options(h, "mac-1", "s", "alice", false))
-	b := start(t, options(h, "vps-2", "s", "bob", true))
-	joined(t, a)
-	joined(t, b)
-	id := fmt.Sprint(a.json("send", map[string]any{"to": "bob", "text": "wrong numbers"})["id"])
-	eventually(t, "bob gets the message", func() bool {
-		return slices.ContainsFunc(b.pushes(), func(p push) bool { return p.Meta["id"] == id })
-	})
-	h.redact("s", id)
-	eventually(t, "bob gets the redacted notice", func() bool {
-		return slices.ContainsFunc(b.pushes(), func(p push) bool {
-			return p.Meta["notice"] == noticeRedacted && p.Meta["id"] == id && strings.Contains(p.Content, "withdrew message "+id)
-		})
-	})
-}
+// --- the operator as the agent sees it -------------------------------------------------------
 
 func TestOperatorMessageArrivesFromOperator(t *testing.T) {
 	h := newFakeHub(t)
@@ -838,74 +775,6 @@ func TestOperatorMessageArrivesFromOperator(t *testing.T) {
 	eventually(t, "alice gets the operator's message", func() bool {
 		return slices.ContainsFunc(a.pushes(), func(p push) bool { return p.Meta["from"] == "operator" && p.Content == "stop and report" })
 	})
-}
-
-// The operator holds, pauses and releases an agent. The agent must know its gate from status,
-// and must be told each change with what to do, also while it sits in wait.
-func TestTheGateShowsInStatusAndArrivesAsANotice(t *testing.T) {
-	h := newFakeHub(t)
-	h.createSession("s")
-	h.mu.Lock()
-	h.sessions["s"].gate = "held"
-	h.mu.Unlock()
-	b := start(t, options(h, "vps-2", "s", "bob", true))
-	s := joined(t, b)
-	if s["gate"] != "held" || !strings.Contains(fmt.Sprint(s["gate_note"]), "You are held") {
-		t.Fatalf("status of a held agent: %v", s)
-	}
-	if q := h.lastQuery(); strings.Contains(q, "gated") {
-		t.Fatalf("an agent that was not started with the gate says gated: %s", q)
-	}
-	h.gate("s", "bob@vps-2", noticeReleased)
-	eventually(t, "bob gets the released notice", func() bool {
-		return slices.ContainsFunc(b.pushes(), func(p push) bool { return p.Meta["notice"] == noticeReleased })
-	})
-	if p := b.pushes()[0]; p.Content != "The user released you. You may work now." {
-		t.Fatalf("push %+v", p)
-	}
-	if s := b.json("status", nil); s["gate"] != "run" || s["gate_note"] != nil {
-		t.Fatalf("status after the release: %v", s)
-	}
-	h.gate("s", "bob@vps-2", noticePaused)
-	eventually(t, "status says paused", func() bool { return b.json("status", nil)["gate"] == "paused" })
-	if note := fmt.Sprint(b.json("status", nil)["gate_note"]); !strings.Contains(note, "paused you") || !strings.Contains(note, "`wait`") {
-		t.Fatalf("gate note %q", note)
-	}
-}
-
-// An agent that `coop claude` started tells the service that its tool calls go through the
-// gate. A service of an earlier version sends no gate with the join: that counts as run.
-func TestAGatedAgentSaysSoAndAJoinWithNoGateCountsAsRun(t *testing.T) {
-	h := newFakeHub(t)
-	h.createSession("s")
-	o := options(h, "vps-2", "s", "bob", false)
-	o.Gated = true
-	b := start(t, o)
-	if s := joined(t, b); s["gate"] != "run" {
-		t.Fatalf("status %v", s)
-	}
-	if q := h.lastQuery(); !strings.Contains(q, "gated=1") {
-		t.Fatalf("join query %s", q)
-	}
-}
-
-// The gate hook in the user's settings gates every Claude Code session, also one that
-// `coop claude` did not start. Another MCP client has no such hook: it must not say gated.
-func TestTheSettingsHookGatesClaudeCodeOnly(t *testing.T) {
-	h := newFakeHub(t)
-	h.createSession("s")
-	o := options(h, "vps-2", "s", "bob", false)
-	o.HookInSettings = true
-	joined(t, startAs(t, o, "claude-code"))
-	if q := h.lastQuery(); !strings.Contains(q, "gated=1") {
-		t.Fatalf("claude-code with the hook in the settings: %s", q)
-	}
-	o = options(h, "vps-2", "s", "carol", false)
-	o.HookInSettings = true
-	joined(t, startAs(t, o, "codex"))
-	if q := h.lastQuery(); strings.Contains(q, "gated") {
-		t.Fatalf("another client says gated: %s", q)
-	}
 }
 
 // --- opacity ---------------------------------------------------------------------------------
@@ -921,19 +790,10 @@ func TestNothingAnAgentSeesNamesHowTheServiceWorks(t *testing.T) {
 			t.Fatalf("the description of %s names the service", name)
 		}
 	}
-	for _, kind := range []string{noticeKicked, noticeClosed, noticeReopened, noticeRedacted, noticePeerLeft, noticeHeld, noticePaused, noticeReleased} {
-		if text := noticeText(notice{Kind: kind, ID: "1", Peer: "a@m"}); text == "" || forbiddenRE.MatchString(text) {
-			t.Fatalf("notice %s: %q", kind, text)
-		}
+	if text := noticeText(notice{Kind: noticePeerLeft, Peer: "a@m"}); text != "a@m left the session." {
+		t.Fatalf("notice: %q", text)
 	}
-	// A release because the orchestrator left says so, and sends the agent to the user.
-	if text := noticeText(notice{Kind: noticeReleased, Peer: "pm@orch"}); !strings.Contains(text, "pm@orch left") || !strings.Contains(text, "ask the user") {
-		t.Fatalf("release by a leave: %q", text)
-	}
-	if text := noticeText(notice{Kind: noticeReleased}); text != "The user released you. You may work now." {
-		t.Fatalf("release by the user: %q", text)
-	}
-	for _, l := range []link{{kind: linkJoining}, {kind: linkNoSession}, {kind: linkClosed}, {kind: linkRemoved}, {kind: linkRefused}, {kind: linkUnreachable}} {
+	for _, l := range []link{{kind: linkJoining}, {kind: linkRefused}, {kind: linkTaken, me: "dev"}, {kind: linkUnreachable}} {
 		if text := reason(false, l); text == "" || forbiddenRE.MatchString(text) {
 			t.Fatalf("reason %s: %q", l.kind, text)
 		}
@@ -954,13 +814,11 @@ func TestNothingAnAgentSeesNamesHowTheServiceWorks(t *testing.T) {
 	b.json("wait", map[string]any{"timeout_s": 1})
 	b.json("ask", map[string]any{"to": "alice", "text": "x", "timeout_s": 1})
 	b.tool("send", map[string]any{"to": "all", "text": ""})
-	h.setOpen("s", false)
-	h.setOpen("s", true)
-	eventually(t, "alice gets the notices", func() bool { return len(a.pushes()) >= 4 })
+	eventually(t, "alice gets the pushes", func() bool { return len(a.pushes()) >= 2 })
 	a.mu.Lock()
 	n := len(a.seen)
 	a.mu.Unlock()
-	if n < 8 {
+	if n < 6 {
 		t.Fatalf("alice saw only %d texts", n)
 	}
 }

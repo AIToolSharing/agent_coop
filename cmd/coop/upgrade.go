@@ -82,7 +82,7 @@ func cmdUpgrade(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	cfg := config.Load(environ(), config.DefaultEnvFile(), func(string) {}, cwd())
-	token := cmp.Or(cfg.Token, cfg.OperatorToken, cfg.OrchestratorToken)
+	token := cmp.Or(cfg.Token, cfg.OperatorToken)
 	if cfg.URL == "" || token == "" {
 		fmt.Fprintln(stderr, "no hub address or no token: run coop login <url> <token>")
 		return 1
@@ -141,7 +141,8 @@ func cmdUpgrade(args []string, stdout, stderr io.Writer) int {
 		return fail(err)
 	}
 	fmt.Fprintf(stdout, "coop %s -> %s in %s\n", version, me.Version, exe)
-	// The hooks and the skill come from the binary: the new one writes its own.
+	// The skill comes from the binary: the new one writes its own, and removes the hooks of an
+	// older coop.
 	if _, err := lookPath("claude"); err != nil {
 		fmt.Fprintln(stdout, "Claude Code is not on the PATH: no setup")
 	} else {

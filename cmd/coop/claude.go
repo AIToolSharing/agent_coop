@@ -20,10 +20,9 @@ import (
 // defaultChannel is the channel entry for a server registered with `claude mcp add`.
 const defaultChannel = "server:coop"
 
-// claudeCommand builds the Claude Code command line: the channel flag, the settings that hold
-// the hooks of coop, then the user's arguments. A first argument that is a session name selects
-// the session for this run. settings "" adds no settings.
-func claudeCommand(args []string, env map[string]string, settings string) (session string, argv []string, err error) {
+// claudeCommand builds the Claude Code command line: the channel flag, then the user's
+// arguments. A first argument that is a session name selects the session for this run.
+func claudeCommand(args []string, env map[string]string) (session string, argv []string) {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") && wire.IsToken(args[0]) {
 		session, args = args[0], args[1:]
 	}
@@ -32,31 +31,15 @@ func claudeCommand(args []string, env map[string]string, settings string) (sessi
 		channel = defaultChannel
 	}
 	argv = []string{"claude", "--dangerously-load-development-channels", channel}
-	if settings != "" {
-		for _, a := range args {
-			if a == "--settings" || strings.HasPrefix(a, "--settings=") {
-				// Claude Code takes one --settings. A second one would drop the gate or the
-				// user's settings without a word.
-				return "", nil, errors.New("coop claude sets --settings itself, for the operator's gate; put your settings in a settings file of the project or the user, or start with COOP_GATE=off claude")
-			}
-		}
-		argv = append(argv, "--settings", settings)
-	}
-	return session, append(argv, args...), nil
+	return session, append(argv, args...)
 }
 
 // launchEnv gives the environment of the Claude Code process. It names the session and the
-// agent, so that the shim and the gate hook of this process read the same two values, in
-// whatever directory the agent works later. role is "" for an agent, or orchestrator. With
-// no role it removes COOP_ROLE: an agent that an orchestrator starts with
-// `coop claude` must not take the orchestrator's role from its environment.
-func launchEnv(env map[string]string, session, role string, cfg func(map[string]string) config.Config) []string {
+// agent, so that the shim of this process reads the same two values in whatever directory the
+// agent works later.
+func launchEnv(env map[string]string, session string, cfg func(map[string]string) config.Config) []string {
 	env = maps.Clone(env)
-	env["COOP_PUSH"], env["COOP_GATED"] = "1", "1"
-	delete(env, "COOP_ROLE")
-	if role != "" {
-		env["COOP_ROLE"] = role
-	}
+	env["COOP_PUSH"] = "1"
 	if session != "" {
 		env["COOP_SESSION"] = session
 	}
@@ -71,37 +54,16 @@ func launchEnv(env map[string]string, session, role string, cfg func(map[string]
 	return out
 }
 
-// cmdClaude starts Claude Code with the coop channel and the gate hook. Pushes reach the
-// session only through the channel flag during the research preview of channels. The hook
-// asks the hub before each tool call whether the operator lets the agent work.
+// cmdClaude starts Claude Code with the coop channel. Pushes reach the session only through
+// the channel flag during the research preview of channels.
 func cmdClaude(args []string, stderr io.Writer) int {
-	// The settings file of the user can hold the hooks already (coop setup). A second copy
-	// from --settings would ask the hub two times for each tool call. So --settings gets only
-	// the hooks that the file does not have.
-	settings := ""
-	exe := executable()
-	if missing := hooksMissing(readUserSettings(), exe); len(missing) > 0 {
-		settings = hookSettings(exe, missing)
-	}
-	session, argv, err := claudeCommand(args, environ(), settings)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 2
-	}
-	if launchRole != "" {
-		env := environ()
-		env["COOP_ROLE"] = launchRole
-		if cfg := config.Load(env, config.DefaultEnvFile(), func(string) {}, cwd()); cfg.Token == "" {
-			fmt.Fprintf(stderr, "no %s token (COOP_ORCHESTRATOR_TOKEN): coop login <url> <%s token>\n", launchRole, launchRole)
-			return 1
-		}
-	}
+	session, argv := claudeCommand(args, environ())
 	path, err := exec.LookPath("claude")
 	if err != nil {
 		fmt.Fprintln(stderr, "claude is not on the PATH: install Claude Code first")
 		return 1
 	}
-	env := launchEnv(environ(), session, launchRole, func(env map[string]string) config.Config {
+	env := launchEnv(environ(), session, func(env map[string]string) config.Config {
 		return config.Load(env, config.DefaultEnvFile(), func(string) {}, cwd())
 	})
 	return replaceProcess(path, argv, env, stderr)

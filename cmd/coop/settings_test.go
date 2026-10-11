@@ -1,8 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,8 +12,6 @@ import (
 
 	"pgregory.net/rapid"
 )
-
-const exeA, exeB = "/home/u/.local/bin/coop", "/opt/coop/coop"
 
 func keysOf(t interface{ Fatalf(string, ...any) }, raw []byte) []string {
 	ms, err := members(raw)
@@ -32,66 +30,70 @@ func sameJSON(a, b []byte) bool {
 	return json.Unmarshal(a, &x) == nil && json.Unmarshal(b, &y) == nil && reflect.DeepEqual(x, y)
 }
 
-// The settings of this user on 2026-10-03, in short: hooks of other tools, and other keys.
+// oldGroup is an entry that coop v0.10.0 put into the settings for `coop hook <arg>`.
+func oldGroup(exe, arg string) map[string]any {
+	return map[string]any{"matcher": "", "hooks": []any{map[string]any{"type": "command", "command": "'" + exe + "' hook " + arg, "timeout": 30}}}
+}
+
+// The settings of this user on 2026-10-03, in short, with the hooks of coop v0.10.0: hooks of
+// other tools, and other keys.
 const userSettings = `{
   "model": "opus",
   "hooks": {
     "SessionStart": [{"hooks": [{"type": "command", "command": "bash '/Users/u/.claude/hooks/agent-state.sh' session"}]}],
     "PreToolUse": [
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "jq -re '.tool_input.command'"}]},
-      {"hooks": [{"type": "command", "command": "/Users/u/.cargo/bin/tokensave"}]}
+      {"hooks": [{"type": "command", "command": "/Users/u/.cargo/bin/tokensave"}]},
+      {"matcher": "", "hooks": [{"type": "command", "command": "'/Users/u/.local/bin/coop' hook pretool", "timeout": 30}]}
     ],
-    "Stop": [{"hooks": [{"type": "command", "command": "$HOME/.claude/hooks/verify-done.sh"}]}]
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "$HOME/.claude/hooks/verify-done.sh"}]},
+      {"matcher": "", "hooks": [{"type": "command", "command": "'/Users/u/.local/bin/coop' hook stop", "timeout": 10}]}
+    ],
+    "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "'/Users/u/.local/bin/coop' hook posttool", "timeout": 10}]}],
+    "PostToolUseFailure": [{"matcher": "", "hooks": [{"type": "command", "command": "'/Users/u/.local/bin/coop' hook posttool", "timeout": 10}]}],
+    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "'/Users/u/.local/bin/coop' hook prompt", "timeout": 10}]}]
   },
   "permissions": {"allow": ["Bash(ls:*)"]},
   "env": {"A": "1"}
 }`
 
-func TestInstallHookAddsOneEntryAndKeepsTheRest(t *testing.T) {
-	out, changed, err := installHook([]byte(userSettings), exeA)
+func TestRemoveHooksTakesOnlyTheEntriesOfCoop(t *testing.T) {
+	out, changed, err := removeHooks([]byte(userSettings))
 	if err != nil || !changed {
 		t.Fatalf("changed %v err %v", changed, err)
 	}
-	if !hookInstalled(out, exeA) || hookInstalled(out, exeB) || hookInstalled([]byte(userSettings), exeA) {
-		t.Fatalf("hookInstalled is wrong for\n%s", out)
+	if strings.Contains(string(out), " hook ") {
+		t.Fatalf("an entry of coop is left:\n%s", out)
 	}
 	if got := keysOf(t, out); strings.Join(got, ",") != "model,hooks,permissions,env" {
 		t.Fatalf("top-level keys %v", got)
 	}
 	top, _ := members(out)
-	if got := keysOf(t, get(top, "hooks")); strings.Join(got, ",") != "SessionStart,PreToolUse,Stop,PostToolUse,PostToolUseFailure,UserPromptSubmit" {
+	if got := keysOf(t, get(top, "hooks")); strings.Join(got, ",") != "SessionStart,PreToolUse,Stop" {
 		t.Fatalf("hook events %v", got)
 	}
-	var groups []json.RawMessage
-	hooks, _ := members(get(top, "hooks"))
-	if err := json.Unmarshal(get(hooks, "PreToolUse"), &groups); err != nil || len(groups) != 3 {
-		t.Fatalf("PreToolUse: %v %s", err, get(hooks, "PreToolUse"))
+	for _, other := range []string{"agent-state.sh", "jq -re", "tokensave", "verify-done.sh", "Bash(ls:*)"} {
+		if !strings.Contains(string(out), other) {
+			t.Fatalf("%s is gone:\n%s", other, out)
+		}
 	}
-	want, _ := json.Marshal(gateGroup(exeA))
-	if !sameJSON(groups[2], want) || !strings.Contains(string(groups[0]), "jq -re") || !strings.Contains(string(groups[1]), "tokensave") {
-		t.Fatalf("PreToolUse entries %s", groups)
-	}
-	// A second run changes nothing; the bytes are the same.
-	again, changed, err := installHook(out, exeA)
-	if err != nil || changed || !bytes.Equal(again, out) {
+	// A second run changes nothing.
+	if again, changed, err := removeHooks(out); err != nil || changed || string(again) != string(out) {
 		t.Fatalf("second run: changed %v err %v", changed, err)
 	}
-	// Another path of the binary replaces the hook: one gate hook, not two.
-	moved, changed, err := installHook(out, exeB)
-	if err != nil || !changed || !hookInstalled(moved, exeB) || hookInstalled(moved, exeA) || strings.Count(string(moved), "hook pretool") != 1 {
-		t.Fatalf("moved binary: changed %v err %v\n%s", changed, err, moved)
+	// Settings with only the hooks of coop lose the hooks key.
+	only := `{"model":"opus","hooks":{"PreToolUse":[{"matcher":"","hooks":[{"type":"command","command":"'/opt/coop' hook pretool","timeout":30}]}]}}`
+	if out, changed, err := removeHooks([]byte(only)); err != nil || !changed || strings.Join(keysOf(t, out), ",") != "model" {
+		t.Fatalf("changed %v err %v\n%s", changed, err, out)
 	}
-}
-
-func TestInstallHookIntoNoFileAndRefusesWhatIsNotAnObject(t *testing.T) {
-	for _, empty := range []string{"", "  \n", "{}"} {
-		out, changed, err := installHook([]byte(empty), exeA)
-		if err != nil || !changed || !hookInstalled(out, exeA) || !bytes.HasSuffix(out, []byte("}\n")) {
-			t.Fatalf("%q: changed %v err %v out %s", empty, changed, err, out)
+	for _, none := range []string{"", "{}", `{"hooks":{}}`, `{"model":"opus"}`} {
+		if out, changed, err := removeHooks([]byte(none)); err != nil || changed || string(out) != none {
+			t.Fatalf("%q: changed %v err %v out %q", none, changed, err, out)
 		}
 	}
 	for _, bad := range []string{"[]", `"text"`, "{", `{"hooks": []}`, `{"hooks": {"PreToolUse": {}}}`, `{} {}`} {
-		if out, _, err := installHook([]byte(bad), exeA); err == nil {
+		if out, _, err := removeHooks([]byte(bad)); err == nil {
 			t.Fatalf("%q: no error, out %s", bad, out)
 		}
 	}
@@ -120,170 +122,138 @@ func jsonValue(depth int) *rapid.Generator[any] {
 	})
 }
 
-// For any settings object: the hook is there after the install, a second install changes
-// nothing, every other key keeps its place and its value, and the other PreToolUse entries
-// keep their order before the new one.
-func TestInstallHookKeepsAnySettings(t *testing.T) {
+// For any settings object: put the entries of coop into it as an old setup did, at any place
+// of any event, then remove them. The result is the settings object as it was, with each key
+// in its place. (An empty hooks object of the user is not kept: removeHooks cannot tell it
+// from the one that an old setup made.)
+func TestRemoveHooksUndoesAnOldSetup(t *testing.T) {
+	events := []string{"PreToolUse", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit", "Stop", "SessionStart"}
+	others := []string{"/bin/tokensave", "jq -re .x", "/other/tool hook pretool", "coop-lookalike --hook"}
 	rapid.Check(t, func(rt *rapid.T) {
-		var top []member
+		// The settings of the user: other keys, and maybe hooks of other tools.
+		var orig []member
+		var withCoop []member
 		seen := map[string]bool{}
-		add := func(key string, v any) {
-			if seen[key] {
-				return
-			}
-			seen[key] = true
-			raw, _ := json.Marshal(v)
-			top = append(top, member{key, raw})
-		}
 		n := rapid.IntRange(0, 4).Draw(rt, "keys")
 		hooksAt := rapid.IntRange(-1, n).Draw(rt, "hooksAt")
-		var before []any
+		coopHooks := func(user map[string][]any, order []string) json.RawMessage {
+			// Add the entries of coop: at a random place of an event of the user, or as a new
+			// event at the end.
+			var ms []member
+			added := map[string]bool{}
+			for _, ev := range order {
+				list := append([]any{}, user[ev]...)
+				if rapid.Bool().Draw(rt, "coop in "+ev) {
+					at := rapid.IntRange(0, len(list)).Draw(rt, "at")
+					list = append(list[:at], append([]any{oldGroup(fmt.Sprint("/p", at, "/coop"), "pretool")}, list[at:]...)...)
+				}
+				raw, _ := json.Marshal(list)
+				ms = append(ms, member{ev, raw})
+				added[ev] = true
+			}
+			for _, ev := range events {
+				if !added[ev] && rapid.Bool().Draw(rt, "new "+ev) {
+					raw, _ := json.Marshal([]any{oldGroup("/home/u/.local/bin/coop", rapid.SampledFrom(oldHookArgs).Draw(rt, "arg"))})
+					ms = append(ms, member{ev, raw})
+				}
+			}
+			return object(ms)
+		}
 		for i := 0; i <= n; i++ {
 			if i == hooksAt {
-				hooks := map[string]any{}
-				if rapid.Bool().Draw(rt, "pre") {
-					k := rapid.IntRange(0, 3).Draw(rt, "groups")
-					for j := 0; j < k; j++ {
-						cmd := rapid.SampledFrom([]string{"/bin/tokensave", "jq -re .x", "'/old/coop' hook pretool", "/other/tool hook pretool"}).Draw(rt, "cmd")
-						before = append(before, map[string]any{"matcher": "", "hooks": []any{map[string]any{"type": "command", "command": cmd}}})
+				user := map[string][]any{}
+				var order []string
+				first := rapid.IntRange(0, len(events)-1).Draw(rt, "first")
+				for i, ev := range events {
+					if i == first || rapid.Bool().Draw(rt, "user "+ev) {
+						for range rapid.IntRange(1, 3).Draw(rt, "groups") {
+							cmd := rapid.SampledFrom(others).Draw(rt, "cmd")
+							user[ev] = append(user[ev], map[string]any{"matcher": "", "hooks": []any{map[string]any{"type": "command", "command": cmd}}})
+						}
+						order = append(order, ev)
 					}
-					hooks["PreToolUse"] = before
 				}
-				if rapid.Bool().Draw(rt, "stop") {
-					hooks["Stop"] = []any{}
+				var ms []member
+				for _, ev := range order {
+					raw, _ := json.Marshal(user[ev])
+					ms = append(ms, member{ev, raw})
 				}
-				add("hooks", hooks)
+				orig = append(orig, member{"hooks", object(ms)})
+				withCoop = append(withCoop, member{"hooks", coopHooks(user, order)})
+				seen["hooks"] = true
 				continue
 			}
-			add(rapid.StringMatching(`[a-z]{1,8}`).Draw(rt, "key"), jsonValue(2).Draw(rt, "value"))
+			key := rapid.StringMatching(`[a-z]{1,8}`).Draw(rt, "key")
+			if seen[key] || key == "hooks" {
+				continue
+			}
+			seen[key] = true
+			raw, _ := json.Marshal(jsonValue(2).Draw(rt, "value"))
+			orig = append(orig, member{key, raw})
+			withCoop = append(withCoop, member{key, raw})
 		}
-		in := object(top)
-		out, changed, err := installHook(in, exeA)
-		if err != nil || !changed || !hookInstalled(out, exeA) {
-			rt.Fatalf("changed %v err %v\nin  %s\nout %s", changed, err, in, out)
-		}
-		if again, changed, err := installHook(out, exeA); err != nil || changed || !bytes.Equal(again, out) {
-			rt.Fatalf("second install: changed %v err %v", changed, err)
-		}
-		got, _ := members(out)
-		wantKeys := keysOf(rt, in)
 		if !seen["hooks"] {
-			wantKeys = append(wantKeys, "hooks")
-		}
-		if !reflect.DeepEqual(keysOf(rt, out), wantKeys) {
-			rt.Fatalf("keys %v, want %v", keysOf(rt, out), wantKeys)
-		}
-		for _, m := range top {
-			if m.key != "hooks" && !sameJSON(get(got, m.key), m.value) {
-				rt.Fatalf("key %s changed: %s -> %s", m.key, m.value, get(got, m.key))
+			if h := coopHooks(nil, nil); string(h) != "{}" {
+				withCoop = append(withCoop, member{"hooks", h})
 			}
 		}
-		// The entries of other tools stay, in order; an old gate hook of coop goes.
-		var want []any
-		for _, g := range before {
-			if cmd := g.(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string); cmd != "'/old/coop' hook pretool" {
-				want = append(want, g)
-			}
+		in := object(withCoop)
+		out, _, err := removeHooks(in)
+		if err != nil {
+			rt.Fatalf("err %v\nin %s", err, in)
 		}
-		var ours any
-		raw, _ := json.Marshal(gateGroup(exeA))
-		_ = json.Unmarshal(raw, &ours)
-		want = append(want, ours)
-		hooks, _ := members(get(got, "hooks"))
-		var have []any
-		if err := json.Unmarshal(get(hooks, "PreToolUse"), &have); err != nil || !reflect.DeepEqual(have, want) {
-			rt.Fatalf("PreToolUse\n got %v\nwant %v", have, want)
+		want := object(orig)
+		if !sameJSON(out, want) || !reflect.DeepEqual(keysOf(rt, out), keysOf(rt, want)) {
+			rt.Fatalf("\nin   %s\nout  %s\nwant %s", in, out, want)
+		}
+		if strings.Contains(string(out), "' hook ") {
+			rt.Fatalf("an entry of coop is left: %s", out)
 		}
 	})
 }
 
-func TestInstallHookFileKeepsACopyAndTheMode(t *testing.T) {
+func TestRemoveHookFileKeepsTheModeAndTheRest(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "sub", "settings.json")
-	// No file yet: the file and its directory are made; there is nothing to copy.
-	if changed, err := installHookFile(path, exeA); err != nil || !changed {
+	path := filepath.Join(dir, "settings.json")
+	// No file: nothing to do, and no file is made.
+	if changed, err := removeHookFile(path); err != nil || changed {
 		t.Fatalf("changed %v err %v", changed, err)
 	}
-	if _, err := os.Stat(path + ".before-coop"); !os.IsNotExist(err) {
-		t.Fatalf("a copy of no file: %v", err)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("a file was made: %v", err)
 	}
-	// A file of the user, mode 0600: the copy holds the old text, the mode stays.
 	if err := os.WriteFile(path, []byte(userSettings), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if changed, err := installHookFile(path, exeA); err != nil || !changed {
+	if changed, err := removeHookFile(path); err != nil || !changed {
 		t.Fatalf("changed %v err %v", changed, err)
 	}
 	info, _ := os.Stat(path)
-	copyText, _ := os.ReadFile(path + ".before-coop")
 	now, _ := os.ReadFile(path)
-	// Windows has no Unix file modes: only the copy and the hook are checked there.
-	if (info.Mode().Perm() != 0o600 && runtime.GOOS != "windows") || string(copyText) != userSettings || !hookInstalled(now, exeA) {
-		t.Fatalf("mode %v, copy equal %v, installed %v", info.Mode().Perm(), string(copyText) == userSettings, hookInstalled(now, exeA))
+	// Windows has no Unix file modes: only the text is checked there.
+	if (info.Mode().Perm() != 0o600 && runtime.GOOS != "windows") || strings.Contains(string(now), " hook ") || !strings.Contains(string(now), "verify-done.sh") {
+		t.Fatalf("mode %v\n%s", info.Mode().Perm(), now)
 	}
-	// A second run changes nothing. A later change keeps the first copy.
-	if changed, err := installHookFile(path, exeA); err != nil || changed {
+	if changed, err := removeHookFile(path); err != nil || changed {
 		t.Fatalf("second run: changed %v err %v", changed, err)
-	}
-	if changed, err := installHookFile(path, exeB); err != nil || !changed {
-		t.Fatalf("moved binary: changed %v err %v", changed, err)
-	}
-	if again, _ := os.ReadFile(path + ".before-coop"); string(again) != userSettings {
-		t.Fatal("the copy of the first file was replaced")
 	}
 	// A file that is not an object stays as it is.
 	bad := filepath.Join(dir, "bad.json")
 	_ = os.WriteFile(bad, []byte("not json"), 0o644)
-	if _, err := installHookFile(bad, exeA); err == nil {
+	if _, err := removeHookFile(bad); err == nil {
 		t.Fatal("no error for a file that is not JSON")
 	}
 	if text, _ := os.ReadFile(bad); string(text) != "not json" {
 		t.Fatalf("the bad file changed: %q", text)
 	}
 	// No temporary file is left.
-	entries, _ := os.ReadDir(filepath.Dir(path))
+	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), ".settings-") {
 			t.Fatalf("left over: %s", e.Name())
 		}
-	}
-}
-
-// A machine with coop v0.4.0 has only the gate hook in its settings. The next `coop setup`
-// adds the hooks that report what the agent does, and leaves one gate hook. Until then,
-// `coop claude` gives the hooks that the file does not have with --settings, and no others:
-// a hook that is there two times would run two times.
-func TestHooksOfAnOlderSetupAreCompleted(t *testing.T) {
-	old := `{"hooks":{"PreToolUse":[{"matcher":"","hooks":[{"type":"command","command":"'/home/u/.local/bin/coop' hook pretool","timeout":30}]}]}}`
-	missing := hooksMissing([]byte(old), exeA)
-	var events []string
-	for _, e := range missing {
-		events = append(events, e.event)
-	}
-	if strings.Join(events, ",") != "PostToolUse,PostToolUseFailure,UserPromptSubmit,Stop" || !hookInstalled([]byte(old), exeA) {
-		t.Fatalf("missing %v, gate hook installed %v", events, hookInstalled([]byte(old), exeA))
-	}
-	if s := hookSettings(exeA, missing); strings.Contains(s, "PreToolUse") || strings.Count(s, " hook ") != 4 {
-		t.Fatalf("settings for coop claude: %s", s)
-	}
-	out, changed, err := installHook([]byte(old), exeA)
-	if err != nil || !changed || len(hooksMissing(out, exeA)) != 0 || strings.Count(string(out), "hook pretool") != 1 {
-		t.Fatalf("changed %v err %v\n%s", changed, err, out)
-	}
-	// No settings: each hook is missing. The binary at another path: each hook is replaced.
-	if n := len(hooksMissing(nil, exeA)); n != len(hookEvents) {
-		t.Fatalf("%d hooks missing with no settings, want %d", n, len(hookEvents))
-	}
-	moved, changed, err := installHook(out, exeB)
-	if err != nil || !changed || len(hooksMissing(moved, exeB)) != 0 || strings.Contains(string(moved), exeA) {
-		t.Fatalf("moved binary: changed %v err %v\n%s", changed, err, moved)
-	}
-	// The Stop hook of another tool stays, before the hook of coop.
-	withStop, _, err := installHook([]byte(userSettings), exeA)
-	if err != nil || !strings.Contains(string(withStop), "verify-done.sh") || strings.Index(string(withStop), "verify-done.sh") > strings.Index(string(withStop), "hook stop") {
-		t.Fatalf("err %v\n%s", err, withStop)
 	}
 }

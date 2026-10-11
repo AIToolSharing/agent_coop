@@ -28,16 +28,14 @@ const AllSessions = "*"
 type Update struct {
 	Event    *wire.Event
 	Session  *wire.SessionUpdate
-	Kick     *wire.KickUpdate
 	Presence *wire.PresenceUpdate
-	Trace    *wire.TraceUpdate
 	Snapshot *Snapshot
 	Link     Link
 }
 
 // Snapshot says that the feed has sent every current entry of a bucket since it connected:
-// entries of that bucket that are not in Seen are gone. The sessions bucket holds session ids
-// and kick keys; the presence bucket holds presence keys.
+// entries of that bucket that are not in Seen are gone. The sessions bucket holds session ids;
+// the presence bucket holds presence keys.
 type Snapshot struct {
 	Bucket string // sessions or presence
 	Seen   map[string]bool
@@ -45,16 +43,15 @@ type Snapshot struct {
 
 // Msg is one message. Replies are the messages that answer it, in sequence order.
 type Msg struct {
-	ID       string
-	Seq      int64
-	SID      string
-	From     string
-	To       string
-	Text     string
-	ReplyTo  string
-	SentAt   string
-	Redacted bool
-	Replies  []*Msg
+	ID      string
+	Seq     int64
+	SID     string
+	From    string
+	To      string
+	Text    string
+	ReplyTo string
+	SentAt  string
+	Replies []*Msg
 }
 
 // Waiting is what an agent waits for.
@@ -72,33 +69,16 @@ type Agent struct {
 	Cwd        string
 	Client     string
 	Online     bool
-	Kicked     bool
 	State      string // working blocked done idle left unknown
 	StateSince string
 	Note       string
 	Waiting    *Waiting
 	Sent       int
 	JoinedAt   string
-	// RefusedAt is the time of the last join that the hub refused because the operator removed
-	// the agent; "" for none.
-	RefusedAt string
 	// DuplicateAt is the time of the last join that the hub refused because this agent holds
 	// the name: a second session asked for it. "" for none, and after a later join.
 	DuplicateAt string
 	Left        *Left
-	// Forgotten is true from the time the operator dropped the agent from the lists until the
-	// agent joins again.
-	Forgotten bool
-	// Gate is whether the operator lets the agent work: run, held or paused.
-	Gate string
-	// Gated is true while the agent is online and its tool calls go through the gate. An
-	// agent that is not gated only gets the gate as advice.
-	Gated bool
-	// Orchestrator is true while the agent is online with an orchestrator token: it may also
-	// act for the operator.
-	Orchestrator bool
-	// Trace is what the agent did at its terminal lately. Never nil.
-	Trace *Trace
 	// FirstSeq is the sequence of the agent's first event: the order agents are listed in.
 	FirstSeq int64
 
@@ -148,21 +128,20 @@ type Session struct {
 	// Version changes whenever the view changes, so renderers can cache.
 	Version int
 	// Reshaped changes when something already in the timeline changes: an item inserted
-	// before the end, or a message withdrawn. A renderer that only appends must start over.
+	// before the end, or a reply added to a message. A renderer that only appends must start
+	// over.
 	Reshaped int
 
 	store    *Store
 	all      bool
 	msgs     []*Msg
 	children map[string][]*Msg
-	redacted map[string]bool
 	forYou   map[string]*Msg
 }
 
 // Store holds the raw facts and the views over them.
 type Store struct {
 	Sessions map[string]*wire.SessionRecord
-	Kicks    map[string]*wire.KickRecord
 	Presence map[string]*wire.PresenceRecord
 	Link     Link
 	// Version changes on every update.
@@ -172,22 +151,16 @@ type Store struct {
 	events    map[int64]*wire.Event
 	views     map[string]*Session
 	all       *Session
-	// traces holds the trace of each agent, by presence key. boot names the run of the hub
-	// that the traces are of.
-	traces map[string]*Trace
-	boot   int64
 }
 
 func New() *Store {
 	s := &Store{
 		Sessions:  map[string]*wire.SessionRecord{},
-		Kicks:     map[string]*wire.KickRecord{},
 		Presence:  map[string]*wire.PresenceRecord{},
 		Link:      LinkConnecting,
 		revisions: map[string]int64{},
 		events:    map[int64]*wire.Event{},
 		views:     map[string]*Session{},
-		traces:    map[string]*Trace{},
 	}
 	s.all = newSession(s, AllSessions, true)
 	return s
@@ -202,7 +175,6 @@ func newSession(st *Store, sid string, all bool) *Session {
 		store:    st,
 		all:      all,
 		children: map[string][]*Msg{},
-		redacted: map[string]bool{},
 		forYou:   map[string]*Msg{},
 	}
 }
@@ -246,8 +218,6 @@ func (s *Store) Apply(u Update) {
 		}
 	case u.Link != "":
 		s.Link = u.Link
-	case u.Trace != nil:
-		s.applyTrace(u.Trace)
 	case u.Snapshot != nil:
 		s.applySnapshot(u.Snapshot)
 	case u.Session != nil:
@@ -263,23 +233,6 @@ func (s *Store) Apply(u Update) {
 			if !known {
 				s.admitToAll(u.Session.SID)
 			}
-		}
-	case u.Kick != nil:
-		if s.stale("kick:"+u.Kick.Key, u.Kick.Revision) {
-			return
-		}
-		k, ok := wire.ParseSessionsKey(u.Kick.Key)
-		if !ok || k.Kind != "kick" {
-			return
-		}
-		if u.Kick.Record == nil {
-			delete(s.Kicks, u.Kick.Key)
-		} else {
-			s.Kicks[u.Kick.Key] = u.Kick.Record
-		}
-		for _, v := range s.viewsOf(k.SID) {
-			v.agent(k.SID, k.Target.String(), math.MaxInt64).Kicked = u.Kick.Record != nil
-			v.Version++
 		}
 	case u.Presence != nil:
 		if s.stale("presence:"+u.Presence.Key, u.Presence.Revision) {
@@ -309,11 +262,6 @@ func (s *Store) applySnapshot(snap *Snapshot) {
 		for sid := range s.Sessions {
 			if !snap.Seen[sid] {
 				s.Apply(Update{Session: &wire.SessionUpdate{SID: sid}})
-			}
-		}
-		for key := range s.Kicks {
-			if !snap.Seen[key] {
-				s.Apply(Update{Kick: &wire.KickUpdate{Key: key}})
 			}
 		}
 	case "presence":
@@ -349,7 +297,7 @@ func (s *Store) viewsOf(sid string) []*Session {
 }
 
 // admitToAll replays what is known about a session into the all view, once the session has a
-// record: its events in sequence order, then its presence and kick records.
+// record: its events in sequence order, then its presence records.
 func (s *Store) admitToAll(sid string) {
 	var seqs []int64
 	for seq, e := range s.events {
@@ -368,16 +316,6 @@ func (s *Store) admitToAll(sid string) {
 			a.refresh()
 		}
 	}
-	for key := range s.Kicks {
-		if k, ok := wire.ParseSessionsKey(key); ok && k.Kind == "kick" && k.SID == sid {
-			s.all.agent(k.SID, k.Target.String(), math.MaxInt64).Kicked = true
-		}
-	}
-	for key := range s.traces {
-		if k, ok := wire.ParsePresenceKey(key); ok && k.SID == sid {
-			s.all.agent(k.SID, k.Agent.String(), math.MaxInt64)
-		}
-	}
 	s.all.Version++
 }
 
@@ -387,11 +325,6 @@ func (s *Store) deleteSession(sid string) {
 	for seq, e := range s.events {
 		if e.SID == sid {
 			delete(s.events, seq)
-		}
-	}
-	for key := range s.traces {
-		if k, ok := wire.ParsePresenceKey(key); ok && k.SID == sid {
-			delete(s.traces, key)
 		}
 	}
 	version := s.all.Version + 1
@@ -414,11 +347,8 @@ func (v *Session) agent(sid, address string, seq int64) *Agent {
 	key := v.agentKey(sid, address)
 	a := v.Agents[key]
 	if a == nil {
-		a = &Agent{Address: address, SID: sid, State: "unknown", dState: "unknown", Gate: wire.GateRun, FirstSeq: math.MaxInt64, Trace: &Trace{}}
+		a = &Agent{Address: address, SID: sid, State: "unknown", dState: "unknown", FirstSeq: math.MaxInt64}
 		if addr, ok := wire.ParseAddress(address); ok {
-			a.Trace = v.store.trace(wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: addr}))
-			kick := wire.BuildSessionsKey(wire.SessionsKey{Kind: "kick", SID: sid, Target: addr})
-			a.Kicked = v.store.Kicks[kick] != nil
 			if rec := v.store.Presence[wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: addr})]; rec != nil {
 				a.live = rec
 				a.refresh()
@@ -439,7 +369,6 @@ func (v *Session) applyEvent(e *wire.Event) {
 	switch e.Kind {
 	case wire.EventMsg:
 		m := &Msg{ID: idOf(e.Seq), Seq: e.Seq, SID: e.SID, From: e.From, To: e.To, Text: e.Text, ReplyTo: e.ReplyTo, SentAt: e.SentAt}
-		m.Redacted = v.redacted[m.ID]
 		m.Replies = v.children[m.ID]
 		v.Msgs[m.ID] = m
 		v.msgs = insertMsg(v.msgs, m)
@@ -460,22 +389,12 @@ func (v *Session) applyEvent(e *wire.Event) {
 				q.Answered = true
 			}
 		}
-		if e.To == wire.Operator && !m.Redacted && !v.hasReplyFrom(m.ID, wire.Operator) {
+		if e.To == wire.Operator && !v.hasReplyFrom(m.ID, wire.Operator) {
 			v.forYou[m.ID] = m
 		}
 		if q := v.Asks[m.ID]; q != nil {
 			q.Question = m
 		}
-	case wire.EventKick:
-		v.insertItem(Item{Seq: e.Seq, At: e.At, SID: e.SID, Sys: &Sys{Who: e.Target, Text: "removed by " + actor(e.By)}})
-	case wire.EventRedact:
-		v.redacted[e.ID] = true
-		if m := v.Msgs[e.ID]; m != nil {
-			m.Redacted = true
-			v.Reshaped++
-		}
-		delete(v.forYou, e.ID)
-		v.insertItem(Item{Seq: e.Seq, At: e.At, SID: e.SID, Sys: &Sys{Who: wire.Operator, Text: "withdrew message #" + e.ID}})
 	case wire.EventActivity:
 		x := e.Activity
 		a := v.agent(e.SID, e.From, e.Seq)
@@ -514,40 +433,9 @@ func (v *Session) applyEvent(e *wire.Event) {
 		case "wait_end":
 			sys("wait ended: " + x.Result)
 		case "refused":
-			if x.Reason == "taken" {
-				sys("is in use: a second session tried to join with this name and waits (coop --agent <name> claude gives it its own)")
-			} else {
-				sys("tried to join; it is removed (:allow lets it back)")
-			}
-		case "forgotten":
-			sys("forgotten by the operator")
-		case "gate":
-			switch x.Gate {
-			case wire.GateHeld:
-				if x.By != "" {
-					sys("held by " + actor(x.By))
-				} else {
-					sys("is held until the orchestrator releases it")
-				}
-			case wire.GatePaused:
-				sys("paused by " + actor(x.By))
-			default:
-				if x.Reason == "orchestrator_left" {
-					sys("released: its orchestrator " + x.From + " left the session")
-				} else {
-					sys("released by " + actor(x.By))
-				}
-			}
+			sys("is in use: a second session tried to join with this name and waits (coop --agent <name> claude gives it its own)")
 		}
 	}
-}
-
-// actor names who made an admin change: the operator, or the orchestrator token by.
-func actor(by string) string {
-	if by == "" {
-		return "the operator"
-	}
-	return "the orchestrator " + by
 }
 
 // hasReplyFrom reports whether a reply to id from `from` is known.
@@ -638,10 +526,8 @@ func (a *Agent) addEvent(seq int64, x *wire.Activity) {
 
 // derive replays the agent's events in sequence order, as the TS model did for all events.
 func (a *Agent) derive() {
-	a.Host, a.Cwd, a.Client, a.JoinedAt, a.RefusedAt, a.DuplicateAt = "", "", "", "", "", ""
+	a.Host, a.Cwd, a.Client, a.JoinedAt, a.DuplicateAt = "", "", "", "", ""
 	a.Left = nil
-	a.Forgotten = false
-	a.Gate = wire.GateRun
 	a.dState, a.dSince, a.dNote, a.dWaiting = "unknown", "", "", nil
 	for _, ev := range a.evts {
 		x := ev.a
@@ -650,7 +536,6 @@ func (a *Agent) derive() {
 			a.Host, a.Cwd, a.JoinedAt = x.Host, x.Cwd, x.At
 			a.Client = x.Client.Name + " " + x.Client.Version
 			a.Left = nil
-			a.Forgotten = false
 			a.DuplicateAt = ""
 			if a.dState == "left" || a.dState == "unknown" {
 				a.dState, a.dSince = "idle", x.At
@@ -665,17 +550,7 @@ func (a *Agent) derive() {
 		case "wait_end":
 			a.dWaiting = nil
 		case "refused":
-			if x.Reason == "taken" {
-				a.DuplicateAt = x.At
-			} else {
-				a.RefusedAt = x.At
-			}
-		case "forgotten":
-			// The hub knows nothing of the agent now: its next join starts with a new gate.
-			a.Forgotten = true
-			a.Gate = wire.GateRun
-		case "gate":
-			a.Gate = x.Gate
+			a.DuplicateAt = x.At
 		}
 	}
 	a.refresh()
@@ -684,12 +559,11 @@ func (a *Agent) derive() {
 // refresh sets the effective fields: the live presence record wins while the agent is online.
 func (a *Agent) refresh() {
 	if a.live == nil {
-		a.Online, a.Gated, a.Orchestrator = false, false, false
+		a.Online = false
 		a.State, a.Note, a.StateSince, a.Waiting = a.dState, a.dNote, a.dSince, a.dWaiting
 		return
 	}
-	a.Online, a.Gated = true, a.live.Gated
-	a.Orchestrator = a.live.Role == wire.RoleOrchestrator
+	a.Online = true
 	a.State, a.Note, a.StateSince = a.live.State, a.live.Note, a.dSince
 	a.Waiting = nil
 	if w := a.live.Waiting; w != nil {
