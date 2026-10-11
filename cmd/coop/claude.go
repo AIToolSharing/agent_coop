@@ -69,9 +69,8 @@ func cmdClaude(args []string, stderr io.Writer) int {
 	return replaceProcess(path, argv, env, stderr)
 }
 
-// replaceProcess runs the program at path in place of coop, for `coop claude` and for the SSH
-// of `coop start`. It returns only when the program does not start or, on Windows, with the
-// exit code of the program.
+// replaceProcess runs the program at path in place of coop, for `coop claude`. It returns only
+// when the program does not start or, on Windows, with the exit code of the program.
 func replaceProcess(path string, argv, env []string, stderr io.Writer) int {
 	if runtime.GOOS == "windows" {
 		// Windows has no exec(2): run the program as a child on the same console and

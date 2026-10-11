@@ -22,8 +22,6 @@ const usageText = `usage:
   coop claude [<session>] [args]  start Claude Code with the coop channel
   coop --agent <name> claude ...  the same, as the agent <name> (default: the name in .coop,
                                   then the directory name)
-  coop start [-n] [-u <user>] [-a <agent>] <machine> <directory> <session> [claude args]
-                                  start an agent on another machine over SSH
   coop tui [--url <url>] [--token <token>]
                                   watch and steer all sessions (operator token)
   coop setup                      register coop with Claude Code and install the skill
@@ -72,8 +70,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdSession(args[1:], stdout, stderr)
 	case "claude":
 		return cmdClaude(args[1:], stderr)
-	case "start":
-		return cmdStart(args[1:], stdout, stderr)
 	case "tui":
 		return cmdTUI(args[1:], stderr)
 	case "setup":
