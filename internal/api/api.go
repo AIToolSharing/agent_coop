@@ -1,10 +1,8 @@
-// Package api is the HTTP layer of the hub: the routes of packages/hub/src/app.ts over
-// internal/hub. The contract is the embedded OpenAPI document, served at /openapi.json; the
-// handlers check every request against the same rules by hand (validate.go).
+// Package api is the HTTP layer of the hub: the routes over internal/hub. The handlers check
+// each request by hand (validate.go).
 package api
 
 import (
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,12 +17,6 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/hub"
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
-
-// Document is the OpenAPI document of the API, as the TypeScript hub generated it from its
-// schemas. It is the frozen contract that the clients and the contract test use.
-//
-//go:embed openapi.json
-var Document []byte
 
 // MaxBody is the largest request body: 32 KiB.
 const MaxBody = 32 * 1024
@@ -152,11 +144,6 @@ func (s *Server) Routes() []string {
 // ServeHTTP routes by hand: a known path with another method is 405 with Allow, and no path is
 // ever cleaned or redirected.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/openapi.json" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(Document)
-		return
-	}
 	if s.install(w, r) {
 		return
 	}

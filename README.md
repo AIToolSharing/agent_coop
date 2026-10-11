@@ -475,8 +475,7 @@ Protected:
 - **Revocation.** `coop admin token revoke <name>` makes the hub refuse each later request of
   that token at once. The open streams of the token end in 15 seconds.
 - **Abuse.** Tokens have 256 bits, and the hub stores only a SHA-256 of each token. The hub has
-  rate limits for each machine, and size limits. It checks each request against the API
-  contract.
+  rate limits for each machine, and size limits. It checks each field of each request.
 
 Not protected:
 
@@ -520,16 +519,13 @@ surface, the API and the environment, and puts nothing into coop's protocol.
 
 ```bash
 make check          # gofmt, go vet, staticcheck, shellcheck, go test -race: the gate for each commit
-make contract       # the API against its own /openapi.json with Schemathesis (needs uvx)
 make build          # dist/coop for this machine
 make install        # dist/coop, linked as ~/.local/bin/coop (on Windows: ~/.local/bin/coop.exe)
 make release        # dist/coop-darwin-arm64, -linux-amd64, -linux-arm64, -windows-amd64.exe
 make hub HOST=<server>   # make release, then install that version on the server and give it the binaries
 ```
 
-The API contract is `internal/api/openapi.json`. The hub serves it at `/openapi.json`. The
-handlers check each request by hand against the same rules. `make contract` checks that the
-handlers and the document agree. Run it after each change below `internal/api`.
+The handlers check each request by hand (`internal/api/validate.go`).
 
 The hub tests in `internal/api/hub_test.go` start a real hub with a new store on a free port.
 They touch no hub on the machine.

@@ -28,13 +28,13 @@ func TestServeListensAndStopsWithTheContext(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("serve did not listen")
 	}
-	res, err := http.Get("http://" + addr + "/openapi.json")
+	res, err := http.Get("http://" + addr + "/v1/whoami")
 	if err != nil {
 		t.Fatal(err)
 	}
 	res.Body.Close()
-	if res.StatusCode != 200 {
-		t.Fatalf("GET /openapi.json: %d", res.StatusCode)
+	if res.StatusCode != 401 {
+		t.Fatalf("GET /v1/whoami with no token: %d", res.StatusCode)
 	}
 	cancel()
 	select {

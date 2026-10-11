@@ -876,8 +876,3 @@ func bucketRecord[T any](raw json.RawMessage, required ...string) (*T, error) {
 	}
 	return v, nil
 }
-
-// openAPIDoc is the part of /openapi.json that the tests read.
-type openAPIDoc struct {
-	Paths map[string]json.RawMessage `json:"paths"`
-}

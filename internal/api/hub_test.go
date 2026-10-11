@@ -6,7 +6,6 @@ package api_test
 
 import (
 	"fmt"
-	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -59,7 +58,6 @@ func TestHub(t *testing.T) {
 	t.Run("session auto-create", x.autoCreate)
 	t.Run("admin API", x.adminAPI)
 	t.Run("admin feed", x.adminFeed)
-	t.Run("contract document", x.contractDocument)
 }
 
 func (x *hubSuite) authentication(t *testing.T) {
@@ -1064,35 +1062,5 @@ func (x *hubSuite) adminFeed(t *testing.T) {
 			t.Fatal(err)
 		}
 		wantStatus(t, 401)(temp.stream().result())
-	})
-}
-
-func (x *hubSuite) contractDocument(t *testing.T) {
-	// The TS name starts with "/"; a "/" in a Go subtest name adds a level, so it is left out.
-	t.Run("openapi.json lists every route", func(t *testing.T) {
-		doc := parse[openAPIDoc](t, jsonOf(fetch(x.h.base+"/openapi.json")))
-		want := []string{
-			"/v1/admin/sessions",
-			"/v1/admin/sessions/{sid}",
-			"/v1/admin/sessions/{sid}/close",
-			"/v1/admin/sessions/{sid}/forget",
-			"/v1/admin/sessions/{sid}/gate",
-			"/v1/admin/sessions/{sid}/kick",
-			"/v1/admin/sessions/{sid}/messages",
-			"/v1/admin/sessions/{sid}/redact",
-			"/v1/admin/sessions/{sid}/reopen",
-			"/v1/admin/sessions/{sid}/unkick",
-			"/v1/admin/stream",
-			"/v1/sessions/{sid}",
-			"/v1/sessions/{sid}/activity",
-			"/v1/sessions/{sid}/gate",
-			"/v1/sessions/{sid}/messages",
-			"/v1/sessions/{sid}/stream",
-			"/v1/sessions/{sid}/trace",
-			"/v1/whoami",
-		}
-		if got := slices.Sorted(maps.Keys(doc.Paths)); !slices.Equal(got, want) {
-			t.Fatalf("paths %v, want %v", got, want)
-		}
 	})
 }
