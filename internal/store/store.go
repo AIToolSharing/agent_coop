@@ -247,11 +247,11 @@ type SessionRow struct {
 	Revision int64
 }
 
-const sessionColumns = `sid, title, created_at, revision`
+const sessionColumns = `sid, created_at, revision`
 
 func scanSession(sc interface{ Scan(...any) error }) (SessionRow, error) {
 	var r SessionRow
-	err := sc.Scan(&r.SID, &r.Record.Title, &r.Record.CreatedAt, &r.Revision)
+	err := sc.Scan(&r.SID, &r.Record.CreatedAt, &r.Revision)
 	return r, err
 }
 
@@ -283,7 +283,7 @@ func (s *Store) Sessions() ([]SessionRow, error) {
 }
 
 // CreateSession makes a session. ErrExists when there is one.
-func (s *Store) CreateSession(sid, title, at string) (SessionRow, error) {
+func (s *Store) CreateSession(sid, at string) (SessionRow, error) {
 	var row SessionRow
 	err := s.tx(func(tx *sql.Tx) error {
 		var n int
@@ -297,8 +297,8 @@ func (s *Store) CreateSession(sid, title, at string) (SessionRow, error) {
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(`INSERT INTO sessions (sid, status, title, created_at, closed_at, revision) VALUES (?, 'open', ?, ?, '', ?)`, sid, title, at, rev)
-		row = SessionRow{SID: sid, Record: wire.SessionRecord{Title: title, CreatedAt: at}, Revision: rev}
+		_, err = tx.Exec(`INSERT INTO sessions (sid, status, created_at, closed_at, revision) VALUES (?, 'open', ?, '', ?)`, sid, at, rev)
+		row = SessionRow{SID: sid, Record: wire.SessionRecord{CreatedAt: at}, Revision: rev}
 		return err
 	})
 	return row, err

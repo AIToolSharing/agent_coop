@@ -23,8 +23,7 @@ const (
 // IsRole reports whether s is a token role.
 func IsRole(s string) bool { return s == RoleMachine || s == RoleOperator }
 
-// Reserved names in addressing. No agent can have them. Operator is the sender or recipient of
-// messages that an older hub kept in its log: the hub of now sends no message to or from it.
+// Reserved names in addressing. No agent can have them.
 const (
 	Operator  = "operator"
 	Broadcast = "all"
@@ -70,17 +69,14 @@ func ParseAddress(s string) (Address, bool) {
 	return Address{Agent: agent, Machine: machine}, true
 }
 
-// Subject is a subject of stream COOP: `coop.<sid>.msg|evt.<machine>.<agent>` or `coop.<sid>.ops`.
+// Subject is a subject of stream COOP: `coop.<sid>.msg|evt.<machine>.<agent>`.
 type Subject struct {
-	Kind string // msg, evt or ops
+	Kind string // msg or evt
 	SID  string
-	From Address // empty for ops
+	From Address
 }
 
 func BuildSubject(s Subject) string {
-	if s.Kind == "ops" {
-		return "coop." + s.SID + ".ops"
-	}
 	return "coop." + s.SID + "." + s.Kind + "." + s.From.Machine + "." + s.From.Agent
 }
 
@@ -88,9 +84,6 @@ func ParseSubject(subject string) (Subject, bool) {
 	t := strings.Split(subject, ".")
 	if len(t) < 3 || t[0] != "coop" || !IsToken(t[1]) {
 		return Subject{}, false
-	}
-	if len(t) == 3 && t[2] == "ops" {
-		return Subject{Kind: "ops", SID: t[1]}, true
 	}
 	if len(t) != 5 || (t[2] != "msg" && t[2] != "evt") || !IsToken(t[3]) || !IsAgentName(t[4]) {
 		return Subject{}, false
@@ -125,7 +118,6 @@ type Client struct {
 
 // SessionRecord is the record of one session.
 type SessionRecord struct {
-	Title     string `json:"title,omitempty"`
 	CreatedAt string `json:"created_at"`
 }
 
@@ -137,7 +129,7 @@ type SessionInfo struct {
 
 // Waiting is what an agent waits for, in its presence record.
 type Waiting struct {
-	On      string `json:"on,omitempty"` // a peer address (operator from an older hub)
+	On      string `json:"on,omitempty"` // a peer address
 	ReplyTo string `json:"reply_to,omitempty"`
 	Since   string `json:"since"`
 }
@@ -166,10 +158,10 @@ type Event struct {
 	Kind string
 	Seq  int64
 	SID  string
-	// From is the sender: Operator or an address for a message; an address for an activity.
+	// From is the address of the sender.
 	From string
 	// Message fields.
-	To      string // Broadcast, Operator or an address
+	To      string // Broadcast or an address
 	Text    string
 	ReplyTo string
 	SentAt  string
@@ -192,7 +184,7 @@ type Activity struct {
 	State string `json:"state,omitempty"`
 	Note  string `json:"note,omitempty"`
 	// wait_start
-	From     string `json:"from,omitempty"` // a peer address (operator from an older hub)
+	From     string `json:"from,omitempty"` // a peer address
 	ReplyTo  string `json:"reply_to,omitempty"`
 	TimeoutS int    `json:"timeout_s,omitempty"`
 	// wait_end: message timeout cancelled
@@ -206,22 +198,10 @@ type msgPayload struct {
 	SentAt  string `json:"sent_at"`
 }
 
-type opsPayload struct {
-	Kind    string `json:"kind"`
-	To      string `json:"to"`
-	Text    string `json:"text"`
-	ReplyTo string `json:"reply_to,omitempty"`
-	SentAt  string `json:"sent_at"`
-}
-
 // EncodeEvent gives the subject and the payload that carry e. The inverse of DecodeEvent.
 func EncodeEvent(e Event) (subject string, payload []byte, err error) {
 	switch e.Kind {
 	case EventMsg:
-		if e.From == Operator {
-			payload, err = json.Marshal(opsPayload{Kind: "msg", To: e.To, Text: e.Text, ReplyTo: e.ReplyTo, SentAt: e.SentAt})
-			return BuildSubject(Subject{Kind: "ops", SID: e.SID}), payload, err
-		}
 		from, ok := ParseAddress(e.From)
 		if !ok {
 			return "", nil, fmt.Errorf("wire: bad sender %q", e.From)
@@ -249,25 +229,16 @@ func strict(data []byte, v any) bool {
 	return !dec.More()
 }
 
-func isRecipient(s string) bool {
-	if s == Broadcast || s == Operator {
-		return true
-	}
-	_, ok := ParseAddress(s)
-	return ok
-}
+func isRecipient(s string) bool { return s == Broadcast || isAddress(s) }
 
-func isWaitTarget(s string) bool {
-	if s == Operator {
-		return true
-	}
+func isAddress(s string) bool {
 	_, ok := ParseAddress(s)
 	return ok
 }
 
 // DecodeEvent reads one stored event. An unknown subject or a bad payload gives false. An
-// event of a kind that this version dropped (a kick or a redact on ops, a gate or a forgotten
-// activity) gives false too: a log of an older hub holds such events.
+// event that this version dropped (a message or an action of the operator on ops, a gate or a
+// forgotten activity) gives false too: a log of an older hub holds such events.
 func DecodeEvent(subject string, payload []byte, seq int64) (Event, bool) {
 	s, ok := ParseSubject(subject)
 	if !ok {
@@ -280,12 +251,6 @@ func DecodeEvent(subject string, payload []byte, seq int64) (Event, bool) {
 			return Event{}, false
 		}
 		return Event{Kind: EventMsg, Seq: seq, SID: s.SID, From: s.From.String(), To: p.To, Text: p.Text, ReplyTo: p.ReplyTo, SentAt: p.SentAt}, true
-	case "ops":
-		var p opsPayload
-		if !strict(payload, &p) || p.Kind != "msg" || !isRecipient(p.To) || !validText(p.Text) || !optionalID(p.ReplyTo) || !IsTime(p.SentAt) {
-			return Event{}, false
-		}
-		return Event{Kind: EventMsg, Seq: seq, SID: s.SID, From: Operator, To: p.To, Text: p.Text, ReplyTo: p.ReplyTo, SentAt: p.SentAt}, true
 	case "evt":
 		var a Activity
 		if !strict(payload, &a) || !validActivity(a) {
@@ -311,12 +276,11 @@ func validActivity(a Activity) bool {
 	case "joined":
 		return a.Host != "" && a.Cwd != "" && a.Client.Name != ""
 	case "left":
-		// kicked is the reason of an older hub that could remove an agent.
-		return slices.Contains([]string{"disconnected", "kicked", "revoked", "closed"}, a.Reason)
+		return slices.Contains([]string{"disconnected", "revoked", "closed"}, a.Reason)
 	case "state":
 		return slices.Contains([]string{"working", "blocked", "done", "idle"}, a.State) && len([]rune(a.Note)) <= 500
 	case "wait_start":
-		return (a.From == "" || isWaitTarget(a.From)) && optionalID(a.ReplyTo) && a.TimeoutS >= 1 && a.TimeoutS <= 600
+		return (a.From == "" || isAddress(a.From)) && optionalID(a.ReplyTo) && a.TimeoutS >= 1 && a.TimeoutS <= 600
 	case "wait_end":
 		return slices.Contains([]string{"message", "timeout", "cancelled"}, a.Result)
 	case "refused":

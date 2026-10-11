@@ -314,25 +314,12 @@ func (h *fakeHub) history(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, historyResponse{Messages: out[max(0, len(out)-limit):]})
 }
 
-// --- The operator's actions ------------------------------------------------------------------
+// --- The test's actions --------------------------------------------------------------------
 
 func (h *fakeHub) createSession(sid string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.sessions[sid] = &fakeSession{agents: map[string]*fakeAgent{}}
-}
-
-// operatorSend writes a message as the operator and gives its id.
-func (h *fakeHub) operatorSend(sid, to, text, replyTo string) string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	s := h.sessions[sid]
-	m := message{ID: h.nextID(), From: wire.Operator, To: to, Text: text, ReplyTo: replyTo, SentAt: now()}
-	s.msgs = append(s.msgs, m)
-	s.emit(sseOut{event: "message", id: m.ID, data: m}, func(a *fakeAgent) bool {
-		return to == wire.Broadcast || to == a.addr
-	})
-	return m.ID
 }
 
 // activities gives what the agents reported, in order.

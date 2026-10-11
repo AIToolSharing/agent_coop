@@ -40,7 +40,7 @@ func RenderThreads(v *model.Session, o Options) Rendered {
 			prefix = strings.Repeat("   ", depth-1) + " └─ "
 		}
 		head := Line{Dim(prefix), Styled("#"+m.ID+" ", Style{Dim: true, Inverse: m.ID == o.Selected}),
-			Styled(m.From, Style{Bold: true, Color: SenderColor(m.From)}), S(" → " + m.To)}
+			Bold(m.From), S(" → " + m.To)}
 		add(head, m.ID)
 		pad := strings.Repeat(" ", Width(prefix)+2)
 		for _, line := range Wrap(m.Text, o.Width-Width(pad)) {

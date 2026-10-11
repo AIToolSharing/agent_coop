@@ -19,19 +19,12 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
-// defaultChannel is the channel entry for the MCP server `coop` that --mcp-config gives.
-const defaultChannel = "server:coop"
-
 // claudeCommand builds the Claude Code command line: the MCP server `coop` (exe mcp) for this
 // Claude process only, the channel flag, then the user's arguments. No other Claude session
 // loads coop. A first argument that is a session name selects the session for this run.
-func claudeCommand(args []string, env map[string]string, exe string) (session string, argv []string) {
+func claudeCommand(args []string, exe string) (session string, argv []string) {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") && wire.IsToken(args[0]) {
 		session, args = args[0], args[1:]
-	}
-	channel := env["COOP_CHANNEL"]
-	if channel == "" {
-		channel = defaultChannel
 	}
 	type server struct {
 		Command string   `json:"command"`
@@ -40,7 +33,7 @@ func claudeCommand(args []string, env map[string]string, exe string) (session st
 	// A map of strings to a struct of strings always marshals.
 	servers, _ := json.Marshal(map[string]map[string]server{"mcpServers": {"coop": {exe, []string{"mcp"}}}})
 	// --mcp-config takes each argument up to the next flag: the channel flag must follow it.
-	argv = []string{"claude", "--mcp-config", string(servers), "--dangerously-load-development-channels", channel}
+	argv = []string{"claude", "--mcp-config", string(servers), "--dangerously-load-development-channels", "server:coop"}
 	return session, append(argv, args...)
 }
 
@@ -96,7 +89,7 @@ func repoSession(dir string) (string, error) {
 // the channel flag during the research preview of channels. The session is the first
 // argument, else COOP_SESSION, else the name of the git repository (repoSession).
 func cmdClaude(args []string, stderr io.Writer) int {
-	session, argv := claudeCommand(args, environ(), executable())
+	session, argv := claudeCommand(args, executable())
 	if session == "" && os.Getenv("COOP_SESSION") == "" {
 		var err error
 		if session, err = repoSession(cwd()); err != nil {

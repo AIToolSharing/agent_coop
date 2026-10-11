@@ -213,14 +213,6 @@ func StateColor(state string) string {
 	return "gray"
 }
 
-// SenderColor marks the operator's own messages.
-func SenderColor(from string) string {
-	if from == "operator" {
-		return "yellow"
-	}
-	return ""
-}
-
 // Note is a one-line placeholder, fitted like every other line.
 func Note(text string, width int) Rendered {
 	return Rendered{Lines: []Line{Fit(Line{Dim(text)}, width)}, IDs: []string{""}}

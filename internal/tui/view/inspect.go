@@ -112,7 +112,7 @@ func RenderMessage(v *model.Session, id string, o Options) Rendered {
 		r.IDs = append(r.IDs, lid)
 	}
 	add(Line{Bold("#" + m.ID)}, "")
-	add(kv("from", m.From, Style{Color: SenderColor(m.From), Bold: true}), "")
+	add(kv("from", m.From, Style{Bold: true}), "")
 	add(kv("to", m.To, Style{}), "")
 	add(kv("sent", Stamp(m.SentAt, o.loc())+" ("+Age(m.SentAt, o.Now)+" ago)", Style{}), "")
 	if m.ReplyTo != "" {

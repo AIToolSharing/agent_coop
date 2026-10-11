@@ -379,7 +379,7 @@ func TestUnreachableServiceBacksOff(t *testing.T) {
 }
 
 func TestBadEventsAreSkipped(t *testing.T) {
-	good := message{ID: "7", From: "operator", To: "all", Text: "ok", SentAt: "2026-09-30T00:00:00.000Z"}
+	good := message{ID: "7", From: "b@m", To: "all", Text: "ok", SentAt: "2026-09-30T00:00:00.000Z"}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		openStream(w)
 		writeEvent(w, "joined", "", map[string]string{"me": "not an address", "session": "s"})
@@ -388,11 +388,14 @@ func TestBadEventsAreSkipped(t *testing.T) {
 		writeEvent(w, "message", "", message{ID: "0", From: "b@m", To: "all", Text: "x", SentAt: "2026-09-30T00:00:00.000Z"})
 		writeEvent(w, "message", "", message{ID: "2", From: "b@m", To: "all", Text: "", SentAt: "2026-09-30T00:00:00.000Z"})
 		writeEvent(w, "message", "", message{ID: "3", From: "all@m", To: "all", Text: "x", SentAt: "2026-09-30T00:00:00.000Z"})
+		// A message from operator, as the log of an older hub holds it, is no message now.
+		writeEvent(w, "message", "", message{ID: "4", From: "operator", To: "all", Text: "x", SentAt: "2026-09-30T00:00:00.000Z"})
+		writeEvent(w, "message", "", message{ID: "5", From: "b@m", To: "operator", Text: "x", SentAt: "2026-09-30T00:00:00.000Z"})
 		writeEvent(w, "notice", "", notice{Kind: "unknown", At: "2026-09-30T00:00:00.000Z"})
 		writeEvent(w, "notice", "", notice{Kind: noticePeerLeft, Peer: "b@m", At: "yesterday"})
 		writeEvent(w, "other", "", good)
 		// Two data lines make one value.
-		fmt.Fprint(w, "event: message\r\ndata: {\"id\":\"7\",\"from\":\"operator\",\"to\":\"all\",\r\ndata: \"text\":\"ok\",\"sent_at\":\"2026-09-30T00:00:00.000Z\"}\r\n\r\n")
+		fmt.Fprint(w, "event: message\r\ndata: {\"id\":\"7\",\"from\":\"b@m\",\"to\":\"all\",\r\ndata: \"text\":\"ok\",\"sent_at\":\"2026-09-30T00:00:00.000Z\"}\r\n\r\n")
 		w.(http.Flusher).Flush()
 		<-r.Context().Done()
 	}))
@@ -464,11 +467,11 @@ func TestCallsFollowTheContract(t *testing.T) {
 		t.Fatalf("activity call %+v", got)
 	}
 
-	view := `{"session":"s","me":"a@m","peers":[{"name":"b@m","state":"blocked","note":"n","waiting_on":"operator"}]}`
+	view := `{"session":"s","me":"a@m","peers":[{"name":"b@m","state":"blocked","note":"n","waiting_on":"c@m"}]}`
 	srv, calls = restHub(t, 200, view)
 	c = testClient(t, srv.URL, &recorder{})
 	v, err := c.view(ctx)
-	if err != nil || v.Me != "a@m" || len(v.Peers) != 1 || v.Peers[0].WaitingOn != "operator" {
+	if err != nil || v.Me != "a@m" || len(v.Peers) != 1 || v.Peers[0].WaitingOn != "c@m" {
 		t.Fatalf("view %+v %v", v, err)
 	}
 	if got = calls()[0]; got.method != "GET" || got.path != "/v1/sessions/s" || got.query != "agent=a" {

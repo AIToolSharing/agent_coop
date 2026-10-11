@@ -41,10 +41,7 @@ func TestAddressRejectsReservedNamesAndBadShapes(t *testing.T) {
 
 func TestSubjectRoundTrip(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
-		s := wire.Subject{Kind: rapid.SampledFrom([]string{"msg", "evt", "ops"}).Draw(rt, "kind"), SID: token.Draw(rt, "sid")}
-		if s.Kind != "ops" {
-			s.From = address().Draw(rt, "from")
-		}
+		s := wire.Subject{Kind: rapid.SampledFrom([]string{"msg", "evt"}).Draw(rt, "kind"), SID: token.Draw(rt, "sid"), From: address().Draw(rt, "from")}
 		got, ok := wire.ParseSubject(wire.BuildSubject(s))
 		if !ok || got != s {
 			rt.Fatalf("%q -> %+v %v", wire.BuildSubject(s), got, ok)
@@ -81,17 +78,9 @@ func event() *rapid.Generator[wire.Event] {
 		switch rapid.IntRange(0, 1).Draw(t, "kind") {
 		case 0:
 			e.Kind = wire.EventMsg
-			if rapid.Bool().Draw(t, "op") {
-				e.From = wire.Operator
-			} else {
-				e.From = address().Draw(t, "from").String()
-			}
-			switch rapid.IntRange(0, 2).Draw(t, "to") {
-			case 0:
-				e.To = wire.Broadcast
-			case 1:
-				e.To = wire.Operator
-			default:
+			e.From = address().Draw(t, "from").String()
+			e.To = wire.Broadcast
+			if rapid.Bool().Draw(t, "direct") {
 				e.To = address().Draw(t, "to").String()
 			}
 			e.Text = text.Draw(t, "text")
@@ -111,7 +100,7 @@ func event() *rapid.Generator[wire.Event] {
 				a.Client = wire.Client{Name: "claude-code", Version: "2.1"}
 			case 1:
 				a.Kind = "left"
-				a.Reason = rapid.SampledFrom([]string{"disconnected", "kicked", "revoked", "closed"}).Draw(t, "reason")
+				a.Reason = rapid.SampledFrom([]string{"disconnected", "revoked", "closed"}).Draw(t, "reason")
 			case 2:
 				a.Kind = "state"
 				a.State = rapid.SampledFrom([]string{"working", "blocked", "done", "idle"}).Draw(t, "state")
@@ -121,11 +110,7 @@ func event() *rapid.Generator[wire.Event] {
 			case 3:
 				a.Kind = "wait_start"
 				if rapid.Bool().Draw(t, "from?") {
-					if rapid.Bool().Draw(t, "op?") {
-						a.From = wire.Operator
-					} else {
-						a.From = address().Draw(t, "wfrom").String()
-					}
+					a.From = address().Draw(t, "wfrom").String()
 				}
 				if rapid.Bool().Draw(t, "reply?") {
 					a.ReplyTo = id.Draw(t, "wreply")
@@ -175,8 +160,6 @@ func TestDecodeMatchesTheTypeScriptWireFormat(t *testing.T) {
 	}{
 		{"coop.build-42.msg.mac-1.alice", `{"to":"bob@vps-2","text":"What is the shape of GET /users?","sent_at":"2026-09-30T12:00:20.000Z"}`,
 			wire.Event{Kind: wire.EventMsg, Seq: 7, SID: "build-42", From: "alice@mac-1", To: "bob@vps-2", Text: "What is the shape of GET /users?", SentAt: "2026-09-30T12:00:20.000Z"}},
-		{"coop.build-42.ops", `{"kind":"msg","to":"all","text":"Please run the tests before you say done","sent_at":"2026-09-30T12:00:50.000Z"}`,
-			wire.Event{Kind: wire.EventMsg, Seq: 7, SID: "build-42", From: "operator", To: "all", Text: "Please run the tests before you say done", SentAt: "2026-09-30T12:00:50.000Z"}},
 	}
 	for _, c := range cases {
 		got, ok := wire.DecodeEvent(c.subject, []byte(c.payload), 7)
@@ -184,12 +167,17 @@ func TestDecodeMatchesTheTypeScriptWireFormat(t *testing.T) {
 			t.Errorf("%s %s\n got %+v\nwant %+v", c.subject, c.payload, got, c.want)
 		}
 	}
-	// A kind that left the protocol is skipped: the delivery report (v0.3.0), and the kick,
-	// the redact, the gate and the forget (v0.11.0). The log of an older hub holds such rows.
+	// A kind that left the protocol is skipped: the delivery report (v0.3.0), the kick, the
+	// redact, the gate and the forget (v0.11.0), and later the message to or from the operator,
+	// the wait on the operator and the left reason kicked. The log of an older hub holds such rows.
 	for _, old := range []struct{ subject, payload string }{
 		{"coop.build-42.evt.vps-2.bob", `{"kind":"delivered","id":"4","via":"pull","at":"2026-09-30T12:00:14.000Z"}`},
 		{"coop.build-42.ops", `{"kind":"redact","id":"14","at":"2026-09-30T12:00:45.000Z"}`},
 		{"coop.build-42.ops", `{"kind":"kick","target":"bob@vps-2","at":"2026-09-30T12:01:00.000Z"}`},
+		{"coop.build-42.ops", `{"kind":"msg","to":"all","text":"Please run the tests before you say done","sent_at":"2026-09-30T12:00:50.000Z"}`},
+		{"coop.build-42.msg.mac-1.alice", `{"to":"operator","text":"x","sent_at":"2026-09-30T12:00:20.000Z"}`},
+		{"coop.build-42.evt.vps-2.bob", `{"kind":"left","reason":"kicked","at":"2026-09-30T12:00:45.000Z"}`},
+		{"coop.build-42.evt.vps-2.bob", `{"kind":"wait_start","from":"operator","timeout_s":60,"at":"2026-09-30T12:00:45.000Z"}`},
 		{"coop.build-42.evt.vps-2.bob", `{"kind":"gate","gate":"paused","at":"2026-09-30T12:00:45.000Z"}`},
 		{"coop.build-42.evt.vps-2.bob", `{"kind":"forgotten","at":"2026-09-30T12:00:45.000Z"}`},
 		{"coop.build-42.evt.vps-2.bob", `{"kind":"refused","reason":"removed","at":"2026-09-30T12:00:45.000Z"}`},
@@ -212,12 +200,12 @@ func TestDecodeMatchesTheTypeScriptWireFormat(t *testing.T) {
 }
 
 func TestAdminEventDecoding(t *testing.T) {
-	ev, err := wire.ParseAdminEvent([]byte(`{"kind":"event","seq":12,"subject":"coop.build-42.ops","payload":"{\"kind\":\"msg\",\"to\":\"all\",\"text\":\"hi\",\"sent_at\":\"2026-09-30T12:00:45.000Z\"}"}`))
-	if err != nil || ev.Kind != "event" || ev.Event == nil || ev.Event.Kind != wire.EventMsg || ev.Event.Seq != 12 || ev.Event.From != wire.Operator {
+	ev, err := wire.ParseAdminEvent([]byte(`{"kind":"event","seq":12,"subject":"coop.build-42.msg.vps-2.bob","payload":"{\"to\":\"all\",\"text\":\"hi\",\"sent_at\":\"2026-09-30T12:00:45.000Z\"}"}`))
+	if err != nil || ev.Kind != "event" || ev.Event == nil || ev.Event.Kind != wire.EventMsg || ev.Event.Seq != 12 || ev.Event.From != "bob@vps-2" {
 		t.Fatalf("%+v %v", ev, err)
 	}
-	s, err := wire.ParseAdminEvent([]byte(`{"kind":"session","session":"docs","revision":3,"record":{"title":"Docs","created_at":"2026-09-30T11:50:00.000Z"}}`))
-	if err != nil || s.Session == nil || s.Session.SID != "docs" || s.Session.Revision != 3 || s.Session.Record == nil || s.Session.Record.Title != "Docs" {
+	s, err := wire.ParseAdminEvent([]byte(`{"kind":"session","session":"docs","revision":3,"record":{"created_at":"2026-09-30T11:50:00.000Z"}}`))
+	if err != nil || s.Session == nil || s.Session.SID != "docs" || s.Session.Revision != 3 || s.Session.Record == nil || s.Session.Record.CreatedAt == "" {
 		t.Fatalf("%+v %v", s, err)
 	}
 	gone, err := wire.ParseAdminEvent([]byte(`{"kind":"presence","key":"build-42.vps-2.bob","revision":9,"record":null}`))

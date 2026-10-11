@@ -88,8 +88,8 @@ func TestTranscriptShowsWholeMessagesAndFoldsSystemLines(t *testing.T) {
 		"12:00:10  carol@mac-3 → all", "#4",
 		"  ↩ #5 alice@mac-1: What is the shape of GET /users?",
 		"  I renamed the users fixture",
-		"12:00:50  operator → all",
-		"12:00:55  bob@vps-2 → operator",
+		"12:00:50  alice@mac-1 → all",
+		"12:00:55  bob@vps-2 → alice@mac-1",
 		"↳1",
 	} {
 		if !strings.Contains(joined, want) {
@@ -190,7 +190,7 @@ func extraTraffic(n int, seed int64) []model.Update {
 		case 2:
 			e = wire.Event{Kind: wire.EventMsg, Seq: seq, SID: modeltest.SID, From: from.String(), To: "all", Text: "re", ReplyTo: "5", SentAt: at}
 		default:
-			e = wire.Event{Kind: wire.EventMsg, Seq: seq, SID: modeltest.SID, From: from.String(), To: "operator", Text: fmt.Sprint("note ", i, " ", strings.Repeat("x", r.Intn(90))), SentAt: at}
+			e = wire.Event{Kind: wire.EventMsg, Seq: seq, SID: modeltest.SID, From: from.String(), To: modeltest.Carol.String(), Text: fmt.Sprint("note ", i, " ", strings.Repeat("x", r.Intn(90))), SentAt: at}
 		}
 		out = append(out, model.Update{Event: &e})
 	}
@@ -326,7 +326,7 @@ func TestThreadsShowWholeMessagesByDepth(t *testing.T) {
 	checkShape(t, r, 50)
 	lines := texts(r)
 	joined := strings.Join(lines, "\n")
-	for _, want := range []string{"OPEN ASKS (1)", "carol@mac-3 → bob@vps-2", "Can I change the users table?", "THREADS", "└─ #8 bob@vps-2 → alice@mac-1", "{ id: number, name: string, email: string }", "└─ #13 bob@vps-2 → operator"} {
+	for _, want := range []string{"OPEN ASKS (1)", "carol@mac-3 → bob@vps-2", "Can I change the users table?", "THREADS", "└─ #8 bob@vps-2 → alice@mac-1", "{ id: number, name: string, email: string }", "└─ #13 bob@vps-2 → alice@mac-1"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in\n%s", want, joined)
 		}
@@ -352,7 +352,7 @@ func TestAgentAndMessageDetails(t *testing.T) {
 	m := view.RenderMessage(v, "12", opts(70))
 	checkShape(t, m, 70)
 	joined = strings.Join(texts(m), "\n")
-	for _, want := range []string{"#12", "from         operator", "to           all", "sent         2026-09-30 12:00:50 (4m ago)", "Please run the tests before you say done", "REPLIES (1)", "#13 bob@vps-2", "Will do; CI is running"} {
+	for _, want := range []string{"#12", "from         alice@mac-1", "to           all", "sent         2026-09-30 12:00:50 (4m ago)", "Please run the tests before you say done", "REPLIES (1)", "#13 bob@vps-2", "Will do; CI is running"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in\n%s", want, joined)
 		}

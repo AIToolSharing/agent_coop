@@ -746,20 +746,6 @@ func TestBadArgumentsAreReportedToTheAgent(t *testing.T) {
 	}
 }
 
-// --- old messages from operator --------------------------------------------------------------
-
-// The store of an older hub can hold messages from operator. An agent still gets them.
-func TestOperatorMessageArrivesFromOperator(t *testing.T) {
-	h := newFakeHub(t)
-	h.createSession("s")
-	a := start(t, options(h, "mac-1", "s", "alice", true))
-	joined(t, a)
-	h.operatorSend("s", "all", "stop and report", "")
-	eventually(t, "alice gets the operator's message", func() bool {
-		return slices.ContainsFunc(a.pushes(), func(p push) bool { return p.Meta["from"] == "operator" && p.Content == "stop and report" })
-	})
-}
-
 // --- opacity ---------------------------------------------------------------------------------
 
 // Every test checks its agents' texts at the end (see start). This test makes sure that the

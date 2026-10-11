@@ -179,16 +179,16 @@ func TestTheSessionCommandIsGone(t *testing.T) {
 
 func TestClaudeCommandLine(t *testing.T) {
 	const server = `--mcp-config {"mcpServers":{"coop":{"command":"/opt/coop/coop","args":["mcp"]}}}`
-	session, argv := claudeCommand([]string{"build-42", "--model", "opus"}, map[string]string{}, "/opt/coop/coop")
+	session, argv := claudeCommand([]string{"build-42", "--model", "opus"}, "/opt/coop/coop")
 	if session != "build-42" || strings.Join(argv, " ") != "claude "+server+" --dangerously-load-development-channels server:coop --model opus" {
 		t.Fatalf("%q %v", session, argv)
 	}
-	session, argv = claudeCommand([]string{"-p", "hi"}, map[string]string{"COOP_CHANNEL": "plugin:coop@coop"}, "/opt/coop/coop")
-	if session != "" || strings.Join(argv, " ") != "claude "+server+" --dangerously-load-development-channels plugin:coop@coop -p hi" {
+	session, argv = claudeCommand([]string{"-p", "hi"}, "/opt/coop/coop")
+	if session != "" || strings.Join(argv, " ") != "claude "+server+" --dangerously-load-development-channels server:coop -p hi" {
 		t.Fatalf("%q %v", session, argv)
 	}
 	// The user's own --settings goes to Claude Code as it is.
-	if _, argv := claudeCommand([]string{"--settings", "x.json"}, map[string]string{}, "/opt/coop/coop"); strings.Join(argv, " ") != "claude "+server+" --dangerously-load-development-channels server:coop --settings x.json" {
+	if _, argv := claudeCommand([]string{"--settings", "x.json"}, "/opt/coop/coop"); strings.Join(argv, " ") != "claude "+server+" --dangerously-load-development-channels server:coop --settings x.json" {
 		t.Fatalf("%v", argv)
 	}
 }
@@ -200,7 +200,7 @@ func TestClaudeCommandLine(t *testing.T) {
 func TestClaudeCommandGivesTheServerToThisProcessOnly(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		exe := rapid.String().Draw(t, "exe")
-		_, argv := claudeCommand(nil, map[string]string{}, exe)
+		_, argv := claudeCommand(nil, exe)
 		if len(argv) < 5 || argv[1] != "--mcp-config" || !strings.HasPrefix(argv[3], "-") {
 			t.Fatalf("argv %q", argv)
 		}

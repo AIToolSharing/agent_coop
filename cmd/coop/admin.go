@@ -11,7 +11,7 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
-const adminUsage = `usage: coop admin token add [--role machine|operator] [--operator] [--data <dir>] <name>
+const adminUsage = `usage: coop admin token add [--operator] [--data <dir>] <name>
        coop admin token list [--data <dir>]
        coop admin token revoke [--data <dir>] <name>
 `
@@ -26,8 +26,7 @@ func cmdAdmin(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("coop admin token "+args[1], flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	data := fs.String("data", defaultDataDir(), "the directory of the database")
-	role := fs.String("role", wire.RoleMachine, "machine: the agents of one machine; operator: the TUI")
-	operator := fs.Bool("operator", false, "the same as --role operator")
+	operator := fs.Bool("operator", false, "a token for the TUI; without it, a token for the agents of one machine")
 	if err := fs.Parse(args[2:]); err != nil {
 		return 2
 	}
@@ -45,10 +44,11 @@ func cmdAdmin(args []string, stdout, stderr io.Writer) int {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00")
 	switch verb {
 	case "add":
+		role := wire.RoleMachine
 		if *operator {
-			*role = wire.RoleOperator
+			role = wire.RoleOperator
 		}
-		tok, err := st.IssueToken(name, *role, now)
+		tok, err := st.IssueToken(name, role, now)
 		if err != nil {
 			fmt.Fprintf(stderr, "coop admin: %v\n", err)
 			return 1

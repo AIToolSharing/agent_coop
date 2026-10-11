@@ -63,8 +63,8 @@ func genEvent(t *rapid.T) wire.Event {
 		return rapid.SampledFrom([]string{"alice@mac-1", "bob@vps-2", "carol@mac-3"}).Draw(t, label)
 	}
 	if rapid.Bool().Draw(t, "message") {
-		from := rapid.SampledFrom([]string{wire.Operator, addr("from")}).Draw(t, "sender")
-		to := rapid.SampledFrom([]string{wire.Broadcast, wire.Operator, addr("to")}).Draw(t, "recipient")
+		from := addr("sender")
+		to := rapid.SampledFrom([]string{wire.Broadcast, addr("to")}).Draw(t, "recipient")
 		e := msg(sid, from, to, rapid.StringMatching(`[a-z ]{1,20}`).Draw(t, "text"))
 		if rapid.Bool().Draw(t, "reply") {
 			e.ReplyTo = "7"
@@ -118,7 +118,7 @@ func TestAppendThenReadIsAFilter(t *testing.T) {
 // message id is unique for the life of the store, and a resume by id depends on it.
 func TestDeleteDoesNotReuseASequence(t *testing.T) {
 	s, _ := open(t)
-	must(s.CreateSession("s1", "", at))
+	must(s.CreateSession("s1", at))
 	must(s.Append(msg("s1", "alice@mac-1", wire.Broadcast, "oops"), false, nil))
 	must(s.DeleteSession("s1"))
 	if seq := must(s.Append(msg("s2", "alice@mac-1", wire.Broadcast, "next"), false, nil)); seq != 2 {
@@ -192,7 +192,7 @@ func TestOpenADatabaseOfAnEarlierVersion(t *testing.T) {
 	if !ok || row.Record.CreatedAt != at || k.State != "working" || k.SeenSeq != 7 {
 		t.Fatalf("session %+v, known %+v", row, k)
 	}
-	must(s.CreateSession("s2", "", at))
+	must(s.CreateSession("s2", at))
 	must(s.Append(evt("s2", "carol@mac-3", "joined"), true, nil))
 	must(s.DeleteSession("s1"))
 }
@@ -222,7 +222,7 @@ func TestRevisionsIncrease(t *testing.T) {
 			sid := sids[i%len(sids)]
 			switch op {
 			case 0:
-				row, err := s.CreateSession(sid, "", at)
+				row, err := s.CreateSession(sid, at)
 				if errors.Is(err, store.ErrExists) {
 					continue
 				}
@@ -252,14 +252,14 @@ func TestSessions(t *testing.T) {
 	if _, ok, _ := s.Session("x"); ok {
 		t.Fatal("session before create")
 	}
-	row := must(s.CreateSession("x", "Title", at))
-	if row.SID != "x" || row.Record.Title != "Title" || row.Record.CreatedAt != at {
+	row := must(s.CreateSession("x", at))
+	if row.SID != "x" || row.Record.CreatedAt != at {
 		t.Fatalf("created: %+v", row)
 	}
-	if _, err := s.CreateSession("x", "", at); !errors.Is(err, store.ErrExists) {
+	if _, err := s.CreateSession("x", at); !errors.Is(err, store.ErrExists) {
 		t.Fatalf("second create: %v", err)
 	}
-	must(s.CreateSession("a", "", at))
+	must(s.CreateSession("a", at))
 	list := must(s.Sessions())
 	if len(list) != 2 || list[0].SID != "a" || list[1].SID != "x" {
 		t.Fatalf("Sessions: %+v", list)
@@ -364,7 +364,7 @@ func TestRowsAreTheWireForm(t *testing.T) {
 	events := []wire.Event{
 		msg("s1", "alice@mac-1", "bob@vps-2", "one"),
 		evt("s2", "bob@vps-2", "joined"),
-		msg("s1", wire.Operator, wire.Broadcast, "two"),
+		msg("s1", "carol@mac-3", wire.Broadcast, "two"),
 	}
 	for _, e := range events {
 		must(s.Append(e, false, nil))

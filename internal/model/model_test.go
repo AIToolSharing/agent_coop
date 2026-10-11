@@ -84,7 +84,7 @@ func TestFixtureDerivesWhatTheTypeScriptModelDerived(t *testing.T) {
 		t.Fatalf("agents %+v", agents)
 	}
 	a, b, c := agents[0], agents[1], agents[2]
-	if !a.Online || a.State != "working" || a.Note != "parser" || a.Sent != 1 || a.JoinedAt != at(0) || a.Host != "mac-1" || a.Client != "claude-code 2.1" || a.Waiting != nil {
+	if !a.Online || a.State != "working" || a.Note != "parser" || a.Sent != 2 || a.JoinedAt != at(0) || a.Host != "mac-1" || a.Client != "claude-code 2.1" || a.Waiting != nil {
 		t.Fatalf("alice %+v", a)
 	}
 	if !b.Online || b.State != "blocked" || b.Note != "waiting for CI" || b.Sent != 2 || b.Client != "codex 0.9" {

@@ -959,7 +959,7 @@ func (h *Hub) ensureSessionLocked(sid string) error {
 	if err != nil || ok {
 		return storeErr(err)
 	}
-	row, err := h.st.CreateSession(sid, "", h.now())
+	row, err := h.st.CreateSession(sid, h.now())
 	if err != nil {
 		return storeErr(err)
 	}

@@ -371,9 +371,7 @@ func (v *Session) applyEvent(e *wire.Event) {
 		v.Msgs[m.ID] = m
 		v.msgs = insertMsg(v.msgs, m)
 		v.insertItem(Item{Seq: e.Seq, At: e.SentAt, SID: e.SID, Msg: m})
-		if e.From != wire.Operator {
-			v.agent(e.SID, e.From, e.Seq).Sent++
-		}
+		v.agent(e.SID, e.From, e.Seq).Sent++
 		if e.ReplyTo != "" {
 			v.children[e.ReplyTo] = insertMsg(v.children[e.ReplyTo], m)
 			if p := v.Msgs[e.ReplyTo]; p != nil {

@@ -24,7 +24,7 @@ type message struct {
 }
 
 func (m message) valid() bool {
-	return wire.IsID(m.ID) && (m.From == wire.Operator || isAddress(m.From)) && isTo(m.To) &&
+	return wire.IsID(m.ID) && isAddress(m.From) && isTo(m.To) &&
 		validText(m.Text) && optionalID(m.ReplyTo) && wire.IsTime(m.SentAt)
 }
 
@@ -95,10 +95,9 @@ type peer struct {
 
 var agentStates = []string{"working", "blocked", "done", "idle"}
 
-// valid takes a wait on operator too: an older hub can report one.
 func (p peer) valid() bool {
 	return isAddress(p.Name) && slices.Contains(agentStates, p.State) && utf8.RuneCountInString(p.Note) <= 500 &&
-		(p.WaitingOn == "" || p.WaitingOn == wire.Operator || isAddress(p.WaitingOn))
+		(p.WaitingOn == "" || isAddress(p.WaitingOn))
 }
 
 type sessionView struct {
@@ -162,9 +161,8 @@ func isAddress(s string) bool {
 	return ok
 }
 
-// isTo reports whether s is the recipient of a message: all, or an address. The history of an
-// older hub can also hold messages to and from operator, so the check takes operator too.
-func isTo(s string) bool { return s == wire.Broadcast || s == wire.Operator || isAddress(s) }
+// isTo reports whether s is the recipient of a message: all, or an address.
+func isTo(s string) bool { return s == wire.Broadcast || isAddress(s) }
 
 func validText(s string) bool {
 	n := utf8.RuneCountInString(s)

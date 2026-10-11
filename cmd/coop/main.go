@@ -30,7 +30,7 @@ const usageText = `usage:
   coop mcp                        the MCP server Claude Code starts (stdio)
   coop serve [--listen <addr>] [--data <dir>] [--dist <dir>]
                                   run the hub (the server)
-  coop admin token add [--role <role>] <name> | list | revoke <name>
+  coop admin token add [--operator] <name> | list | revoke <name>
                                   manage tokens on the hub's host
   coop version
 `

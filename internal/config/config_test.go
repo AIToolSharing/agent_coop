@@ -151,7 +151,8 @@ func TestPushIsOnOnlyForTheValue1(t *testing.T) {
 		want      bool
 	}{
 		{"1", "", true},
-		{"", "1", true},
+		// coop claude sets COOP_PUSH in the environment. The credential file does not count.
+		{"", "1", false},
 		{"0", "1", false},
 		{"true", "", false},
 		{"", "", false},

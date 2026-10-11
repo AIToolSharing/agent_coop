@@ -61,8 +61,8 @@ func Fixture() []model.Update {
 	act(Alice, wire.Activity{Kind: "wait_end", Result: "message", At: At(30.1)})
 	msg(Carol.String(), Bob.String(), "I renamed the users fixture", "", At(40))
 	seq++
-	op := msg(wire.Operator, "all", "Please run the tests before you say done", "", At(50))
-	msg(Bob.String(), wire.Operator, "Will do; CI is running", op, At(55))
+	ask := msg(Alice.String(), "all", "Please run the tests before you say done", "", At(50))
+	msg(Bob.String(), Alice.String(), "Will do; CI is running", ask, At(55))
 	q2 := msg(Carol.String(), Bob.String(), "Can I change the users table?", "", At(60))
 	act(Carol, wire.Activity{Kind: "wait_start", From: Bob.String(), ReplyTo: q2, TimeoutS: 300, At: At(60.02)})
 	act(Bob, wire.Activity{Kind: "state", State: "blocked", Note: "waiting for CI", At: At(70)})

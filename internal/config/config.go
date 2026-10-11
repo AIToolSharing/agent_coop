@@ -22,10 +22,10 @@ type Config struct {
 }
 
 // Load finds the configuration. For each key, a value in env wins, and an empty value counts as
-// not set. COOP_SESSION and COOP_AGENT come only from env: `coop claude` sets both for the
-// Claude Code process that it starts. COOP_URL, the tokens (COOP_TOKEN, COOP_OPERATOR_TOKEN),
-// COOP_CERT_SHA256 and COOP_PUSH then come from the credential file. The default agent name
-// comes from cwd; in the home directory (HOME in env) it is "agent".
+// not set. COOP_SESSION, COOP_AGENT and COOP_PUSH come only from env: `coop claude` sets them
+// for the Claude Code process that it starts. COOP_URL, the tokens (COOP_TOKEN,
+// COOP_OPERATOR_TOKEN) and COOP_CERT_SHA256 then come from the credential file. The default
+// agent name comes from cwd; in the home directory (HOME in env) it is "agent".
 //
 // Load calls warn for a credential file that other users can read, for an invalid session
 // name (Load then uses no session) and for an invalid agent name (Load then uses
@@ -53,7 +53,7 @@ func Load(env map[string]string, file string, warn func(string), cwd string) Con
 		CertSHA256:    strings.ToLower(pick("COOP_CERT_SHA256")),
 		Session:       session,
 		Agent:         agent,
-		Push:          pick("COOP_PUSH") == "1",
+		Push:          env["COOP_PUSH"] == "1",
 	}
 }
 
