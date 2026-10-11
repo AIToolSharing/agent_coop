@@ -22,7 +22,7 @@ const usageText = `usage:
   coop --agent <name> claude ...  the same, as the agent <name> (default: the name of the
                                   directory)
   coop tui [--url <url>] [--token <token>]
-                                  watch and steer all sessions (operator token)
+                                  watch all sessions (operator token)
   coop setup                      register coop with Claude Code and install the skill
   coop doctor                     check the connection, the tokens, the session, the setup
   coop upgrade                    take the version of the hub: download the binary of this

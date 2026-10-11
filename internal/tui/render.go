@@ -9,7 +9,6 @@ import (
 
 	"github.com/AIToolSharing/agent_coop/internal/model"
 	"github.com/AIToolSharing/agent_coop/internal/tui/view"
-	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
 // ANSI indexes of the color names the views use.
@@ -65,16 +64,7 @@ func (a *App) render() string {
 			}
 			b.WriteString(border.Render("│"))
 		}
-		k := i
-		if s.attn != nil {
-			if i == 0 {
-				b.WriteString(paint(view.Fit(s.attn, s.mainW), false))
-				rows = append(rows, b.String())
-				continue
-			}
-			k = i - 1
-		}
-		if j := offset + k; j < len(s.main.Lines) {
+		if j := offset + i; j < len(s.main.Lines) {
 			b.WriteString(paint(s.main.Lines[j], s.main.IDs[j] != "" && s.main.IDs[j] == a.msgID))
 		} else {
 			b.WriteString(blank)
@@ -85,9 +75,7 @@ func (a *App) render() string {
 	if a.mode.kind != "normal" {
 		promptStyle = view.Style{Color: "cyan"}
 	}
-	for _, l := range a.promptLines(s) {
-		rows = append(rows, paint(view.Fit(view.Line{view.Styled(l, promptStyle)}, a.width), false))
-	}
+	rows = append(rows, paint(view.Fit(view.Line{view.Styled(a.prompt(), promptStyle)}, a.width), false))
 	rows = append(rows, paint(view.Fit(view.Line{view.Dim(a.hint())}, a.width), false))
 	return strings.Join(rows, "\n")
 }
@@ -103,14 +91,8 @@ var help = [][2]string{
 	{"[", "hide or show the sidebar"},
 	{"1 2", "views: transcript, threads"},
 	{"mouse", "click selects, a second click opens, the wheel scrolls"},
-	{"WRITE", ""},
-	{"m", "message the session; tab picks the target; \"@agent text\" also works"},
-	{"r", "reply to the selected message, to its sender, in its thread"},
-	{"alt+enter", "a new line in the composer"},
-	{"a", "go to the next thing that needs you: a message for you, a stale ask, a blocked agent"},
 	{"/", "search in the message text; an empty search clears"},
 	{"COMMANDS  (: then tab completes)", ""},
-	{":new <name>", "create a session"},
 	{":delete", "delete the shown session and its messages; only with no agent in it"},
 	{":filter [agent]", "only the messages of one agent; without a name: off"},
 	{":sys", "system lines on or off"},
@@ -133,7 +115,7 @@ func helpLines(width int) view.Rendered {
 	return r
 }
 
-var commands = []string{"new", "delete", "filter", "sys", "help", "quit"}
+var commands = []string{"delete", "filter", "sys", "help", "quit"}
 
 // Complete finishes a command line: the command word, or an agent name for the commands that
 // take one.
@@ -220,13 +202,6 @@ func (a *App) command(line string, s screen) tea.Cmd {
 		return nil
 	}
 	switch cmd {
-	case "new":
-		if !wire.IsToken(arg) {
-			return a.setStatus("usage: :new <name>  (letters, digits, - and _)")
-		}
-		return a.act(func(ctx context.Context) (string, error) {
-			return "created " + arg, a.op.CreateSession(ctx, arg)
-		})
 	case "delete":
 		if session == "" {
 			return needSession()

@@ -152,9 +152,6 @@ func Header(m *model.Msg, o Options, all bool) Line {
 		left = append(left, Dim("["+m.SID+"] "))
 	}
 	left = append(left, Styled(m.From, Style{Bold: true, Color: SenderColor(m.From)}), S(" → "), S(m.To))
-	if m.To == "operator" {
-		left = append(left, Styled("  for you", Style{Color: "yellow", Bold: true}))
-	}
 	used := Width(Plain(left)) + Width(Plain(right))
 	out := append(Line{}, left...)
 	out = append(out, S(strings.Repeat(" ", max(1, o.Width-used))))

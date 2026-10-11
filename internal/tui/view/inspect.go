@@ -110,11 +110,7 @@ func RenderMessage(v *model.Session, id string, o Options) Rendered {
 		r.Lines = append(r.Lines, Fit(l, o.Width))
 		r.IDs = append(r.IDs, lid)
 	}
-	head := Line{Bold("#" + m.ID)}
-	if m.To == "operator" {
-		head = append(head, Styled("  for you", Style{Color: "yellow", Bold: true}))
-	}
-	add(head, "")
+	add(Line{Bold("#" + m.ID)}, "")
 	add(kv("from", m.From, Style{Color: SenderColor(m.From), Bold: true}), "")
 	add(kv("to", m.To, Style{}), "")
 	add(kv("sent", Stamp(m.SentAt, o.loc())+" ("+Age(m.SentAt, o.Now)+" ago)", Style{}), "")

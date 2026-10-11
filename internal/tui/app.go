@@ -1,7 +1,7 @@
 // Package tui is the operator's terminal program: a sidebar (sessions, then the agents of the
 // shown session), a main pane (transcript or threads, or the details of a message or an
-// agent), an attention line, a composer, and a `:` command line. It paints what the view
-// package returns and calls the operator's actions.
+// agent), and a `:` command line. The operator only watches: the program sends nothing to the
+// agents. It paints what the view package returns.
 package tui
 
 import (
@@ -9,19 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/AIToolSharing/agent_coop/internal/model"
 	"github.com/AIToolSharing/agent_coop/internal/tui/view"
-	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
 // Operator is what the shell asks the hub to do. *admin.Client is one.
 type Operator interface {
-	CreateSession(ctx context.Context, sid string) error
 	DeleteSession(ctx context.Context, sid string) error
-	Send(ctx context.Context, sid, to, text, replyTo string) (string, error)
 }
 
 // Options builds an App.
@@ -46,12 +42,8 @@ type overlay struct {
 	id   string
 }
 
-type reply struct{ id, to string }
-
 type mode struct {
-	kind  string // normal compose command search confirm
-	to    string // compose: all or an address
-	reply *reply
+	kind  string // normal command search confirm
 	value string // command and search
 	text  string // confirm
 	run   func() tea.Cmd
@@ -81,10 +73,8 @@ type App struct {
 	scroll        int // first visible main line when scrolled; -1 follows the cursor
 	mode          mode
 	status        string
-	attn          int
 
 	transcripts map[string]*view.Transcript
-	ta          textarea.Model
 	last        screen
 	quitting    bool
 	err         error
@@ -109,10 +99,6 @@ func New(o Options) *App {
 	if o.Loc == nil {
 		o.Loc = time.Local
 	}
-	ta := textarea.New()
-	ta.Prompt = ""
-	ta.ShowLineNumbers = false
-	ta.CharLimit = wire.MaxText
 	return &App{
 		store: o.Store, updates: o.Updates, op: o.Op, now: o.Now, loc: o.Loc,
 
@@ -121,7 +107,6 @@ func New(o Options) *App {
 		cursor: -1, follow: true, system: true, scroll: -1,
 		mode:        mode{kind: "normal"},
 		transcripts: map[string]*view.Transcript{},
-		ta:          ta,
 	}
 }
 
@@ -170,14 +155,10 @@ type screen struct {
 	sidebarW  int // columns of the sidebar, border included; 0 when hidden
 	mainW     int
 	main      view.Rendered
-	attn      view.Line
-	items     []view.Item
 	current   string // the message under the cursor: the newest one while following
 	lastID    string // the newest message with a line in the main pane
 	following bool
 	bodyH     int
-	mainBodyH int
-	promptH   int
 }
 
 func (a *App) options(width int) view.Options {
@@ -198,8 +179,6 @@ func (a *App) screen() screen {
 	}
 	s.sidebar = view.RenderSidebar(s.sums, agents, view.Selection{SID: a.sid, Cursor: cursor}, max(1, s.sidebarW-1), now)
 	s.mainW = max(20, a.width-s.sidebarW)
-	s.items = view.Attention(s.v, now)
-	s.attn = view.RenderAttention(s.items, now)
 	o := a.options(s.mainW)
 	switch {
 	case a.overlay != nil && a.overlay.kind == "help":
@@ -227,15 +206,8 @@ func (a *App) screen() screen {
 	} else {
 		s.current = a.msgID
 	}
-	s.promptH = 1
-	if a.mode.kind == "compose" {
-		s.promptH = min(4, max(1, a.ta.LineCount()))
-	}
-	s.bodyH = max(4, a.height-1-s.promptH-1)
-	s.mainBodyH = s.bodyH
-	if s.attn != nil {
-		s.mainBodyH = max(1, s.bodyH-1)
-	}
+	// The rows that are not the body: the title, the prompt line and the hint line.
+	s.bodyH = max(4, a.height-3)
 	return s
 }
 
@@ -254,7 +226,7 @@ func (a *App) cursorOf(s screen) int {
 
 // viewOffset is the first visible line of the main pane.
 func (a *App) viewOffset(s screen) int {
-	maxOff := max(0, len(s.main.Lines)-s.mainBodyH)
+	maxOff := max(0, len(s.main.Lines)-s.bodyH)
 	if s.following {
 		return maxOff
 	}
@@ -265,7 +237,7 @@ func (a *App) viewOffset(s screen) int {
 	if line < 0 {
 		return 0
 	}
-	return min(maxOff, max(0, line-s.mainBodyH+1))
+	return min(maxOff, max(0, line-s.bodyH+1))
 }
 
 func listOffset(index, length, height int) int {
@@ -341,10 +313,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (a *App) paste(text string) tea.Cmd {
-	switch a.mode.kind {
-	case "compose":
-		a.ta.InsertString(strings.ReplaceAll(text, "\r\n", "\n"))
-	case "command", "search":
+	if a.mode.kind == "command" || a.mode.kind == "search" {
 		a.mode.value += strings.ReplaceAll(view.OneLine(text), " ⏎ ", " ")
 	}
 	return nil
@@ -431,14 +400,14 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	case isKey(k, tea.KeyPgDown) || isKey(k, tea.KeyPgUp):
-		delta := s.mainBodyH - 1
+		delta := s.bodyH - 1
 		if isKey(k, tea.KeyPgUp) {
 			delta = -delta
 		}
 		a.scrollBy(s, delta, false)
 		off := a.viewOffset(s)
 		var inWindow []string
-		for _, id := range s.main.IDs[min(off, len(s.main.IDs)):min(off+s.mainBodyH, len(s.main.IDs))] {
+		for _, id := range s.main.IDs[min(off, len(s.main.IDs)):min(off+s.bodyH, len(s.main.IDs))] {
 			if id != "" {
 				inWindow = append(inWindow, id)
 			}
@@ -484,52 +453,21 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 		a.mode = mode{kind: "search", value: a.search}
 	case ":":
 		a.mode = mode{kind: "command"}
-	case "a":
-		return a.nextAttention(s)
-	case "m":
-		if a.sid == model.AllSessions {
-			return a.setStatus("pick a session first (tab, then ↑↓)")
-		}
-		a.compose(wire.Broadcast, nil)
-	case "r":
-		m := s.v.Msgs[s.current]
-		if m == nil {
-			return a.setStatus("select a message first")
-		}
-		if m.From == wire.Operator {
-			return a.setStatus("that is your own message")
-		}
-		a.compose(m.From, &reply{id: m.ID, to: m.From})
 	}
 	return nil
 }
 
-func (a *App) compose(to string, r *reply) {
-	a.mode = mode{kind: "compose", to: to, reply: r}
-	a.ta.Reset()
-	a.ta.SetWidth(max(10, a.width-20))
-	a.ta.SetHeight(1)
-	a.ta.Focus()
-}
-
-// inputKey handles the composer, the command line, and the search line.
+// inputKey handles the command line and the search line.
 func (a *App) inputKey(k tea.KeyPressMsg, s screen) tea.Cmd {
 	m := &a.mode
 	switch {
 	case isKey(k, tea.KeyEscape):
 		a.mode = mode{kind: "normal"}
 		return nil
-	case k.Code == tea.KeyEnter && k.Mod == tea.ModAlt && m.kind == "compose":
-		a.ta.InsertString("\n")
-		a.ta.SetHeight(min(4, a.ta.LineCount()))
-		return nil
 	case isKey(k, tea.KeyEnter):
 		done := *m
 		a.mode = mode{kind: "normal"}
-		switch done.kind {
-		case "compose":
-			return a.submit(done, s)
-		case "command":
+		if done.kind == "command" {
 			return a.command(strings.TrimSpace(done.value), s)
 		}
 		a.search = strings.TrimSpace(done.value)
@@ -540,23 +478,8 @@ func (a *App) inputKey(k tea.KeyPressMsg, s screen) tea.Cmd {
 	case isKey(k, tea.KeyTab):
 		if m.kind == "command" {
 			m.value = Complete(m.value, s.v.AgentList())
-			return nil
-		}
-		if m.kind == "compose" && m.reply == nil {
-			targets := []string{wire.Broadcast}
-			for _, ag := range s.v.AgentList() {
-				targets = append(targets, ag.Address)
-			}
-			i := indexOf(targets, m.to)
-			m.to = targets[(i+1)%len(targets)]
 		}
 		return nil
-	}
-	if m.kind == "compose" {
-		var cmd tea.Cmd
-		a.ta, cmd = a.ta.Update(k)
-		a.ta.SetHeight(min(4, max(1, a.ta.LineCount())))
-		return cmd
 	}
 	if isKey(k, tea.KeyBackspace) || isKey(k, tea.KeyDelete) {
 		r := []rune(m.value)
@@ -577,7 +500,7 @@ func (a *App) scrollTo(line int) {
 
 // scrollBy moves the main pane; at the bottom of a live view it follows again.
 func (a *App) scrollBy(s screen, delta int, live bool) tea.Cmd {
-	maxOff := max(0, len(s.main.Lines)-s.mainBodyH)
+	maxOff := max(0, len(s.main.Lines)-s.bodyH)
 	next := min(maxOff, max(0, a.viewOffset(s)+delta))
 	canFollow := a.overlay == nil && a.view != viewThreads
 	if live && canFollow && next >= maxOff && delta > 0 {
@@ -593,7 +516,7 @@ func (a *App) selectMessage(s screen, id string) {
 	off := a.viewOffset(s)
 	a.msgID, a.follow = id, false
 	if line >= 0 {
-		a.scroll = reveal(line, off, s.mainBodyH)
+		a.scroll = reveal(line, off, s.bodyH)
 	}
 }
 
@@ -606,7 +529,7 @@ func (a *App) chooseSession(sid string, cursor int) {
 	a.sid, a.cursor = sid, cursor
 	a.msgID, a.agentAddr, a.agentFilter = "", "", ""
 	a.overlay = nil
-	a.follow, a.scroll, a.attn = true, -1, 0
+	a.follow, a.scroll = true, -1
 }
 
 // moveSidebar moves the cursor to the next row with content. The cursor only points; enter
@@ -664,24 +587,6 @@ func (a *App) openCurrent(s screen) tea.Cmd {
 	return nil
 }
 
-func (a *App) nextAttention(s screen) tea.Cmd {
-	if len(s.items) == 0 {
-		return a.setStatus("nothing needs you right now")
-	}
-	item := s.items[a.attn%len(s.items)]
-	a.attn++
-	a.status = view.Describe(item)
-	if item.Kind == "blocked" {
-		a.agentAddr = item.Address
-		a.overlay = &overlay{kind: "agent", id: item.Address}
-		a.scroll = -1
-		return nil
-	}
-	a.view, a.overlay = viewTranscript, nil
-	a.selectMessage(a.screen(), item.ID)
-	return nil
-}
-
 // --- Mouse -------------------------------------------------------------------------------------
 
 func (a *App) click(m tea.Mouse) tea.Cmd {
@@ -715,9 +620,6 @@ func (a *App) click(m tea.Mouse) tea.Cmd {
 		return nil
 	}
 	line := y + a.viewOffset(s)
-	if s.attn != nil {
-		line--
-	}
 	id := ""
 	if line >= 0 && line < len(s.main.IDs) {
 		id = s.main.IDs[line]
@@ -767,79 +669,6 @@ func (a *App) act(f func(ctx context.Context) (string, error)) tea.Cmd {
 	}
 }
 
-// submit sends what the composer holds.
-func (a *App) submit(m mode, s screen) tea.Cmd {
-	session := a.sid
-	value := strings.TrimSpace(a.ta.Value())
-	if session == model.AllSessions || value == "" {
-		return nil
-	}
-	to, text, away := wire.Broadcast, value, ""
-	direct := func(address string) bool {
-		var hit *model.Agent
-		for _, ag := range s.v.AgentList() {
-			if ag.Address == address {
-				hit = ag
-			}
-		}
-		if _, ok := wire.ParseAddress(address); !ok || hit == nil {
-			return false
-		}
-		to = address
-		if !hit.Online {
-			away = hit.Address
-		}
-		return true
-	}
-	switch {
-	case m.reply != nil:
-		if !direct(m.reply.to) {
-			return a.setStatus("no agent " + m.reply.to)
-		}
-	case m.to == wire.Broadcast && strings.HasPrefix(value, "@"):
-		name, rest, _ := strings.Cut(value[1:], " ")
-		rest = strings.TrimSpace(rest)
-		if rest == "" {
-			return a.setStatus("no text after @" + name)
-		}
-		var hits []string
-		for _, ag := range s.v.AgentList() {
-			if ag.Address == name || strings.HasPrefix(ag.Address, name+"@") {
-				hits = append(hits, ag.Address)
-			}
-		}
-		if len(hits) == 0 {
-			return a.setStatus("no agent " + name)
-		}
-		if len(hits) > 1 {
-			return a.setStatus(name + " is ambiguous")
-		}
-		if !direct(hits[0]) {
-			return nil
-		}
-		text = rest
-	case m.to != wire.Broadcast:
-		if !direct(m.to) {
-			return a.setStatus("no agent " + m.to)
-		}
-	}
-	if len([]rune(text)) > wire.MaxText {
-		return a.setStatus("too long (max 8000)")
-	}
-	note := ""
-	if away != "" {
-		note = " (" + away + " is away; it gets it when it returns)"
-	}
-	replyTo := ""
-	if m.reply != nil {
-		replyTo = m.reply.id
-	}
-	return a.act(func(ctx context.Context) (string, error) {
-		id, err := a.op.Send(ctx, session, to, text, replyTo)
-		return "sent #" + id + note, err
-	})
-}
-
 // --- View --------------------------------------------------------------------------------------
 
 func (a *App) View() tea.View {
@@ -883,8 +712,6 @@ func (a *App) title(s screen) string {
 
 func (a *App) hint() string {
 	switch a.mode.kind {
-	case "compose":
-		return "enter send · alt+enter new line · tab target · esc cancel"
 	case "command":
 		return "enter run · tab complete · esc cancel"
 	case "search":
@@ -898,36 +725,19 @@ func (a *App) hint() string {
 	if a.focus == "sidebar" {
 		return "↑↓ move · enter open · tab main · ? help"
 	}
-	return "↑↓ enter esc · m message · r reply · a attention · / search · : command · tab sidebar · ? help · q quit"
+	return "↑↓ enter esc · / search · : command · tab sidebar · ? help · q quit"
 }
 
-func (a *App) promptLines(s screen) []string {
+// prompt is the line under the body: the command line, the search line, a question, or the
+// status.
+func (a *App) prompt() string {
 	switch a.mode.kind {
-	case "compose":
-		label := "to " + a.mode.to + " (tab: next) › "
-		if a.mode.reply != nil {
-			label = "reply to #" + a.mode.reply.id + " from " + a.mode.reply.to + " › "
-		}
-		lines := strings.Split(a.ta.View(), "\n")
-		if len(lines) > s.promptH {
-			lines = lines[len(lines)-s.promptH:]
-		}
-		out := make([]string, len(lines))
-		pad := strings.Repeat(" ", view.Width(label))
-		for i, l := range lines {
-			if i == 0 {
-				out[i] = label + l
-			} else {
-				out[i] = pad + l
-			}
-		}
-		return out
 	case "command":
-		return []string{":" + a.mode.value + "▏"}
+		return ":" + a.mode.value + "▏"
 	case "search":
-		return []string{"search › " + a.mode.value + "▏"}
+		return "search › " + a.mode.value + "▏"
 	case "confirm":
-		return []string{a.mode.text}
+		return a.mode.text
 	}
-	return []string{a.status}
+	return a.status
 }

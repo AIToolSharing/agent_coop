@@ -222,42 +222,22 @@ func actions(t *testing.T, status int, body string) (*admin.Client, *[]call) {
 	return &admin.Client{Base: srv.URL, Token: "op.secret"}, &calls
 }
 
-func TestActionsCallTheAdminRoutes(t *testing.T) {
+func TestDeleteSessionCallsTheAdminRoute(t *testing.T) {
 	ctx := context.Background()
 	c, calls := actions(t, 204, "")
-	if err := c.CreateSession(ctx, "build-42"); err != nil {
-		t.Fatal(err)
-	}
 	if err := c.DeleteSession(ctx, "build-42"); err != nil {
 		t.Fatal(err)
 	}
-	want := []call{
-		{"POST", "/v1/admin/sessions", `{"session":"build-42"}`},
-		{"DELETE", "/v1/admin/sessions/build-42", ""},
-	}
+	want := []call{{"DELETE", "/v1/admin/sessions/build-42", ""}}
 	if fmt.Sprint(*calls) != fmt.Sprint(want) {
 		t.Fatalf("\n got %v\nwant %v", *calls, want)
 	}
 }
 
-func TestSendAndErrors(t *testing.T) {
+func TestDeleteSessionErrors(t *testing.T) {
 	ctx := context.Background()
-	c, calls := actions(t, 200, `{"id":"21","to":"all","sent_at":"2026-09-30T12:05:00.000Z"}`)
-	id, err := c.Send(ctx, "build-42", "all", "carry on", "")
-	if err != nil || id != "21" {
-		t.Fatal(id, err)
-	}
-	if _, err := c.Send(ctx, "build-42", "bob@vps-2", "re", "7"); err != nil {
-		t.Fatal(err)
-	}
-	if (*calls)[1].Body != `{"to":"bob@vps-2","text":"re","reply_to":"7"}` || (*calls)[0].Body != `{"to":"all","text":"carry on"}` {
-		t.Fatalf("bodies %v", *calls)
-	}
-	if _, err := c.Send(ctx, "build-42", "operator", "x", ""); err == nil {
-		t.Fatal("the operator cannot write to the operator")
-	}
 	ec, _ := actions(t, 409, `{"error":"conflict","message":"agents are in session build-42: bob@vps-2"}`)
-	err = ec.DeleteSession(ctx, "build-42")
+	err := ec.DeleteSession(ctx, "build-42")
 	var apiErr *admin.APIError
 	if !errors.As(err, &apiErr) || apiErr.Status != 409 || apiErr.Message != "agents are in session build-42: bob@vps-2" {
 		t.Fatalf("err %v", err)

@@ -140,8 +140,8 @@ coop login https://<host>:8443 you.<secret>
 coop tui
 ```
 
-In the TUI, `:new <name>` makes a session and `:delete` deletes one with no agent in it. An
-agent that joins an unknown session creates it. `?` lists every key and command.
+An agent that joins an unknown session creates it. In the TUI, `:delete` deletes a session with
+no agent in it. `?` lists every key and command.
 
 ## Upgrade
 

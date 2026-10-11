@@ -1,10 +1,9 @@
 // Package admin is the hub's admin API as the operator's TUI uses it: the live feed with
-// reconnect and resume, and the operator's actions. Both need an operator token.
+// reconnect and resume, and the deletion of a session. Both need an operator token.
 package admin
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -221,74 +220,24 @@ func message(res *http.Response) string {
 
 // --- Actions ---------------------------------------------------------------------------------
 
-func (c *Client) call(ctx context.Context, method, path string, body any) (*http.Response, error) {
-	var rd io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		rd = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, c.Base+"/v1/admin"+path, rd)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	res, err := c.http().Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if res.StatusCode < 200 || res.StatusCode > 299 {
-		defer res.Body.Close()
-		return nil, &APIError{Status: res.StatusCode, Message: message(res)}
-	}
-	return res, nil
-}
-
-// do runs an action whose answer body does not matter.
-func (c *Client) do(ctx context.Context, method, path string, body any) error {
-	res, err := c.call(ctx, method, path, body)
+// do runs an action that sends no body and whose answer body does not matter.
+func (c *Client) do(ctx context.Context, method, path string) error {
+	req, err := http.NewRequestWithContext(ctx, method, c.Base+"/v1/admin"+path, nil)
 	if err != nil {
 		return err
 	}
-	return res.Body.Close()
-}
-
-func sessionPath(sid string) string { return "/sessions/" + url.PathEscape(sid) }
-
-func (c *Client) CreateSession(ctx context.Context, sid string) error {
-	return c.do(ctx, http.MethodPost, "/sessions", map[string]string{"session": sid})
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	res, err := c.http().Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		return &APIError{Status: res.StatusCode, Message: message(res)}
+	}
+	return nil
 }
 
 func (c *Client) DeleteSession(ctx context.Context, sid string) error {
-	return c.do(ctx, http.MethodDelete, sessionPath(sid), nil)
-}
-
-// Send writes a message as the operator. to is Broadcast or a peer; replyTo may be empty.
-// It gives the new message's id.
-func (c *Client) Send(ctx context.Context, sid, to, text, replyTo string) (string, error) {
-	if to == wire.Operator {
-		return "", errors.New("the operator cannot write to the operator")
-	}
-	body := struct {
-		To      string `json:"to"`
-		Text    string `json:"text"`
-		ReplyTo string `json:"reply_to,omitempty"`
-	}{to, text, replyTo}
-	res, err := c.call(ctx, http.MethodPost, sessionPath(sid)+"/messages", body)
-	if err != nil {
-		return "", err
-	}
-	defer res.Body.Close()
-	var sent struct {
-		ID string `json:"id"`
-	}
-	if err := json.NewDecoder(res.Body).Decode(&sent); err != nil {
-		return "", err
-	}
-	return sent.ID, nil
+	return c.do(ctx, http.MethodDelete, "/sessions/"+url.PathEscape(sid))
 }

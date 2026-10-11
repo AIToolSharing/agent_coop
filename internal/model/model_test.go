@@ -62,9 +62,6 @@ func snapshot(s *model.Store) string {
 		for _, q := range v.OpenAsks() {
 			fmt.Fprintf(&b, " ask #%s %s>%s since=%s %q\n", q.ID, q.From, q.To, q.Since, q.Question.Text)
 		}
-		for _, m := range v.ForYou() {
-			fmt.Fprintf(&b, " for-you #%s\n", m.ID)
-		}
 		for _, it := range v.Timeline {
 			if it.Msg != nil {
 				fmt.Fprintf(&b, " t %d msg #%s\n", it.Seq, it.Msg.ID)
@@ -116,9 +113,6 @@ func TestFixtureDerivesWhatTheTypeScriptModelDerived(t *testing.T) {
 	asks := v.OpenAsks()
 	if len(asks) != 1 || asks[0].ID != "14" || asks[0].From != "carol@mac-3" || asks[0].To != "bob@vps-2" || asks[0].Question.Text != "Can I change the users table?" {
 		t.Fatalf("open asks %+v", asks)
-	}
-	if fy := v.ForYou(); len(fy) != 1 || fy[0].ID != "13" {
-		t.Fatalf("for you %+v", fy)
 	}
 	if len(v.Timeline) != 15 {
 		t.Fatalf("timeline has %d items", len(v.Timeline))

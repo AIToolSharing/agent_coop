@@ -40,9 +40,6 @@ func RenderThreads(v *model.Session, o Options) Rendered {
 		}
 		head := Line{Dim(prefix), Styled("#"+m.ID+" ", Style{Dim: true, Inverse: m.ID == o.Selected}),
 			Styled(m.From, Style{Bold: true, Color: SenderColor(m.From)}), S(" → " + m.To)}
-		if m.To == "operator" {
-			head = append(head, Styled("  for you", Style{Color: "yellow", Bold: true}))
-		}
 		add(head, m.ID)
 		pad := strings.Repeat(" ", Width(prefix)+2)
 		for _, line := range Wrap(m.Text, o.Width-Width(pad)) {

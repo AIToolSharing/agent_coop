@@ -12,26 +12,13 @@ import (
 
 	"github.com/AIToolSharing/agent_coop/internal/model"
 	"github.com/AIToolSharing/agent_coop/internal/model/modeltest"
-	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
 type fakeOp struct{ calls []string }
 
-func (f *fakeOp) CreateSession(_ context.Context, s string) error {
-	f.calls = append(f.calls, "create "+s)
-	return nil
-}
 func (f *fakeOp) DeleteSession(_ context.Context, s string) error {
 	f.calls = append(f.calls, "delete "+s)
 	return nil
-}
-func (f *fakeOp) Send(_ context.Context, s, to, text, replyTo string) (string, error) {
-	c := "send " + s + " " + to + " " + text
-	if replyTo != "" {
-		c += " ↩" + replyTo
-	}
-	f.calls = append(f.calls, c)
-	return "99", nil
 }
 
 type harness struct {
@@ -60,8 +47,6 @@ func keyOf(name string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyTab}
 	case "enter":
 		return tea.KeyPressMsg{Code: tea.KeyEnter}
-	case "alt+enter":
-		return tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt}
 	case "down":
 		return tea.KeyPressMsg{Code: tea.KeyDown}
 	case "up":
@@ -139,7 +124,7 @@ func contains(t *testing.T, frame string, wants ...string) {
 func TestShowsTheSidebarTheTranscriptAndTheHints(t *testing.T) {
 	h := start(t, nil)
 	f := h.frame()
-	contains(t, f, "coop · all sessions · transcript  follow ●  [connecting]", "SESSIONS", "all traffic", "● build-42 3 1 ask", "○ docs", "Please run the tests before you say done", "m message · r reply · a attention")
+	contains(t, f, "coop · all sessions · transcript  follow ●  [connecting]", "SESSIONS", "all traffic", "● build-42 3 1 ask", "○ docs", "Please run the tests before you say done", "/ search · : command")
 	if n := len(strings.Split(f, "\n")); n != 30 {
 		t.Errorf("%d rows, want 30", n)
 	}
@@ -153,7 +138,7 @@ func TestShowsTheSidebarTheTranscriptAndTheHints(t *testing.T) {
 func TestTheSidebarMovesAndOpens(t *testing.T) {
 	h := start(t, nil)
 	h.openSession()
-	contains(t, h.frame(), "AGENTS · build-42", "⚑ 1 for you · 1 ask waiting 4m · 1 blocked")
+	contains(t, h.frame(), "AGENTS · build-42")
 	h.keys("tab", "down", "down", "enter")
 	contains(t, h.frame(), "agent alice@mac-1 · esc back", "state        working")
 	h.keys("esc")
@@ -172,71 +157,17 @@ func TestViews(t *testing.T) {
 	contains(t, h.frame(), "coop · build-42 · transcript")
 }
 
-func TestComposeToAllToOneAgentAndWithAName(t *testing.T) {
+func TestCommandDelete(t *testing.T) {
 	h := start(t, nil)
 	h.openSession()
-	h.keys("m")
-	contains(t, h.frame(), "to all (tab: next) ›")
-	h.keys("+hi", "enter")
-	h.keys("m", "tab")
-	contains(t, h.frame(), "to alice@mac-1 (tab: next) ›")
-	h.keys("+yo", "enter")
-	h.keys("m", "+@bob hi", "enter")
-	want := []string{"send build-42 all hi", "send build-42 alice@mac-1 yo", "send build-42 bob@vps-2 hi"}
-	if fmt.Sprint(h.op.calls) != fmt.Sprint(want) {
-		t.Fatalf("calls %v", h.op.calls)
-	}
-	if h.status() != "sent #99" {
-		t.Errorf("status %q", h.status())
-	}
-}
-
-func TestReplyGoesToTheSenderInItsThread(t *testing.T) {
-	h := start(t, nil)
-	h.openSession()
-	h.keys("r")
-	contains(t, h.frame(), "reply to #14 from carol@mac-3 ›")
-	h.keys("+ok", "enter")
-	if fmt.Sprint(h.op.calls) != "[send build-42 carol@mac-3 ok ↩14]" {
-		t.Fatalf("calls %v", h.op.calls)
-	}
-}
-
-func TestAltEnterAddsALine(t *testing.T) {
-	h := start(t, nil)
-	h.openSession()
-	h.keys("m", "+a", "alt+enter", "+b", "enter")
-	if fmt.Sprint(h.op.calls) != "[send build-42 all a\nb]" {
-		t.Fatalf("calls %q", h.op.calls)
-	}
-}
-
-func TestAWalksThroughWhatNeedsTheOperator(t *testing.T) {
-	h := start(t, nil)
-	h.openSession()
-	h.keys("a")
-	if h.status() != "for you: #13 from bob@vps-2" || h.app.msgID != "13" {
-		t.Fatalf("status %q selected %q", h.status(), h.app.msgID)
-	}
-	h.keys("a")
-	if h.status() != "carol@mac-3 waits for bob@vps-2 (ask #14)" || h.app.msgID != "14" {
-		t.Fatalf("status %q selected %q", h.status(), h.app.msgID)
-	}
-	h.keys("a")
-	contains(t, h.frame(), "agent bob@vps-2 · esc back")
-	if h.status() != "bob@vps-2 is blocked: waiting for CI" {
-		t.Fatalf("status %q", h.status())
-	}
-}
-
-func TestCommandsNewAndDelete(t *testing.T) {
-	h := start(t, nil)
-	h.openSession()
-	h.keys(":", "+new team-2", "enter")
 	h.keys(":", "+delete", "enter")
 	contains(t, h.frame(), "delete build-42 and its messages?")
-	h.keys("y")
-	if fmt.Sprint(h.op.calls) != "[create team-2 delete build-42]" {
+	h.keys("n")
+	if h.status() != "cancelled" || len(h.op.calls) != 0 {
+		t.Fatalf("status %q calls %v", h.status(), h.op.calls)
+	}
+	h.keys(":", "+delete", "enter", "y")
+	if fmt.Sprint(h.op.calls) != "[delete build-42]" {
 		t.Fatalf("calls %v", h.op.calls)
 	}
 }
@@ -252,7 +183,7 @@ func TestCommandsCompleteAndTheRemovedOnesAreUnknown(t *testing.T) {
 	if h.status() != "only carol@mac-3" {
 		t.Fatalf("status %q", h.status())
 	}
-	for _, cmd := range []string{"kick bob", "allow bob", "forget bob", "pause", "resume", "close", "reopen", "withdraw #10", "brief"} {
+	for _, cmd := range []string{"kick bob", "allow bob", "forget bob", "pause", "resume", "close", "reopen", "withdraw #10", "brief", "new team-2"} {
 		h.keys(":", "+"+cmd, "enter")
 		if word, _, _ := strings.Cut(cmd, " "); h.status() != "unknown command :"+word+" (tab lists them)" {
 			t.Fatalf(":%s: status %q", cmd, h.status())
@@ -265,11 +196,35 @@ func TestCommandsCompleteAndTheRemovedOnesAreUnknown(t *testing.T) {
 	}
 }
 
+// The operator only watches. The TUI has no composer, no attention line and no "for you"
+// marks, and the keys that wrote to the agents do nothing.
+func TestTheOperatorOnlyWatches(t *testing.T) {
+	h := start(t, nil)
+	h.openSession()
+	gone := func(when string) {
+		t.Helper()
+		for _, text := range []string{"⚑", "for you", "to all", "reply to #", "m message", "a attention"} {
+			if strings.Contains(h.frame(), text) {
+				t.Errorf("%s: the frame shows %q:\n%s", when, text, h.frame())
+			}
+		}
+	}
+	gone("open")
+	for _, k := range []string{"a", "m", "r"} {
+		h.keys(k)
+		gone("after " + k)
+		h.keys("+hi", "enter", "esc")
+	}
+	if len(h.op.calls) != 0 {
+		t.Fatalf("calls %v", h.op.calls)
+	}
+}
+
 func TestHelpAndFiltersAndSidebarToggle(t *testing.T) {
 	h := start(t, nil)
 	h.keys("?")
-	contains(t, h.frame(), "coop · help · esc back", "MOVE", ":new <name>", ":delete", ":filter [agent]")
-	for _, gone := range []string{"STEER", ":kick", ":pause", ":withdraw", ":brief", "activity"} {
+	contains(t, h.frame(), "coop · help · esc back", "MOVE", ":delete", ":filter [agent]")
+	for _, gone := range []string{"STEER", "WRITE", ":new", "attention", ":kick", ":pause", ":withdraw", ":brief", "activity"} {
 		if strings.Contains(h.frame(), gone) {
 			t.Errorf("the help still shows %q", gone)
 		}
@@ -332,9 +287,6 @@ func TestClicksSelectAndOpen(t *testing.T) {
 		t.Fatal("no header for #12")
 	}
 	y := line - h.app.viewOffset(s) + 1
-	if s.attn != nil {
-		y++
-	}
 	h.send(tea.MouseClickMsg{X: s.sidebarW + 5, Y: y, Button: tea.MouseLeft})
 	if h.app.msgID != "12" {
 		t.Fatalf("selected %q", h.app.msgID)
@@ -350,23 +302,6 @@ func TestEnterOpensTheMessageDetails(t *testing.T) {
 	contains(t, h.frame(), "message #12 · esc back", "Please run the tests before you say done")
 	h.keys("esc")
 	contains(t, h.frame(), "coop · build-42 · transcript")
-}
-
-func TestAMessageToAnAgentThatLeftIsSentWithANote(t *testing.T) {
-	store := model.New()
-	for _, u := range modeltest.Fixture() {
-		store.Apply(u)
-	}
-	store.Apply(model.Update{Presence: &wire.PresenceUpdate{Key: "build-42.vps-2.bob", Revision: 0}})
-	h := start(t, store)
-	h.openSession()
-	h.keys("m", "+@bob hi", "enter")
-	if fmt.Sprint(h.op.calls) != "[send build-42 bob@vps-2 hi]" {
-		t.Fatalf("calls %v", h.op.calls)
-	}
-	if !strings.Contains(h.status(), "bob@vps-2 is away") {
-		t.Fatalf("status %q", h.status())
-	}
 }
 
 func TestKeysThatArriveTogetherActOnTheLatestState(t *testing.T) {

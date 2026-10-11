@@ -136,7 +136,6 @@ type Session struct {
 	all      bool
 	msgs     []*Msg
 	children map[string][]*Msg
-	forYou   map[string]*Msg
 }
 
 // Store holds the raw facts and the views over them.
@@ -175,7 +174,6 @@ func newSession(st *Store, sid string, all bool) *Session {
 		store:    st,
 		all:      all,
 		children: map[string][]*Msg{},
-		forYou:   map[string]*Msg{},
 	}
 }
 
@@ -382,15 +380,9 @@ func (v *Session) applyEvent(e *wire.Event) {
 				p.Replies = v.children[e.ReplyTo]
 				v.Reshaped++
 			}
-			if e.From == wire.Operator {
-				delete(v.forYou, e.ReplyTo)
-			}
 			if q := v.Asks[e.ReplyTo]; q != nil && e.From == q.To {
 				q.Answered = true
 			}
-		}
-		if e.To == wire.Operator && !v.hasReplyFrom(m.ID, wire.Operator) {
-			v.forYou[m.ID] = m
 		}
 		if q := v.Asks[m.ID]; q != nil {
 			q.Question = m
@@ -502,16 +494,6 @@ func (v *Session) OpenAsks() []*Ask {
 		}
 		return out[i].ID < out[j].ID
 	})
-	return out
-}
-
-// ForYou lists the messages to the operator that no operator reply answered yet.
-func (v *Session) ForYou() []*Msg {
-	var out []*Msg
-	for _, m := range v.forYou {
-		out = append(out, m)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
 	return out
 }
 

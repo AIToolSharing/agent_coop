@@ -89,7 +89,7 @@ func TestTranscriptShowsWholeMessagesAndFoldsSystemLines(t *testing.T) {
 		"  ↩ #5 alice@mac-1: What is the shape of GET /users?",
 		"  I renamed the users fixture",
 		"12:00:50  operator → all",
-		"12:00:55  bob@vps-2 → operator  for you",
+		"12:00:55  bob@vps-2 → operator",
 		"↳1",
 	} {
 		if !strings.Contains(joined, want) {
@@ -317,28 +317,6 @@ func TestSidebarListsSessionsThenAgents(t *testing.T) {
 	}
 	if agentRows != 3 {
 		t.Errorf("%d agent rows", agentRows)
-	}
-}
-
-func TestAttention(t *testing.T) {
-	v := store().View("build-42")
-	items := view.Attention(v, modeltest.Now)
-	var kinds []string
-	for _, it := range items {
-		kinds = append(kinds, it.Kind+":"+it.ID+it.Address)
-	}
-	if fmt.Sprint(kinds) != "[for_you:13 ask:14 blocked:bob@vps-2]" {
-		t.Fatalf("items %v", kinds)
-	}
-	line := view.Plain(view.RenderAttention(items, modeltest.Now))
-	if !strings.Contains(line, "1 for you") || !strings.Contains(line, "1 ask waiting 4m") || !strings.Contains(line, "1 blocked") {
-		t.Errorf("attention line %q", line)
-	}
-	if view.RenderAttention(nil, modeltest.Now) != nil {
-		t.Error("nothing to say should give no line")
-	}
-	if d := view.Describe(items[1]); d != "carol@mac-3 waits for bob@vps-2 (ask #14)" {
-		t.Errorf("describe %q", d)
 	}
 }
 
