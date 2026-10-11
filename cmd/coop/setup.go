@@ -6,10 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
-	"github.com/AIToolSharing/agent_coop/internal/skill"
 )
 
 // The commands that talk to Claude Code and the file system go through these variables, so
@@ -32,7 +30,9 @@ var (
 	}
 )
 
-func skillPath() string {
+// oldSkillPath is where coop v0.12.0 and older wrote their skill. Claude Code listed it in
+// every session.
+func oldSkillPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
@@ -40,9 +40,9 @@ func skillPath() string {
 	return filepath.Join(home, ".claude", "skills", "coop", "SKILL.md")
 }
 
-// cmdSetup registers this binary with Claude Code as the MCP server `coop` (user scope),
-// writes the skill, and removes the hooks of an older coop from the user's settings. It is
-// safe to run again: it replaces a registration that points elsewhere.
+// cmdSetup removes what an older coop put into each Claude session: the MCP server `coop` of
+// user scope, the skill, and the hooks. It adds nothing: coop claude gives the server to the
+// Claude process that it starts, so a plain claude has no coop. It is safe to run again.
 func cmdSetup(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 0 {
 		fmt.Fprintln(stderr, "usage: coop setup")
@@ -52,36 +52,24 @@ func cmdSetup(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "claude is not on the PATH: install Claude Code first")
 		return 1
 	}
-	exe := executable()
-	if out, err := runClaude("mcp", "get", "coop"); err == nil && strings.Contains(out, exe) {
-		fmt.Fprintf(stdout, "Claude Code already starts %s mcp as coop\n", exe)
-	} else {
-		if err == nil {
-			if out, err := runClaude("mcp", "remove", "coop", "-s", "user"); err != nil {
-				fmt.Fprintf(stderr, "cannot replace the old coop server: %v\n%s", err, out)
-				return 1
-			}
-		}
-		if out, err := runClaude("mcp", "add", "--scope", "user", "coop", "--", exe, "mcp"); err != nil {
-			fmt.Fprintf(stderr, "claude mcp add failed: %v\n%s", err, out)
+	if _, err := runClaude("mcp", "get", "coop"); err == nil {
+		if out, err := runClaude("mcp", "remove", "coop", "-s", "user"); err != nil {
+			fmt.Fprintf(stderr, "cannot remove the coop server of every Claude session: %v\n%s", err, out)
 			return 1
 		}
-		fmt.Fprintf(stdout, "registered coop with Claude Code (user scope): %s mcp\n", exe)
+		fmt.Fprintln(stdout, "removed the coop server of every Claude session: coop claude loads it")
 	}
-	path := skillPath()
-	if path == "" {
-		fmt.Fprintln(stderr, "cannot find the home directory for the skill")
-		return 1
+	if path := oldSkillPath(); path != "" {
+		switch err := os.Remove(path); {
+		case err == nil:
+			// The directory goes only when it is empty: a file of the user stays.
+			_ = os.Remove(filepath.Dir(path))
+			fmt.Fprintln(stdout, "removed the skill of an older coop: "+path)
+		case !os.IsNotExist(err):
+			fmt.Fprintf(stderr, "cannot remove the skill of an older coop: %v\n", err)
+			return 1
+		}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	if err := os.WriteFile(path, []byte(skill.Text), 0o644); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	fmt.Fprintf(stdout, "wrote %s\n", path)
 	if settings := claudeSettingsPath(); settings != "" {
 		changed, err := removeHookFile(settings)
 		switch {

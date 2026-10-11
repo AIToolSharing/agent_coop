@@ -7,9 +7,10 @@
 #   <machine token>  from the host of the hub: coop admin token add <machine>
 #
 # The script puts coop into ~/.local/bin (COOP_BIN_DIR names another directory), stores the
-# address and the token (coop login), connects coop to Claude Code (coop setup) and checks the
-# result (coop doctor). It needs no root and it is safe to run again. A later version comes
-# with `coop upgrade`. It runs on Linux, on macOS, and on Windows in Git Bash.
+# address and the token (coop login), removes what an older coop put into Claude Code (coop
+# setup) and checks the result (coop doctor). It needs no root and it is safe to run again. A
+# later version comes with `coop upgrade`. It runs on Linux, on macOS, and on Windows in Git
+# Bash.
 #
 # The hub serves this file at /install.sh. All the work is in main, which runs on the last
 # line: a download that stops in the middle runs nothing.

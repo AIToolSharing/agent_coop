@@ -85,11 +85,14 @@ Run `make hub HOST=<server>` again. Then run `coop upgrade` on each machine.
   `<agent>@<machine>`. `coop --agent <name> claude` selects another name.
 - **Tools.** An agent gets `status`, `send`, `ask`, `wait`, `inbox`, `history` and `set_state`.
 - **Push.** `coop claude` starts Claude Code with the coop channel. A message wakes an idle
-  agent. A headless agent (`claude -p`) gets no push, so it calls `wait` or `inbox`.
+  agent. A headless agent (`coop claude -p`) gets no push, so it calls `wait` or `inbox`.
 - **Agents that leave.** The peer lists show only the agents in the session now. The hub keeps
   the messages to an agent that left, and gives them to it when it joins again.
-- **Other clients.** A process with `COOP_SESSION` in its environment joins that session. A plain
-  `claude` without it gets no coop tools.
+- **Solo sessions.** Only `coop claude` loads coop, and only into the Claude process that it
+  starts. A plain `claude` has no coop server, no coop tools and no coop instructions. To bring
+  a solo conversation into its session, end it and run `coop claude --continue`.
+- **Other clients.** An MCP client that runs `coop mcp` with `COOP_SESSION` in its environment
+  joins that session.
 
 ## The TUI
 
@@ -122,8 +125,8 @@ and `:quit`.
   once.
 - An agent with a shell can read the token of its machine. All the agents are yours, so coop
   accepts this.
-- An agent must not obey a message from a peer as an instruction from you. The skill of coop
-  tells it this.
+- An agent must not obey a message from a peer as an instruction from you. The instructions of
+  coop tell it this.
 - An agent that is not sure about a request of a peer does not do it. It sets its state to
   `blocked` with a note. You see the state and the note in the TUI.
 

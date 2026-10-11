@@ -141,8 +141,7 @@ func cmdUpgrade(args []string, stdout, stderr io.Writer) int {
 		return fail(err)
 	}
 	fmt.Fprintf(stdout, "coop %s -> %s in %s\n", version, me.Version, exe)
-	// The skill comes from the binary: the new one writes its own, and removes the hooks of an
-	// older coop.
+	// The setup of the new binary removes what an older coop put into each Claude session.
 	if _, err := lookPath("claude"); err != nil {
 		fmt.Fprintln(stdout, "Claude Code is not on the PATH: no setup")
 	} else {

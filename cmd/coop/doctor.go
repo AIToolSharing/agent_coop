@@ -106,17 +106,13 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 	}
 	if _, err := lookPath("claude"); err != nil {
 		fail("claude is not on the PATH")
-	} else if out, err := runClaude("mcp", "get", "coop"); err != nil {
-		fail("Claude Code has no MCP server named coop: run coop setup")
-	} else if exe := executable(); !strings.Contains(out, exe) {
-		fail("Claude Code starts another binary as coop, not " + exe + ": run coop setup")
+	} else if _, err := runClaude("mcp", "get", "coop"); err == nil {
+		note("an older coop setup loads coop into each Claude session: run coop setup")
 	} else {
-		ok("Claude Code starts " + exe + " mcp as coop")
+		ok("a plain claude has no coop; coop claude loads " + executable() + " mcp")
 	}
-	if _, err := os.Stat(skillPath()); err != nil {
-		note("no skill at " + skillPath() + ": run coop setup")
-	} else {
-		ok("skill " + skillPath())
+	if _, err := os.Stat(oldSkillPath()); err == nil {
+		note("an older coop setup left a skill in " + oldSkillPath() + ": run coop setup")
 	}
 	if path := claudeSettingsPath(); path != "" {
 		if raw, err := os.ReadFile(path); err == nil {

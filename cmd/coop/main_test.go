@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
 	"github.com/AIToolSharing/agent_coop/internal/pin"
+	"pgregory.net/rapid"
 )
 
 func TestUsageAndVersion(t *testing.T) {
@@ -176,18 +178,45 @@ func TestTheSessionCommandIsGone(t *testing.T) {
 }
 
 func TestClaudeCommandLine(t *testing.T) {
-	session, argv := claudeCommand([]string{"build-42", "--model", "opus"}, map[string]string{})
-	if session != "build-42" || strings.Join(argv, " ") != "claude --dangerously-load-development-channels server:coop --model opus" {
+	const server = `--mcp-config {"mcpServers":{"coop":{"command":"/opt/coop/coop","args":["mcp"]}}}`
+	session, argv := claudeCommand([]string{"build-42", "--model", "opus"}, map[string]string{}, "/opt/coop/coop")
+	if session != "build-42" || strings.Join(argv, " ") != "claude "+server+" --dangerously-load-development-channels server:coop --model opus" {
 		t.Fatalf("%q %v", session, argv)
 	}
-	session, argv = claudeCommand([]string{"-p", "hi"}, map[string]string{"COOP_CHANNEL": "plugin:coop@coop"})
-	if session != "" || strings.Join(argv, " ") != "claude --dangerously-load-development-channels plugin:coop@coop -p hi" {
+	session, argv = claudeCommand([]string{"-p", "hi"}, map[string]string{"COOP_CHANNEL": "plugin:coop@coop"}, "/opt/coop/coop")
+	if session != "" || strings.Join(argv, " ") != "claude "+server+" --dangerously-load-development-channels plugin:coop@coop -p hi" {
 		t.Fatalf("%q %v", session, argv)
 	}
 	// The user's own --settings goes to Claude Code as it is.
-	if _, argv := claudeCommand([]string{"--settings", "x.json"}, map[string]string{}); strings.Join(argv, " ") != "claude --dangerously-load-development-channels server:coop --settings x.json" {
+	if _, argv := claudeCommand([]string{"--settings", "x.json"}, map[string]string{}, "/opt/coop/coop"); strings.Join(argv, " ") != "claude "+server+" --dangerously-load-development-channels server:coop --settings x.json" {
 		t.Fatalf("%v", argv)
 	}
+}
+
+// coop claude gives the MCP server only to the Claude process that it starts: a plain claude
+// has no coop. For any path of the binary (Windows paths have backslashes, paths can have
+// spaces and quotes), the JSON after --mcp-config names that path, and a flag follows it, so
+// that the variadic --mcp-config takes no argument of the user.
+func TestClaudeCommandGivesTheServerToThisProcessOnly(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		exe := rapid.String().Draw(t, "exe")
+		_, argv := claudeCommand(nil, map[string]string{}, exe)
+		if len(argv) < 5 || argv[1] != "--mcp-config" || !strings.HasPrefix(argv[3], "-") {
+			t.Fatalf("argv %q", argv)
+		}
+		var cfg struct {
+			MCPServers map[string]struct {
+				Command string   `json:"command"`
+				Args    []string `json:"args"`
+			} `json:"mcpServers"`
+		}
+		if err := json.Unmarshal([]byte(argv[2]), &cfg); err != nil {
+			t.Fatalf("%v: %s", err, argv[2])
+		}
+		if c, ok := cfg.MCPServers["coop"]; len(cfg.MCPServers) != 1 || !ok || c.Command != exe || !slices.Equal(c.Args, []string{"mcp"}) {
+			t.Fatalf("servers %+v, want coop: %q mcp", cfg.MCPServers, exe)
+		}
+	})
 }
 
 // The shim of one Claude Code process must use the same session and agent name in whatever
@@ -246,55 +275,90 @@ func (f *fakeClaude) install(t *testing.T, exe string) {
 		if len(args) > 1 && args[1] == "add" {
 			f.registered = args[len(args)-2]
 		}
+		if len(args) > 1 && args[1] == "remove" {
+			f.registered = ""
+		}
 		return "", nil
 	}
 	lookPath = func(name string) (string, error) { return "/usr/local/bin/" + name, nil }
 	executable = func() string { return exe }
 }
 
-func TestSetupRegistersTheBinaryAndWritesTheSkill(t *testing.T) {
+// coop loads into no Claude session except the one that coop claude starts. coop setup removes
+// what an older coop put into Claude Code for every session: the MCP server of user scope, the
+// skill, and the hooks. It adds nothing.
+func TestSetupRemovesWhatAnOlderCoopPutIntoEachSession(t *testing.T) {
 	home := t.TempDir()
 	setHome(t, home)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	f := &fakeClaude{}
 	f.install(t, "/opt/coop/coop")
 	var out, errOut bytes.Buffer
+	// Nothing of an older coop: setup only looks.
 	if code := run([]string{"setup"}, &out, &errOut); code != 0 {
 		t.Fatalf("code %d: %s", code, errOut.String())
 	}
-	if strings.Join(f.calls, " | ") != "mcp get coop | mcp add --scope user coop -- /opt/coop/coop mcp" {
+	if strings.Join(f.calls, " | ") != "mcp get coop" {
 		t.Fatalf("calls %v", f.calls)
 	}
-	b, err := os.ReadFile(filepath.Join(home, ".claude", "skills", "coop", "SKILL.md"))
-	if err != nil || !strings.HasPrefix(string(b), "---\nname: coop") {
-		t.Fatalf("skill: %v %q", err, b)
+	skillDir := filepath.Join(home, ".claude", "skills", "coop")
+	settings := filepath.Join(home, ".claude", "settings.json")
+	for _, path := range []string{skillDir, settings} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("setup made %s: %v", path, err)
+		}
 	}
-	if !strings.Contains(out.String(), "registered coop with Claude Code") || !strings.Contains(out.String(), "coop login") {
+	if !strings.Contains(out.String(), "coop login") || !strings.Contains(out.String(), "coop claude") {
 		t.Fatalf("stdout %q", out.String())
 	}
-	// coop writes no settings file.
-	settings := filepath.Join(home, ".claude", "settings.json")
-	if _, err := os.Stat(settings); !os.IsNotExist(err) {
-		t.Fatalf("a settings file: %v", err)
+	// The setup of an older coop: the server of user scope, the skill, a hook.
+	f.registered = "/old/coop"
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	// The hooks of an older coop go; the other settings stay.
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: coop\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	old := `{"model":"opus","hooks":{"PreToolUse":[{"matcher":"","hooks":[{"type":"command","command":"'/opt/coop/coop' hook pretool","timeout":30}]}]}}`
 	if err := os.WriteFile(settings, []byte(old), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	f.calls = nil
 	out.Reset()
+	if code := run([]string{"setup"}, &out, &errOut); code != 0 || strings.Join(f.calls, " | ") != "mcp get coop | mcp remove coop -s user" {
+		t.Fatalf("code %d calls %v: %s", code, f.calls, errOut.String())
+	}
+	if _, err := os.Stat(skillDir); !os.IsNotExist(err) {
+		t.Fatalf("the skill of an older coop is still there: %v", err)
+	}
+	if text, _ := os.ReadFile(settings); strings.Contains(string(text), "hook") || !strings.Contains(string(text), "opus") {
+		t.Fatalf("settings %s", text)
+	}
+	for _, want := range []string{"removed the coop server of every Claude session", "removed the skill of an older coop", "removed the hooks of an older coop from " + settings} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q in %q", want, out.String())
+		}
+	}
+	// A second run finds nothing to remove.
+	f.calls = nil
 	if code := run([]string{"setup"}, &out, &errOut); code != 0 || strings.Join(f.calls, " | ") != "mcp get coop" {
 		t.Fatalf("second run: code %d calls %v", code, f.calls)
 	}
-	if text, _ := os.ReadFile(settings); strings.Contains(string(text), "hook") || !strings.Contains(string(text), "opus") || !strings.Contains(out.String(), "removed the hooks of an older coop from "+settings) {
-		t.Fatalf("settings %s\nstdout %q", text, out.String())
+	// A file of the user next to the old skill stays, with its directory.
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	// A registration that points elsewhere is replaced.
-	f.registered = "/old/coop"
-	f.calls = nil
-	if code := run([]string{"setup"}, &out, &errOut); code != 0 || strings.Join(f.calls, " | ") != "mcp get coop | mcp remove coop -s user | mcp add --scope user coop -- /opt/coop/coop mcp" {
-		t.Fatalf("replace: code %d calls %v", code, f.calls)
+	mine := filepath.Join(skillDir, "notes.md")
+	_ = os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("old"), 0o644)
+	_ = os.WriteFile(mine, []byte("mine"), 0o644)
+	if code := run([]string{"setup"}, &out, &errOut); code != 0 {
+		t.Fatal(errOut.String())
+	}
+	if _, err := os.Stat(mine); err != nil {
+		t.Fatalf("the file of the user is gone: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(skillDir, "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("the old skill is still there: %v", err)
 	}
 }
 
@@ -314,12 +378,19 @@ func TestDoctorReportsEachStep(t *testing.T) {
 	if code := run([]string{"doctor"}, &out, &errOut); code != 1 {
 		t.Fatalf("code %d:\n%s", code, out.String())
 	}
-	for _, want := range []string{"FAIL  no credential file", "FAIL  no hub address", "--    not in a git repository: coop claude <session> names the session", "FAIL  Claude Code has no MCP server named coop: run coop setup"} {
+	for _, want := range []string{"FAIL  no credential file", "FAIL  no hub address", "--    not in a git repository: coop claude <session> names the session", "ok    a plain claude has no coop; coop claude loads /opt/coop/coop mcp"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in\n%s", want, out.String())
 		}
 	}
-	// Logged in, registered, in a session.
+	// The setup of an older coop loads coop into each Claude session.
+	f.registered = "/opt/coop/coop"
+	out.Reset()
+	run([]string{"doctor"}, &out, &errOut)
+	if want := "--    an older coop setup loads coop into each Claude session: run coop setup"; !strings.Contains(out.String(), want) {
+		t.Errorf("missing %q in\n%s", want, out.String())
+	}
+	// Logged in, set up, in a session.
 	srv := hub(t, "op.1", "mac.2")
 	if code := run([]string{"login", srv.URL, "mac.2"}, &out, &errOut); code != 0 {
 		t.Fatal(errOut.String())
@@ -333,7 +404,7 @@ func TestDoctorReportsEachStep(t *testing.T) {
 	if code := run([]string{"doctor"}, &out, &errOut); code != 0 {
 		t.Fatalf("code %d:\n%s", code, out.String())
 	}
-	for _, want := range []string{"ok    credential file", "ok    hub address " + srv.URL, "ok    the hub answers", "ok    machine token accepted", "--    no operator token", "ok    coop claude here joins the session build-42 (the name of the git repository)", "ok    agent name " + filepath.Base(dir), "ok    Claude Code starts /opt/coop/coop mcp as coop", "ok    skill "} {
+	for _, want := range []string{"ok    credential file", "ok    hub address " + srv.URL, "ok    the hub answers", "ok    machine token accepted", "--    no operator token", "ok    coop claude here joins the session build-42 (the name of the git repository)", "ok    agent name " + filepath.Base(dir), "ok    a plain claude has no coop; coop claude loads /opt/coop/coop mcp"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in\n%s", want, out.String())
 		}

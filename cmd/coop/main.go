@@ -23,7 +23,7 @@ const usageText = `usage:
                                   directory)
   coop tui [--url <url>] [--token <token>]
                                   watch all sessions (operator token)
-  coop setup                      register coop with Claude Code and install the skill
+  coop setup                      remove what an older coop put into each Claude session
   coop doctor                     check the connection, the tokens, the session, the setup
   coop upgrade                    take the version of the hub: download the binary of this
                                   device from the hub, then run its setup
