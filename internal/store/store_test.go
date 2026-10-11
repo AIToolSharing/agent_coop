@@ -205,7 +205,7 @@ func must2[T any](v T, ok bool, err error) (T, bool) {
 }
 
 // Every record write gets a revision greater than every revision before it, also across a
-// close and open of the store. The operator's feed depends on it to keep the newest value.
+// close and open of the store. The feed of the TUI depends on it to keep the newest value.
 func TestRevisionsIncrease(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		s, path := open(t)
@@ -304,8 +304,8 @@ func TestTokens(t *testing.T) {
 			t.Errorf("verify accepted %q", bad)
 		}
 	}
-	op := must(s.IssueToken("matt", "operator", at))
-	if _, role, _ := must3(s.VerifyToken(op)); role != "operator" {
+	op := must(s.IssueToken("matt", "watch", at))
+	if _, role, _ := must3(s.VerifyToken(op)); role != "watch" {
 		t.Fatalf("role %s", role)
 	}
 	// A new token of the same name replaces the old one.
@@ -334,7 +334,7 @@ func TestTokens(t *testing.T) {
 	rows := must(s.Tokens())
 	want := []store.TokenRow{
 		{Name: "mac-1", Role: "machine", CreatedAt: at, RevokedAt: "2026-10-02T11:00:00.000Z"},
-		{Name: "matt", Role: "operator", CreatedAt: at},
+		{Name: "matt", Role: "watch", CreatedAt: at},
 	}
 	if !reflect.DeepEqual(rows, want) {
 		t.Fatalf("Tokens:\n got %+v\nwant %+v", rows, want)
@@ -357,7 +357,7 @@ func must3[T, U any](v T, u U, ok bool, err error) (T, U, bool) {
 	return v, u, ok
 }
 
-// The operator's feed sends the rows as the wire form: subject and payload, byte for byte
+// The feed of the TUI sends the rows as the wire form: subject and payload, byte for byte
 // what the encoder gave.
 func TestRowsAreTheWireForm(t *testing.T) {
 	s, _ := open(t)
@@ -391,4 +391,27 @@ func TestOpenCreatesTheDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = s.Close()
+}
+
+// coop v0.13.0 and before stored the token of the person who watches with the role operator.
+// Open gives such a token the role watch, and the token stays valid.
+func TestOpenGivesAnOldOperatorTokenTheRoleWatch(t *testing.T) {
+	s, path := open(t)
+	tok := must(s.IssueToken("me", "machine", at))
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`UPDATE tokens SET role = 'operator' WHERE name = 'me'`); err != nil {
+		t.Fatal(err)
+	}
+	_ = old.Close()
+	again := must(store.Open(path))
+	defer again.Close()
+	if rows := must(again.Tokens()); len(rows) != 1 || rows[0].Role != "watch" {
+		t.Fatalf("tokens %+v", rows)
+	}
+	if name, role, ok, err := again.VerifyToken(tok); err != nil || !ok || name != "me" || role != "watch" {
+		t.Fatalf("verify: %q %q %v %v", name, role, ok, err)
+	}
 }

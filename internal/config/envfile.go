@@ -17,8 +17,8 @@ import (
 	"unicode"
 )
 
-// The credential file holds KEY=VALUE lines. The agent side keeps COOP_URL and COOP_TOKEN in
-// it, and the operator side keeps COOP_URL and COOP_OPERATOR_TOKEN.
+// The credential file holds KEY=VALUE lines: COOP_URL, COOP_TOKEN and, for a hub with a pinned
+// certificate, COOP_CERT_SHA256.
 
 // DefaultEnvFile returns the path of the credential file, ~/.config/coop/env. When HOME is not
 // set, it returns an empty path: ReadEnvFile then gives no values and UpdateEnvFile fails.
@@ -80,9 +80,10 @@ func ReadEnvFile(path string, warn func(string)) map[string]string {
 	return ParseEnv(string(b))
 }
 
-// UpdateEnvFile sets keys in the credential file and keeps the other keys. It creates the
-// directory with mode 0700 and gives the file mode 0600. It does not keep comments: the coop
-// commands write this file, not a person.
+// UpdateEnvFile sets keys in the credential file and keeps the other keys. An empty value
+// removes its key: the readers count an empty value as not set. It creates the directory with
+// mode 0700 and gives the file mode 0600. It does not keep comments: the coop commands write
+// this file, not a person.
 //
 // UpdateEnvFile refuses a key or a value that ParseEnv does not read back unchanged. Thus a
 // value with a line break cannot add a key. It also refuses a file that exists but that it
@@ -104,6 +105,7 @@ func UpdateEnvFile(path string, values map[string]string) error {
 		return err
 	}
 	maps.Copy(next, values)
+	maps.DeleteFunc(next, func(_, v string) bool { return v == "" })
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}

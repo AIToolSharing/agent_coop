@@ -10,9 +10,9 @@ import (
 
 var token = rapid.StringMatching(`^[a-z0-9_-]{1,64}$`)
 
-// An agent name: a token that is not a reserved word.
+// An agent name: a token that is not the reserved word.
 func agentName() *rapid.Generator[string] {
-	return token.Filter(func(s string) bool { return s != "operator" && s != "all" })
+	return token.Filter(func(s string) bool { return s != "all" })
 }
 
 func address() *rapid.Generator[wire.Address] {
@@ -32,7 +32,7 @@ func TestAddressRoundTrip(t *testing.T) {
 }
 
 func TestAddressRejectsReservedNamesAndBadShapes(t *testing.T) {
-	for _, s := range []string{"operator@mac", "all@mac", "alice", "alice@", "@mac", "a@b@c", "Alice@mac", "alice@m.ac", ""} {
+	for _, s := range []string{"all@mac", "alice", "alice@", "@mac", "a@b@c", "Alice@mac", "alice@m.ac", ""} {
 		if _, ok := wire.ParseAddress(s); ok {
 			t.Errorf("%q: accepted", s)
 		}
@@ -63,8 +63,12 @@ func TestKeyExamplesFromTheTypeScriptFixture(t *testing.T) {
 	if !ok || p.SID != "build-42" || p.Agent != (wire.Address{Agent: "alice", Machine: "mac-1"}) {
 		t.Fatalf("%+v %v", p, ok)
 	}
-	if _, ok := wire.ParsePresenceKey("build-42.mac-1.operator"); ok {
-		t.Fatal("operator is not an agent")
+	if _, ok := wire.ParsePresenceKey("build-42.mac-1.all"); ok {
+		t.Fatal("all is not an agent")
+	}
+	// "operator" was a reserved name up to coop v0.13.0. It is an agent name now.
+	if _, ok := wire.ParseAddress("operator@mac"); !ok {
+		t.Fatal("operator@mac is not an address")
 	}
 }
 

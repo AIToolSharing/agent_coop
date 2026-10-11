@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS known (
 	seen_seq INTEGER NOT NULL,
 	PRIMARY KEY (sid, agent)
 );
+-- coop v0.13.0 and before named the role watch operator.
+UPDATE tokens SET role = 'watch' WHERE role = 'operator';
 `
 
 // A database of an earlier version has more: the table kicks, the column known.gate, and
@@ -114,7 +116,7 @@ func (s *Store) tx(fn func(tx *sql.Tx) error) error {
 	return tx.Commit()
 }
 
-// bump gives the next revision. Every record write takes one, so the operator's feed can
+// bump gives the next revision. Every record write takes one, so the watch feed can
 // keep the newest value of a key, also across a restart of the hub.
 func bump(tx *sql.Tx) (int64, error) {
 	var rev int64
@@ -208,7 +210,7 @@ func (s *Store) Events(sid string, from, to int64, kinds ...string) ([]wire.Even
 	return out, nil
 }
 
-// Row is one event in its wire form: the subject and the payload, as the operator's feed
+// Row is one event in its wire form: the subject and the payload, as the watch feed
 // sends it.
 type Row struct {
 	Seq     int64
@@ -383,7 +385,7 @@ func (s *Store) KnownAgent(sid, agent string) (KnownRow, bool, error) {
 // TokenRow is one token: its name, role and dates. The secret is never stored.
 type TokenRow struct {
 	Name      string
-	Role      string // a wire role: machine or operator
+	Role      string // a wire role: machine or watch
 	CreatedAt string
 	RevokedAt string // "" while valid
 }

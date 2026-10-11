@@ -44,28 +44,29 @@ type route struct {
 	handlers map[string]http.HandlerFunc // by method
 	kinds    map[string]kind             // by method
 	allow    string                      // the Allow header
+	watch    bool                        // the route is for a watch token only
 }
 
 // kind says which token roles may use a route.
 type kind int
 
 const (
-	kindAny      kind = iota // each valid token
-	kindAgent                // acts as an agent in a session: a machine token
-	kindOperator             // the admin API: an operator token, only the human
+	kindAny   kind = iota // each valid token
+	kindAgent             // acts as an agent in a session: a machine or a watch token
+	kindWatch             // reads every session: a watch token
 )
 
 // mayUse is the rule of the token roles: for each kind of route, the roles that may use it.
 var mayUse = map[kind][]string{
-	kindAny:      {wire.RoleMachine, wire.RoleOperator},
-	kindAgent:    {wire.RoleMachine},
-	kindOperator: {wire.RoleOperator},
+	kindAny:   {wire.RoleMachine, wire.RoleWatch},
+	kindAgent: {wire.RoleMachine, wire.RoleWatch},
+	kindWatch: {wire.RoleWatch},
 }
 
-// refusal is what a role that may not use a kind of route reads.
+// refusal is what a role that may not use a kind of route reads. A token of a role that this
+// version dropped (orchestrator) reads it. A watch route answers no refusal: see ServeHTTP.
 var refusal = map[kind]string{
-	kindAgent:    "cannot act as an agent",
-	kindOperator: "cannot use the admin API",
+	kindAgent: "cannot act as an agent",
 }
 
 // New makes the handler. log gets internal errors; nil discards them.
@@ -80,9 +81,9 @@ func New(h *hub.Hub, log func(format string, args ...any)) *Server {
 	s.add("GET", "/v1/sessions/{sid}/messages", kindAgent, s.history)
 	s.add("POST", "/v1/sessions/{sid}/activity", kindAgent, s.activity)
 	s.add("GET", "/v1/sessions/{sid}", kindAgent, s.view)
-	s.add("GET", "/v1/admin/sessions", kindOperator, s.adminSessions)
-	s.add("DELETE", "/v1/admin/sessions/{sid}", kindOperator, s.adminDelete)
-	s.add("GET", "/v1/admin/stream", kindOperator, s.adminStream)
+	s.add("GET", "/v1/admin/sessions", kindWatch, s.adminSessions)
+	s.add("DELETE", "/v1/admin/sessions/{sid}", kindWatch, s.adminDelete)
+	s.add("GET", "/v1/admin/stream", kindWatch, s.adminStream)
 	return s
 }
 
@@ -100,6 +101,7 @@ func (s *Server) add(method, path string, k kind, h handler) {
 	}
 	r.handlers[method] = s.guard(k, h)
 	r.kinds[method] = k
+	r.watch = r.watch || k == kindWatch
 	methods := make([]string, 0, len(r.handlers))
 	for m := range r.handlers {
 		methods = append(methods, m)
@@ -131,6 +133,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sid, ok := match(rt.pattern, segs)
 		if !ok {
 			continue
+		}
+		// A watch route is not there for a request without a watch token: no 401, 403 or
+		// 405 tells an agent that the route exists.
+		if rt.watch {
+			if _, err := s.auth(r, kindWatch); err != nil {
+				var he *hub.Error
+				if errors.As(err, &he) && he.Code == "unavailable" {
+					writeHubError(w, err)
+					return
+				}
+				break
+			}
 		}
 		h, ok := rt.handlers[r.Method]
 		if !ok {
@@ -316,7 +330,8 @@ func (s *Server) whoami(w http.ResponseWriter, r *http.Request, owner hub.Owner,
 		writeHubError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]string{"name": owner.Name, "role": owner.Role, "version": s.Version})
+	// A watch token is a machine token to every client: the role stays in the hub.
+	writeJSON(w, 200, map[string]string{"name": owner.Name, "role": wire.RoleMachine, "version": s.Version})
 }
 
 // --- Agent routes ----------------------------------------------------------------------------

@@ -14,20 +14,19 @@ import (
 	"time"
 )
 
-// Token roles. A machine token acts as the agents of one machine. The operator is the human.
+// Token roles. A machine token acts as the agents of one machine. A watch token does the same,
+// and it may also read every session (coop tui). Only the hub knows the difference: to every
+// client, a watch token is a machine token.
 const (
-	RoleMachine  = "machine"
-	RoleOperator = "operator"
+	RoleMachine = "machine"
+	RoleWatch   = "watch"
 )
 
 // IsRole reports whether s is a token role.
-func IsRole(s string) bool { return s == RoleMachine || s == RoleOperator }
+func IsRole(s string) bool { return s == RoleMachine || s == RoleWatch }
 
-// Reserved names in addressing. No agent can have them.
-const (
-	Operator  = "operator"
-	Broadcast = "all"
-)
+// Broadcast is the recipient "all": the reserved name in addressing. No agent can have it.
+const Broadcast = "all"
 
 // MaxText is the longest message text.
 const MaxText = 8000
@@ -40,8 +39,8 @@ var (
 // IsToken reports whether s is a name token: a session id or a machine name. No dots.
 func IsToken(s string) bool { return tokenRE.MatchString(s) }
 
-// IsAgentName reports whether s is a token that is not a reserved name.
-func IsAgentName(s string) bool { return IsToken(s) && s != Operator && s != Broadcast }
+// IsAgentName reports whether s is a token that is not the reserved name.
+func IsAgentName(s string) bool { return IsToken(s) && s != Broadcast }
 
 // IsID reports whether s is a message id: a stream sequence in decimal.
 func IsID(s string) bool { return idRE.MatchString(s) }
@@ -237,7 +236,7 @@ func isAddress(s string) bool {
 }
 
 // DecodeEvent reads one stored event. An unknown subject or a bad payload gives false. An
-// event that this version dropped (a message or an action of the operator on ops, a gate or a
+// event that this version dropped (a message or an action on ops, a gate or a
 // forgotten activity) gives false too: a log of an older hub holds such events.
 func DecodeEvent(subject string, payload []byte, seq int64) (Event, bool) {
 	s, ok := ParseSubject(subject)
@@ -289,7 +288,7 @@ func validActivity(a Activity) bool {
 	return false
 }
 
-// --- The operator's feed ---------------------------------------------------------------------
+// --- The watch feed --------------------------------------------------------------------------
 
 // AdminEvent is one SSE event of GET /v1/admin/stream. Kind is the SSE event name.
 type AdminEvent struct {

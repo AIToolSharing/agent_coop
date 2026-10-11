@@ -511,9 +511,8 @@ func (m *apiMessage) UnmarshalJSON(b []byte) error {
 	}
 	return checkRules(
 		rule{wire.IsID(m.ID), "id"},
-		// The log of an older hub can hold messages to and from operator.
-		rule{m.From == wire.Operator || isAddress(m.From), "from"},
-		rule{m.To == wire.Operator || isRecipient(m.To), "to"},
+		rule{isAddress(m.From), "from"},
+		rule{isRecipient(m.To), "to"},
 		rule{validText(m.Text), "text"},
 		rule{m.ReplyTo == "" || wire.IsID(m.ReplyTo), "reply_to"},
 		rule{wire.IsTime(m.SentAt), "sent_at"},

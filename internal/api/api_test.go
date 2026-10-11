@@ -7,28 +7,38 @@ import (
 )
 
 // A known path with a method that no route lists is 405 with Allow, as JSON; an unknown path is
-// 404 as JSON; a path is never cleaned or redirected.
+// 404 as JSON; a path is never cleaned or redirected. An admin route is unknown (404) to each
+// request without a token that may watch, also with a method that the route does not list.
 func TestMethodNotAllowedAndNotFound(t *testing.T) {
 	h := startHub(t, limits{}, options{})
+	watch, machine := h.watchToken("me"), h.token("mac-1")
 	cases := []struct {
+		token        string
 		method, path string
 		status       int
 		allow        string
 	}{
-		{"PUT", "/v1/sessions/x/stream", 405, "GET"},
-		{"PATCH", "/v1/admin/sessions", 405, "GET"},
-		// The operator only watches: it creates no session and sends no message.
-		{"POST", "/v1/admin/sessions", 405, "GET"},
-		{"POST", "/v1/admin/sessions/x/messages", 404, ""},
-		{"PUT", "/v1/admin/sessions/x", 405, "DELETE"},
-		{"POST", "/v1/sessions/x", 405, "GET"},
-		{"GET", "/nope", 404, ""},
-		{"GET", "/v1/sessions", 404, ""},
-		{"GET", "/v1/sessions//stream", 404, ""},
-		{"GET", "/v1/admin/sessions/", 404, ""},
+		{"", "PUT", "/v1/sessions/x/stream", 405, "GET"},
+		{watch, "PATCH", "/v1/admin/sessions", 405, "GET"},
+		{"", "PATCH", "/v1/admin/sessions", 404, ""},
+		{machine, "PATCH", "/v1/admin/sessions", 404, ""},
+		{machine, "GET", "/v1/admin/stream", 404, ""},
+		// The person who watches creates no session and sends no message.
+		{watch, "POST", "/v1/admin/sessions", 405, "GET"},
+		{watch, "POST", "/v1/admin/sessions/x/messages", 404, ""},
+		{watch, "PUT", "/v1/admin/sessions/x", 405, "DELETE"},
+		{"", "PUT", "/v1/admin/sessions/x", 404, ""},
+		{"", "POST", "/v1/sessions/x", 405, "GET"},
+		{"", "GET", "/nope", 404, ""},
+		{"", "GET", "/v1/sessions", 404, ""},
+		{"", "GET", "/v1/sessions//stream", 404, ""},
+		{"", "GET", "/v1/admin/sessions/", 404, ""},
 	}
 	for _, c := range cases {
 		req, _ := http.NewRequest(c.method, h.base+c.path, nil)
+		if c.token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.token)
+		}
 		res, err := http.DefaultTransport.RoundTrip(req)
 		if err != nil {
 			t.Fatal(err)

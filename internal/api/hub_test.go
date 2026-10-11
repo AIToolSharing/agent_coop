@@ -59,7 +59,7 @@ func TestHub(t *testing.T) {
 	t.Run("messages", x.messages)
 	t.Run("rate limits", rateLimits)
 	t.Run("resume", x.resume)
-	t.Run("the operator only watches", x.operatorWatches)
+	t.Run("operator is an agent name like any other", x.operatorIsAName)
 	t.Run("peer presence", x.peerPresence)
 	t.Run("peers that left", x.peersThatLeft)
 	t.Run("activity and presence", x.activityAndPresence)
@@ -76,16 +76,24 @@ func (x *hubSuite) authentication(t *testing.T) {
 		wantStatus(t, 401)(fetch(x.h.base + "/v1/sessions/" + sid))
 	})
 
-	t.Run("an operator token cannot act as an agent: 403 on the agent routes", func(t *testing.T) {
+	// The person who watches is one more machine to the agents: a token that may watch also
+	// acts as an agent, and whoami calls each token a machine token.
+	t.Run("a watch token also acts as an agent; whoami calls it a machine token", func(t *testing.T) {
 		sid := x.session(t)
-		op := api{x.h.base, x.h.operatorToken("matt")}
-		body := wantStatus(t, 403)(op.view(sid, "a"))
-		if m := parse[errBody](t, body).Message; !strings.Contains(m, "operator token") {
-			t.Fatalf("message %q", m)
+		w := api{x.h.base, x.h.watchToken("matt")}
+		s := w.stream(sid, "a")
+		defer s.close()
+		wantStatus(t, 200)(s.status(), s.body)
+		s.wait(t, nil)
+		wantStatus(t, 200)(w.view(sid, "a"))
+		for _, tok := range []string{w.token, x.mac1.token} {
+			status, _, body := get(t, x.h.base+"/v1/whoami", tok)
+			if status != 200 || !strings.Contains(string(body), `"role":"machine"`) {
+				t.Fatalf("whoami: %d %s", status, body)
+			}
 		}
-		wantStatus(t, 403)(op.stream(sid, "a").result())
 		roles := x.h.tokenRoles()
-		if roles["matt"] != "operator" {
+		if roles["matt"] != "watch" {
 			t.Fatalf("role of matt: %q", roles["matt"])
 		}
 		if roles["mac-1"] != "machine" {
@@ -386,15 +394,16 @@ func (x *hubSuite) resume(t *testing.T) {
 	})
 }
 
-func (x *hubSuite) operatorWatches(t *testing.T) {
-	// The operator only watches: an agent cannot write to operator, ask it or wait on it.
-	t.Run("an agent cannot send to operator or wait on it: 422", func(t *testing.T) {
+func (x *hubSuite) operatorIsAName(t *testing.T) {
+	// The person who watches has no name in a session: "operator" names no one special. With no
+	// agent of that name, a send to it and a wait on it find no peer.
+	t.Run("a send to operator and a wait on it find no peer: 404", func(t *testing.T) {
 		sid := x.session(t)
 		a := x.mac1.stream(sid, "alice")
 		defer a.close()
 		a.wait(t, nil)
-		wantStatus(t, 422)(x.mac1.send(sid, "alice", "operator", "hi", ""))
-		wantStatus(t, 422)(x.mac1.activity(sid, map[string]any{
+		wantStatus(t, 404)(x.mac1.send(sid, "alice", "operator", "hi", ""))
+		wantStatus(t, 404)(x.mac1.activity(sid, map[string]any{
 			"kind":      "wait_start",
 			"agent":     "alice",
 			"from":      "operator",
@@ -644,7 +653,7 @@ func (x *hubSuite) activityAndPresence(t *testing.T) {
 func (x *hubSuite) autoCreate(t *testing.T) {
 	t.Run("a join of an unknown session creates it; the operator sees it", func(t *testing.T) {
 		auto := startHub(t, limits{}, options{})
-		op := operator{admin{auto.base, auto.operatorToken("op")}}
+		op := operator{admin{auto.base, auto.watchToken("op")}}
 		mac := api{auto.base, auto.token("mac-1")}
 		s := mac.stream("fresh", "alice")
 		defer s.close()
@@ -663,15 +672,18 @@ func (x *hubSuite) autoCreate(t *testing.T) {
 }
 
 func (x *hubSuite) adminAPI(t *testing.T) {
-	adm := admin{x.h.base, x.h.operatorToken("matt")}
+	adm := admin{x.h.base, x.h.watchToken("matt")}
 
-	t.Run("a machine token is refused; a bad token is 401", func(t *testing.T) {
+	// To each token that may not watch, the admin routes do not exist: no 403 or 401 tells
+	// that they are there.
+	t.Run("for a machine token, a bad token and no token, the admin routes are not there: 404", func(t *testing.T) {
 		// mac1's own token: a new h.token("mac-1") would replace it and log mac1 out.
-		body := wantStatus(t, 403)(admin{x.h.base, x.mac1.token}.sessions())
-		if m := parse[errBody](t, body).Message; m != "a machine token cannot use the admin API" {
-			t.Fatalf("message %q", m)
+		for _, tok := range []string{x.mac1.token, "nope", ""} {
+			body := wantStatus(t, 404)(admin{x.h.base, tok}.sessions())
+			if m := parse[errBody](t, body).Message; m != "no such route" {
+				t.Fatalf("token %q: message %q", tok, m)
+			}
 		}
-		wantStatus(t, 401)(admin{x.h.base, "nope"}.sessions())
 	})
 
 	t.Run("session lifecycle: a join creates, list, delete", func(t *testing.T) {
@@ -700,10 +712,10 @@ func (x *hubSuite) adminAPI(t *testing.T) {
 }
 
 func (x *hubSuite) adminFeed(t *testing.T) {
-	adm := admin{x.h.base, x.h.operatorToken("viewer")}
+	adm := admin{x.h.base, x.h.watchToken("viewer")}
 
-	t.Run("a machine token is refused", func(t *testing.T) {
-		wantStatus(t, 403)(admin{x.h.base, x.mac1.token}.stream().result())
+	t.Run("for a machine token, the feed is not there", func(t *testing.T) {
+		wantStatus(t, 404)(admin{x.h.base, x.mac1.token}.stream().result())
 	})
 
 	t.Run("the current buckets come first, each closed by a snapshot marker", func(t *testing.T) {
@@ -796,8 +808,8 @@ func (x *hubSuite) adminFeed(t *testing.T) {
 		s.wait(t, eventIs("snapshot"))
 	})
 
-	t.Run("revoking the operator token ends the feed", func(t *testing.T) {
-		temp := admin{x.h.base, x.h.operatorToken("temp-op")}
+	t.Run("revoking the watch token ends the feed; the feed is then not there", func(t *testing.T) {
+		temp := admin{x.h.base, x.h.watchToken("temp-op")}
 		s := temp.stream()
 		defer s.close()
 		s.wait(t, eventIs("snapshot"))
@@ -805,7 +817,7 @@ func (x *hubSuite) adminFeed(t *testing.T) {
 		if err := s.ended(0); err != nil {
 			t.Fatal(err)
 		}
-		wantStatus(t, 401)(temp.stream().result())
+		wantStatus(t, 404)(temp.stream().result())
 	})
 }
 

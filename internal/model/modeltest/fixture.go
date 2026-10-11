@@ -27,7 +27,7 @@ func At(s float64) string {
 }
 
 // Fixture is the session of packages/tui/test/fixture.ts: Alice asks Bob, Bob answers, Carol
-// broadcasts, the operator steps in, one question stays open. One sequence number belongs to
+// broadcasts, Alice asks all to run the tests, one question stays open. One sequence number belongs to
 // no event of the session (the row of a kind that the model does not read).
 func Fixture() []model.Update {
 	client := wire.Client{Name: "claude-code", Version: "2.1"}

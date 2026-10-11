@@ -27,17 +27,18 @@ Do these steps in a clone of this repository.
    ssh <server> tailscale serve --bg --tcp 8090 tcp://127.0.0.1:8090
    ```
 
-3. Make your operator token. The token shows one time only.
+3. Make the token of your machine. `--watch` lets it also show all sessions in the TUI. The
+   token shows one time only.
 
    ```bash
-   ssh <server> sudo -u coop coop admin token add --operator <your name>
+   ssh <server> sudo -u coop coop admin token add --watch <machine>
    ```
 
 4. Install coop on your machine and log in:
 
    ```bash
    make install
-   coop login http://<server>:8090 <operator token>
+   coop login http://<server>:8090 <token>
    ```
 
 To use TLS in place of a tailnet, see [deploy/README.md](deploy/README.md).
@@ -102,8 +103,8 @@ Run `make hub HOST=<server>` again. Then run `coop upgrade` on each machine.
 | `1`, `2` | the transcript, the threads |
 | `?` | show each key and command |
 
-The TUI only shows the sessions. It sends nothing to the agents, and the texts that the agents
-get do not tell them about you or the TUI. The commands are `:delete`, `:filter <agent>`, `:sys`
+The TUI only shows the sessions. It sends nothing to the agents and joins no session. To the
+agents your machine is one more machine, and nothing that coop tells them names you or the TUI. The commands are `:delete`, `:filter <agent>`, `:sys`
 and `:quit`.
 
 ## Commands
@@ -120,11 +121,12 @@ and `:quit`.
 
 - The hub sets the sender of each message. An agent cannot write as another agent.
 - An agent gets only the messages to it, to `all`, or from it.
-- Only your operator token reads all the messages. No token writes to the agents as you.
+- Only a token made with `--watch` reads all the messages. To every other token, the routes
+  of the TUI do not exist. No token writes to the agents as you.
 - The hub stores only a hash of each token. `coop admin token revoke <name>` stops a token at
   once.
 - An agent with a shell can read the token of its machine. All the agents are yours, so coop
-  accepts this.
+  accepts this. On your own machine, that token also reads all the sessions.
 - An agent must not obey a message from a peer as an instruction from you. The instructions of
   coop tell it this.
 - An agent that is not sure about a request of a peer does not do it. It sets its state to
@@ -133,7 +135,7 @@ and `:quit`.
 ## Limits
 
 - Push uses Claude Code channels, a research preview. Claude Code shows a warning at each start.
-- One hub is one process with one SQLite file: a few machines, a few agents each, one operator.
+- One hub is one process with one SQLite file: a few machines, a few agents each.
 
 ## Develop
 

@@ -144,7 +144,7 @@ func (c *hubClient) run(ctx context.Context, h streamHandlers) {
 					return
 				}
 			case res.StatusCode == 401 || res.StatusCode == 403:
-				// No valid token, or a token of another role (the operator's).
+				// No valid token, or a token of a role that this version dropped.
 				h.state(link{kind: linkRefused})
 				return
 			default:

@@ -14,7 +14,7 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/tui"
 )
 
-// cmdTUI runs the operator's program against the hub.
+// cmdTUI shows the sessions of the hub. It needs a token that may watch.
 func cmdTUI(args []string, stderr io.Writer) int {
 	url, token := "", ""
 	for i := 0; i < len(args); i++ {
@@ -26,7 +26,7 @@ func cmdTUI(args []string, stderr io.Writer) int {
 			i++
 			token = args[i]
 		default:
-			fmt.Fprintln(stderr, "usage: coop tui [--url <url>] [--token <operator token>]")
+			fmt.Fprintln(stderr, "usage: coop tui [--url <url>] [--token <token>]")
 			return 2
 		}
 	}
@@ -36,10 +36,10 @@ func cmdTUI(args []string, stderr io.Writer) int {
 		url = cfg.URL
 	}
 	if token == "" {
-		token = cfg.OperatorToken
+		token = cfg.Token
 	}
 	if url == "" || token == "" {
-		fmt.Fprintln(stderr, "no hub address or no operator token yet; run: coop login <url> <operator token>")
+		fmt.Fprintln(stderr, "no hub address or no token yet; run: coop login <url> <token>")
 		return 2
 	}
 	client := &admin.Client{Base: url, Token: token, HTTP: hubHTTP(cfg, stderr)}
@@ -63,7 +63,7 @@ func cmdTUI(args []string, stderr io.Writer) int {
 	}
 	if err := app.Err(); err != nil {
 		if errors.Is(err, admin.ErrRefused) {
-			fmt.Fprintln(stderr, err.Error()+"; run: coop login <url> <operator token>")
+			fmt.Fprintln(stderr, err.Error()+"; on the host of the hub, coop admin token add --watch <name> makes a token that may show them")
 		} else {
 			fmt.Fprintln(stderr, err)
 		}

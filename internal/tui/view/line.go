@@ -39,7 +39,7 @@ type Rendered struct {
 type Options struct {
 	Width int
 	Now   time.Time
-	// Loc is the operator's time zone; nil means time.Local.
+	// Loc is the time zone of the TUI; nil means time.Local.
 	Loc *time.Location
 	// Agent, when set, keeps only messages from or to this agent, and its system lines.
 	Agent string
@@ -149,7 +149,7 @@ func parseTime(iso string) (time.Time, bool) {
 	return t, err == nil
 }
 
-// Clock is HH:MM:SS of an ISO time, in the operator's zone.
+// Clock is HH:MM:SS of an ISO time, in the zone of the TUI.
 func Clock(iso string, loc *time.Location) string {
 	t, ok := parseTime(iso)
 	if !ok {
@@ -161,7 +161,7 @@ func Clock(iso string, loc *time.Location) string {
 	return t.In(loc).Format("15:04:05")
 }
 
-// Stamp is YYYY-MM-DD HH:MM:SS of an ISO time, in the operator's zone.
+// Stamp is YYYY-MM-DD HH:MM:SS of an ISO time, in the zone of the TUI.
 func Stamp(iso string, loc *time.Location) string {
 	t, ok := parseTime(iso)
 	if !ok {
@@ -170,7 +170,7 @@ func Stamp(iso string, loc *time.Location) string {
 	return t.In(loc).Format("2006-01-02 15:04:05")
 }
 
-// Day is YYYY-MM-DD of an ISO time, in the operator's zone.
+// Day is YYYY-MM-DD of an ISO time, in the zone of the TUI.
 func Day(iso string, loc *time.Location) string {
 	t, ok := parseTime(iso)
 	if !ok {

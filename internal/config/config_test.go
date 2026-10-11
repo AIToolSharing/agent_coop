@@ -92,7 +92,7 @@ func TestDefaultAgentNameIsTheDirectoryNameAndTheEnvironmentWins(t *testing.T) {
 
 func TestDefaultAgentNameFallsBackToAgent(t *testing.T) {
 	tr := tree(t)
-	for _, name := range []string{"all", "operator", "...", "日本"} {
+	for _, name := range []string{"all", "...", "日本"} {
 		dir := filepath.Join(tr.project, name)
 		mkdir(t, dir)
 		if c := config.Load(map[string]string{}, noCred, noWarn, dir); c.Agent != "agent" {
@@ -124,22 +124,22 @@ func TestWarningsShowControlCharactersAsEscapes(t *testing.T) {
 	}
 }
 
-func TestLoadTakesTheAddressAndTokensFromTheCredentialFile(t *testing.T) {
+func TestLoadTakesTheAddressAndTheTokenFromTheCredentialFile(t *testing.T) {
 	tr := tree(t)
 	cred := filepath.Join(tr.root, "env")
-	writeFile(t, cred, "COOP_URL=https://hub.example//\nCOOP_TOKEN=laptop.s\nCOOP_OPERATOR_TOKEN=op.s\n", 0o600)
+	writeFile(t, cred, "COOP_URL=https://hub.example//\nCOOP_TOKEN=laptop.s\n", 0o600)
 	c := config.Load(map[string]string{}, cred, noWarn, tr.deep)
-	if c.URL != "https://hub.example" || c.Token != "laptop.s" || c.OperatorToken != "op.s" {
+	if c.URL != "https://hub.example" || c.Token != "laptop.s" {
 		t.Fatalf("file: got %+v", c)
 	}
-	env := map[string]string{"COOP_URL": "http://env/", "COOP_TOKEN": "env.m", "COOP_OPERATOR_TOKEN": "env.o"}
+	env := map[string]string{"COOP_URL": "http://env/", "COOP_TOKEN": "env.m"}
 	c = config.Load(env, cred, noWarn, tr.deep)
-	if c.URL != "http://env" || c.Token != "env.m" || c.OperatorToken != "env.o" {
+	if c.URL != "http://env" || c.Token != "env.m" {
 		t.Fatalf("environment: got %+v", c)
 	}
-	env = map[string]string{"COOP_URL": "", "COOP_TOKEN": "", "COOP_OPERATOR_TOKEN": ""}
+	env = map[string]string{"COOP_URL": "", "COOP_TOKEN": ""}
 	c = config.Load(env, cred, noWarn, tr.deep)
-	if c.URL != "https://hub.example" || c.Token != "laptop.s" || c.OperatorToken != "op.s" {
+	if c.URL != "https://hub.example" || c.Token != "laptop.s" {
 		t.Fatalf("empty environment: got %+v", c)
 	}
 }
@@ -193,7 +193,7 @@ func TestDefaultAgentNameExamples(t *testing.T) {
 		"/p/" + long:                           long[:64],
 		"/p/" + strings.Repeat("a", 63) + " b": strings.Repeat("a", 63) + "-",
 		"/p/ALL":                               "agent",
-		"/p/Operator":                          "agent",
+		"/p/Operator":                          "operator",
 		"/p/日本":                                "agent",
 		"/":                                    "agent",
 		"":                                     "agent",

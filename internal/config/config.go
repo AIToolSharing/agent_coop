@@ -12,20 +12,19 @@ import (
 
 // Config is what the coop command needs to reach the hub. An empty string means "not set".
 type Config struct {
-	URL           string // the hub address, with no "/" at the end
-	Token         string // the machine token, COOP_TOKEN: the agents of this machine use it
-	OperatorToken string // the operator token, COOP_OPERATOR_TOKEN
-	CertSHA256    string // the pinned hub certificate, COOP_CERT_SHA256 (hex); "" = none
-	Session       string // the session, or "" when the agent is in no session
-	Agent         string // the agent name; never empty
-	Push          bool   // true when Claude Code loads the server as a channel
+	URL        string // the hub address, with no "/" at the end
+	Token      string // the token of this machine, COOP_TOKEN
+	CertSHA256 string // the pinned hub certificate, COOP_CERT_SHA256 (hex); "" = none
+	Session    string // the session, or "" when the agent is in no session
+	Agent      string // the agent name; never empty
+	Push       bool   // true when Claude Code loads the server as a channel
 }
 
 // Load finds the configuration. For each key, a value in env wins, and an empty value counts as
 // not set. COOP_SESSION, COOP_AGENT and COOP_PUSH come only from env: `coop claude` sets them
-// for the Claude Code process that it starts. COOP_URL, the tokens (COOP_TOKEN,
-// COOP_OPERATOR_TOKEN) and COOP_CERT_SHA256 then come from the credential file. The default
-// agent name comes from cwd; in the home directory (HOME in env) it is "agent".
+// for the Claude Code process that it starts. COOP_URL, COOP_TOKEN and COOP_CERT_SHA256 then
+// come from the credential file. The default agent name comes from cwd; in the home directory
+// (HOME in env) it is "agent".
 //
 // Load calls warn for a credential file that other users can read, for an invalid session
 // name (Load then uses no session) and for an invalid agent name (Load then uses
@@ -47,13 +46,12 @@ func Load(env map[string]string, file string, warn func(string), cwd string) Con
 		agent = fallback
 	}
 	return Config{
-		URL:           strings.TrimRight(pick("COOP_URL"), "/"),
-		Token:         pick("COOP_TOKEN"),
-		OperatorToken: pick("COOP_OPERATOR_TOKEN"),
-		CertSHA256:    strings.ToLower(pick("COOP_CERT_SHA256")),
-		Session:       session,
-		Agent:         agent,
-		Push:          env["COOP_PUSH"] == "1",
+		URL:        strings.TrimRight(pick("COOP_URL"), "/"),
+		Token:      pick("COOP_TOKEN"),
+		CertSHA256: strings.ToLower(pick("COOP_CERT_SHA256")),
+		Session:    session,
+		Agent:      agent,
+		Push:       env["COOP_PUSH"] == "1",
 	}
 }
 

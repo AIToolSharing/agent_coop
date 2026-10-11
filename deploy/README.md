@@ -6,7 +6,7 @@ server with:
 - `coop serve` on `127.0.0.1:8090` (the API, as a systemd service, user `coop`),
 - a TLS front on port 8443: nginx with a self-signed certificate that the clients pin.
 
-Agent machines and the operator's `coop tui` connect only to port 8443. In a private network
+Agent machines and `coop tui` connect only to port 8443. In a private network
 (a tailnet) the TLS front is not needed: see the quick start of the main README.
 
 ## 1. Prerequisites
@@ -78,10 +78,10 @@ curl -sk -o /dev/null -w '%{http_code}\n' https://<host>:8443/v1/admin/sessions 
 Run the token commands on the server as the `coop` user, so that the database files keep
 that owner. A token shows one time only.
 
-Your operator token, for `coop tui` and the admin API:
+The token of your own machine. `--watch` lets it also show all sessions in `coop tui`:
 
 ```bash
-sudo -u coop coop admin token add --operator you
+sudo -u coop coop admin token add --watch mymachine
 ```
 
 One token per agent machine:

@@ -210,11 +210,19 @@ func TestUpdateEnvFileCreatesAPrivateDirectoryAndFile(t *testing.T) {
 func TestUpdateEnvFileKeepsTheOtherKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "env")
 	writeFile(t, path, "# a comment\nCOOP_URL=https://old\nCOOP_TOKEN=m.s\n", 0o600)
-	if err := config.UpdateEnvFile(path, map[string]string{"COOP_URL": "https://x", "COOP_OPERATOR_TOKEN": "o.s"}); err != nil {
+	if err := config.UpdateEnvFile(path, map[string]string{"COOP_URL": "https://x", "COOP_CERT_SHA256": "ab"}); err != nil {
 		t.Fatal(err)
 	}
-	want := "COOP_OPERATOR_TOKEN=o.s\nCOOP_TOKEN=m.s\nCOOP_URL=https://x\n"
+	want := "COOP_CERT_SHA256=ab\nCOOP_TOKEN=m.s\nCOOP_URL=https://x\n"
 	if got := readFile(t, path); got != want {
+		t.Fatalf("file = %q, want %q", got, want)
+	}
+	// An empty value removes the key: no line is left. The readers count an empty value as
+	// not set, so the meaning stays the same.
+	if err := config.UpdateEnvFile(path, map[string]string{"COOP_CERT_SHA256": "", "COOP_OPERATOR_TOKEN": ""}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := readFile(t, path), "COOP_TOKEN=m.s\nCOOP_URL=https://x\n"; got != want {
 		t.Fatalf("file = %q, want %q", got, want)
 	}
 }

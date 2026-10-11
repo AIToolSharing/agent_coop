@@ -1,7 +1,7 @@
-// Package tui is the operator's terminal program: a sidebar (sessions, then the agents of the
-// shown session), a main pane (transcript or threads, or the details of a message or an
-// agent), and a `:` command line. The operator only watches: the program sends nothing to the
-// agents. It paints what the view package returns.
+// Package tui is the terminal program that shows the sessions: a sidebar (sessions, then the
+// agents of the shown session), a main pane (transcript or threads, or the details of a message
+// or an agent), and a `:` command line. It only shows: it sends nothing to the agents. It
+// paints what the view package returns.
 package tui
 
 import (
@@ -15,8 +15,8 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/tui/view"
 )
 
-// Operator is what the shell asks the hub to do. *admin.Client is one.
-type Operator interface {
+// Hub is what the shell asks the hub to do. *admin.Client is one.
+type Hub interface {
 	DeleteSession(ctx context.Context, sid string) error
 }
 
@@ -25,7 +25,7 @@ type Options struct {
 	Store *model.Store
 	// Updates carries the feed; nil in tests.
 	Updates <-chan model.Update
-	Op      Operator
+	Op      Hub
 	Now     func() time.Time
 	Loc     *time.Location
 }
@@ -53,7 +53,7 @@ type mode struct {
 type App struct {
 	store   *model.Store
 	updates <-chan model.Update
-	op      Operator
+	op      Hub
 	now     func() time.Time
 	loc     *time.Location
 

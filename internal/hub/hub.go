@@ -1,5 +1,5 @@
 // Package hub holds the hub's rules apart from HTTP: who a request comes from, what each agent
-// may see, and what each agent and the operator receive. It ports packages/hub/src/hub.ts;
+// may see, and what each agent and the watch feed receive. It ports packages/hub/src/hub.ts;
 // the SQLite store stands in for the NATS stream and buckets, and connections fan events out
 // in process.
 //
@@ -175,7 +175,7 @@ type HistoryQuery struct {
 // Owner is who a token belongs to.
 type Owner struct {
 	Name string
-	Role string // machine or operator
+	Role string // machine or watch
 }
 
 // Sink is where a connection's server-sent events go. The hub calls it from one goroutine.
@@ -403,7 +403,7 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 const refusedEvery = 4 * time.Minute
 
 // refusedLocked records a join that the hub did not let in because another session holds the
-// name, so that the operator sees it.
+// name, so that the TUI shows it.
 func (h *Hub) refusedLocked(sid string, me wire.Address) {
 	key := wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: me})
 	now := h.opt.Now()
@@ -731,7 +731,7 @@ func (h *Hub) History(machine, sid string, q HistoryQuery) ([]Message, error) {
 	return msgs, nil
 }
 
-// --- The admin API: the operator token ---------------------------------------------------------
+// --- The watch API: a watch token --------------------------------------------------------------
 
 func (h *Hub) ListSessions() ([]wire.SessionInfo, error) {
 	rows, err := h.st.Sessions()
@@ -768,7 +768,7 @@ func (h *Hub) DeleteSession(sid string) error {
 	return nil
 }
 
-// --- The operator's feed -----------------------------------------------------------------------
+// --- The watch feed ----------------------------------------------------------------------------
 
 type feedItem struct {
 	event string
@@ -833,7 +833,7 @@ func (h *Hub) feedSession(row store.SessionRow) {
 	h.feedAll("session", sessionOut{Kind: "session", Session: row.SID, Revision: row.Revision, Record: &rec}, "")
 }
 
-// AdminFeed sends the operator's feed to sink until ctx ends or the token is revoked: the
+// AdminFeed sends the watch feed to sink until ctx ends or the token is revoked: the
 // current sessions, then `snapshot sessions`; the live presence, then `snapshot presence`;
 // every stored event from fromSeq; then every change as it happens.
 func (h *Hub) AdminFeed(ctx context.Context, name string, sink Sink, fromSeq int64) {

@@ -34,6 +34,12 @@ func (s *sse) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		frames = s.scripts[n]
 	}
 	s.mu.Unlock()
+	if r.Header.Get("Authorization") == "Bearer mac.secret" {
+		// A valid token that may not watch: to it, the hub has no such route.
+		w.WriteHeader(404)
+		_, _ = w.Write([]byte(`{"error":"not_found","message":"no such route"}`))
+		return
+	}
 	if r.Header.Get("Authorization") != "Bearer op.secret" {
 		w.WriteHeader(401)
 		_, _ = w.Write([]byte(`{"error":"unauthorized","message":"bad token"}`))
@@ -174,6 +180,20 @@ func TestFeedEndsWhenTheTokenIsRefused(t *testing.T) {
 	_, err := run(t, srv, "wrong", time.Second, func(*model.Store) bool { return false })
 	if !errors.Is(err, admin.ErrRefused) || !strings.Contains(err.Error(), "bad token") {
 		t.Fatalf("err %v", err)
+	}
+}
+
+// A token that may not watch gets 404: the feed ends at once, with no reconnect loop.
+func TestFeedEndsWhenTheTokenMayNotWatch(t *testing.T) {
+	s := &sse{hold: make(chan struct{})}
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+	_, err := run(t, srv, "mac.secret", time.Second, func(*model.Store) bool { return false })
+	s.mu.Lock()
+	n := len(s.requests)
+	s.mu.Unlock()
+	if !errors.Is(err, admin.ErrRefused) || !strings.Contains(err.Error(), "no such route") || n != 1 {
+		t.Fatalf("err %v after %d requests", err, n)
 	}
 }
 

@@ -1,5 +1,5 @@
-// Package admin is the hub's admin API as the operator's TUI uses it: the live feed with
-// reconnect and resume, and the deletion of a session. Both need an operator token.
+// Package admin is the hub's watch API as the TUI uses it: the live feed with reconnect and
+// resume, and the deletion of a session. Both need a watch token.
 package admin
 
 import (
@@ -19,8 +19,9 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
-// ErrRefused means the service is reachable and refuses the token; a retry cannot help.
-var ErrRefused = errors.New("the service refused the token")
+// ErrRefused means the service is reachable and refuses the token, or the token may not watch:
+// a retry cannot help.
+var ErrRefused = errors.New("the service refused the token, or the token may not show the sessions")
 
 // APIError is a non-2xx answer of an action.
 type APIError struct {
@@ -30,7 +31,7 @@ type APIError struct {
 
 func (e *APIError) Error() string { return e.Message }
 
-// Client talks to one hub with one operator token.
+// Client talks to one hub with one watch token.
 type Client struct {
 	Base  string
 	Token string
@@ -138,7 +139,8 @@ func (c *Client) stream(ctx context.Context, fromID string, lastID *string, emit
 		return err
 	}
 	defer res.Body.Close()
-	if res.StatusCode == 401 || res.StatusCode == 403 {
+	// To a token that may not watch, the hub has no such route: 404.
+	if res.StatusCode == 401 || res.StatusCode == 403 || res.StatusCode == 404 {
 		return fmt.Errorf("%w: %s", ErrRefused, message(res))
 	}
 	if res.StatusCode != 200 {

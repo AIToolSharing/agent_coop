@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AIToolSharing/agent_coop/internal/wire"
 	"pgregory.net/rapid"
 )
 
@@ -96,7 +95,7 @@ func distDir(t *testing.T) (dir string, files map[string]string) {
 func TestTheHubGivesItsBinariesToEachValidToken(t *testing.T) {
 	dir, files := distDir(t)
 	h := startHub(t, limits{}, options{dist: dir})
-	for role, token := range map[string]string{wire.RoleMachine: h.token("t-machine"), wire.RoleOperator: h.operatorToken("t-operator")} {
+	for role, token := range map[string]string{"machine": h.token("t-machine"), "watch": h.watchToken("t-watch")} {
 		status, header, body := get(t, h.base+"/dl/coop-linux-amd64", token)
 		if status != 200 || string(body) != files["coop-linux-amd64"] || header.Get("Content-Type") != "application/octet-stream" {
 			t.Errorf("%s token: %d %q %q", role, status, body, header.Get("Content-Type"))

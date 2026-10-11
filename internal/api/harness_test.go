@@ -121,10 +121,10 @@ func (h *harness) token(machine string) string {
 	return tok
 }
 
-// operatorToken issues an operator token.
-func (h *harness) operatorToken(name string) string {
+// watchToken issues a token that may also watch every session.
+func (h *harness) watchToken(name string) string {
 	h.t.Helper()
-	tok, err := h.st.IssueToken(name, "operator", h.now())
+	tok, err := h.st.IssueToken(name, "watch", h.now())
 	if err != nil {
 		h.t.Fatal(err)
 	}

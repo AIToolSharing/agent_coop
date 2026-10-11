@@ -732,12 +732,10 @@ func TestBadArgumentsAreReportedToTheAgent(t *testing.T) {
 		{"send", map[string]any{"to": "bob", "text": "x", "reply_to": "07"}, "invalid arguments"},
 		{"ask", map[string]any{"to": "all", "text": "x"}, "invalid arguments"},
 		{"wait", map[string]any{"from": "all"}, "invalid arguments"},
-		{"history", map[string]any{"with": "operator"}, "invalid arguments"},
-		{"send", map[string]any{"to": "operator", "text": "x"}, "invalid arguments"},
-		{"ask", map[string]any{"to": "operator", "text": "x"}, "invalid arguments"},
-		{"wait", map[string]any{"from": "operator"}, "invalid arguments"},
 		// The hub rejects this one.
 		{"send", map[string]any{"to": "zed", "text": "hi"}, "no peer zed"},
+		// operator names no one special: with no agent of that name, there is no such peer.
+		{"send", map[string]any{"to": "operator", "text": "hi"}, "no peer operator"},
 	} {
 		r := a.tool(tc.tool, tc.args)
 		if !r.isError || !strings.Contains(r.text, tc.want) {

@@ -83,7 +83,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer) int {
 	cfg := config.Load(environ(), config.DefaultEnvFile(), func(string) {}, cwd())
 	fmt.Fprintln(stdout, "next:")
 	if cfg.Token == "" {
-		fmt.Fprintln(stdout, "  coop login <url> <machine token>   # the operator gives you the token")
+		fmt.Fprintln(stdout, "  coop login <url> <token>   # a token from the host of the hub")
 	}
 	fmt.Fprintln(stdout, "  cd <project> && coop claude   # Claude Code in the session of the git repository")
 	fmt.Fprintln(stdout, "  coop doctor                   # when something does not connect")

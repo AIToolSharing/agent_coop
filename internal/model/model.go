@@ -1,4 +1,4 @@
-// Package model keeps what the operator's feed said and answers what the views ask. Facts may
+// Package model keeps what the watch feed said and answers what the views ask. Facts may
 // arrive in any order and more than once; the derived state does not depend on that: every
 // agent derives its state from its own events sorted by sequence, messages and timeline items
 // are kept sorted by sequence, and every other index is a set keyed by id.

@@ -11,11 +11,10 @@ import (
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
 	"github.com/AIToolSharing/agent_coop/internal/pin"
-	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
-// cmdDoctor checks everything an agent machine or an operator needs, in the order a connection
-// is made, and says what to run for each thing that is missing.
+// cmdDoctor checks everything a machine needs, in the order a connection is made, and says
+// what to run for each thing that is missing.
 func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 0 {
 		fmt.Fprintln(stderr, "usage: coop doctor")
@@ -53,7 +52,7 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 		client := hubHTTP(cfg, stderr)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if _, err := probeToken(ctx, client, cfg.URL, "none"); err != nil && pin.IsCertError(err) {
+		if err := probeToken(ctx, client, cfg.URL, "none"); err != nil && pin.IsCertError(err) {
 			fail("the hub's certificate is not trusted or has changed: run coop login " + cfg.URL + " <token> again")
 		} else if err != nil && strings.Contains(err.Error(), "cannot reach") {
 			fail(err.Error())
@@ -61,24 +60,14 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 			ok("the hub answers")
 			// The hub tells its version to a token that it accepts.
 			hubVersion, accepted := "", false
-			check := func(token, want, key string) {
-				if token == "" {
-					note("no " + want + " token (" + key + "): coop login " + cfg.URL + " <" + want + " token>")
-					return
-				}
-				me, err := whoami(ctx, client, cfg.URL, token)
-				switch {
-				case err != nil:
-					fail(key + ": " + err.Error())
-				case me.Role != want:
-					fail(key + " is a " + me.Role + " token, not a " + want + " token")
-				default:
-					ok(want + " token accepted")
-					hubVersion, accepted = me.Version, true
-				}
+			if cfg.Token == "" {
+				note("no token (COOP_TOKEN): coop login " + cfg.URL + " <token>")
+			} else if me, err := whoami(ctx, client, cfg.URL, cfg.Token); err != nil {
+				fail("COOP_TOKEN: " + err.Error())
+			} else {
+				ok("token accepted")
+				hubVersion, accepted = me.Version, true
 			}
-			check(cfg.Token, wire.RoleMachine, "COOP_TOKEN")
-			check(cfg.OperatorToken, wire.RoleOperator, "COOP_OPERATOR_TOKEN")
 			// The hub and its devices must have one version: a part drops a message that only a
 			// newer schema allows. A build from a clone is never equal, so this is a note.
 			switch {

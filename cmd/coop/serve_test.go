@@ -71,11 +71,14 @@ func TestAdminTokens(t *testing.T) {
 	if code != 0 || !strings.HasPrefix(out, "mac-1.") || len(strings.TrimSpace(out)) < 40 {
 		t.Fatalf("add: %d %q", code, out)
 	}
-	if code, out, _ := call("token", "add", "--operator", "--data", data, "me"); code != 0 || !strings.HasPrefix(out, "me.") {
-		t.Fatalf("add operator: %d %q", code, out)
+	if code, out, _ := call("token", "add", "--watch", "--data", data, "me"); code != 0 || !strings.HasPrefix(out, "me.") {
+		t.Fatalf("add --watch: %d %q", code, out)
+	}
+	if code, _, _ := call("token", "add", "--operator", "--data", data, "old"); code != 2 {
+		t.Fatalf("--operator is gone: %d", code)
 	}
 	code, out, _ = call("token", "list", "--data", data)
-	if code != 0 || !strings.Contains(out, "mac-1\tmachine\t") || !strings.Contains(out, "me\toperator\t") || !strings.Contains(out, "\tvalid\n") {
+	if code != 0 || !strings.Contains(out, "mac-1\tmachine\t") || !strings.Contains(out, "me\twatch\t") || !strings.Contains(out, "\tvalid\n") {
 		t.Fatalf("list: %d %q", code, out)
 	}
 	if code, _, errOut := call("token", "revoke", "--data", data, "mac-1"); code != 0 || !strings.Contains(errOut, "revoked mac-1") {

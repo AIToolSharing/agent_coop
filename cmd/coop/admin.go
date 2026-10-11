@@ -11,7 +11,7 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
-const adminUsage = `usage: coop admin token add [--operator] [--data <dir>] <name>
+const adminUsage = `usage: coop admin token add [--watch] [--data <dir>] <name>
        coop admin token list [--data <dir>]
        coop admin token revoke [--data <dir>] <name>
 `
@@ -26,7 +26,7 @@ func cmdAdmin(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("coop admin token "+args[1], flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	data := fs.String("data", defaultDataDir(), "the directory of the database")
-	operator := fs.Bool("operator", false, "a token for the TUI; without it, a token for the agents of one machine")
+	watch := fs.Bool("watch", false, "the token may also read every session (coop tui)")
 	if err := fs.Parse(args[2:]); err != nil {
 		return 2
 	}
@@ -45,8 +45,8 @@ func cmdAdmin(args []string, stdout, stderr io.Writer) int {
 	switch verb {
 	case "add":
 		role := wire.RoleMachine
-		if *operator {
-			role = wire.RoleOperator
+		if *watch {
+			role = wire.RoleWatch
 		}
 		tok, err := st.IssueToken(name, role, now)
 		if err != nil {

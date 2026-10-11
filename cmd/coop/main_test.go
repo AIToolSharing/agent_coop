@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -37,10 +38,11 @@ func TestUsageAndVersion(t *testing.T) {
 	}
 }
 
-// hub stands in for a hub that knows an operator token and a machine token.
-func hub(t *testing.T, operator, machine string) *httptest.Server {
+// hub stands in for a hub that knows two tokens. To each client the hub calls each token a
+// machine token, also a token that may watch.
+func hub(t *testing.T, watch, machine string) *httptest.Server {
 	t.Helper()
-	roles := map[string]string{operator: "operator", machine: "machine"}
+	roles := map[string]string{watch: "machine", machine: "machine"}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		switch {
@@ -58,47 +60,51 @@ func hub(t *testing.T, operator, machine string) *httptest.Server {
 	return srv
 }
 
-func TestProbeTokenTellsTheRole(t *testing.T) {
-	srv := hub(t, "op.1", "mac.2")
+func TestProbeTokenChecksTheToken(t *testing.T) {
+	srv := hub(t, "me.1", "mac.2")
 	ctx := context.Background()
-	if role, err := probeToken(ctx, srv.Client(), srv.URL, "op.1"); err != nil || role != "operator" {
-		t.Fatal(role, err)
-	}
-	if role, err := probeToken(ctx, srv.Client(), srv.URL, "mac.2"); err != nil || role != "machine" {
-		t.Fatal(role, err)
+	for _, tok := range []string{"me.1", "mac.2"} {
+		if err := probeToken(ctx, srv.Client(), srv.URL, tok); err != nil {
+			t.Fatal(tok, err)
+		}
 	}
 	// A hub of a version before the roles has no whoami: the error says to upgrade it.
 	old := httptest.NewServer(http.NotFoundHandler())
 	defer old.Close()
-	if _, err := probeToken(ctx, old.Client(), old.URL, "op.1"); err == nil || !strings.Contains(err.Error(), "older version") {
+	if err := probeToken(ctx, old.Client(), old.URL, "me.1"); err == nil || !strings.Contains(err.Error(), "older version") {
 		t.Fatal(err)
 	}
-	if _, err := probeToken(ctx, srv.Client(), srv.URL, "x"); !errors.Is(err, errBadToken) {
+	if err := probeToken(ctx, srv.Client(), srv.URL, "x"); !errors.Is(err, errBadToken) {
 		t.Fatal(err)
 	}
-	if _, err := probeToken(ctx, srv.Client(), "http://127.0.0.1:1", "x"); err == nil || !strings.Contains(err.Error(), "cannot reach") {
+	if err := probeToken(ctx, srv.Client(), "http://127.0.0.1:1", "x"); err == nil || !strings.Contains(err.Error(), "cannot reach") {
 		t.Fatal(err)
 	}
 }
 
-func TestLoginStoresTheTokenUnderTheKeyOfItsRole(t *testing.T) {
+// A machine has one token, COOP_TOKEN, also the machine of the person who watches. login
+// removes the second token of coop v0.13.0 and before, and its line.
+func TestLoginStoresTheOneTokenOfTheMachine(t *testing.T) {
 	home := t.TempDir()
 	setHome(t, home)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
-	srv := hub(t, "op.1", "mac.2")
-	var out, errOut bytes.Buffer
-	if code := run([]string{"login", srv.URL + "/", "op.1"}, &out, &errOut); code != 0 {
-		t.Fatalf("code %d: %s", code, errOut.String())
-	}
-	if code := run([]string{"login", srv.URL, "mac.2"}, &out, &errOut); code != 0 {
-		t.Fatalf("code %d: %s", code, errOut.String())
-	}
+	srv := hub(t, "me.1", "mac.2")
 	file := filepath.Join(home, ".config", "coop", "env")
+	if err := config.UpdateEnvFile(file, map[string]string{"COOP_TOKEN": "mac.2", "COOP_OPERATOR_TOKEN": "op.9"}); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if code := run([]string{"login", srv.URL + "/", "me.1"}, &out, &errOut); code != 0 {
+		t.Fatalf("code %d: %s", code, errOut.String())
+	}
 	got := config.ReadEnvFile(file, func(s string) { t.Fatal(s) })
-	if got["COOP_URL"] != srv.URL || got["COOP_OPERATOR_TOKEN"] != "op.1" || got["COOP_TOKEN"] != "mac.2" {
+	if !maps.Equal(got, map[string]string{"COOP_URL": srv.URL, "COOP_TOKEN": "me.1"}) {
 		t.Fatalf("env file %v", got)
 	}
-	if !strings.Contains(out.String(), "operator token for") || !strings.Contains(out.String(), "next:  coop tui") {
+	if text, _ := os.ReadFile(file); strings.Contains(string(text), "OPERATOR") {
+		t.Fatalf("env file %q", text)
+	}
+	if !strings.Contains(out.String(), "the token for "+srv.URL) || strings.Contains(out.String(), "operator") {
 		t.Fatalf("stdout %q", out.String())
 	}
 	errOut.Reset()
@@ -404,7 +410,7 @@ func TestDoctorReportsEachStep(t *testing.T) {
 	if code := run([]string{"doctor"}, &out, &errOut); code != 0 {
 		t.Fatalf("code %d:\n%s", code, out.String())
 	}
-	for _, want := range []string{"ok    credential file", "ok    hub address " + srv.URL, "ok    the hub answers", "ok    machine token accepted", "--    no operator token", "ok    coop claude here joins the session build-42 (the name of the git repository)", "ok    agent name " + filepath.Base(dir), "ok    a plain claude has no coop; coop claude loads /opt/coop/coop mcp"} {
+	for _, want := range []string{"ok    credential file", "ok    hub address " + srv.URL, "ok    the hub answers", "ok    token accepted", "ok    coop claude here joins the session build-42 (the name of the git repository)", "ok    agent name " + filepath.Base(dir), "ok    a plain claude has no coop; coop claude loads /opt/coop/coop mcp"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in\n%s", want, out.String())
 		}
@@ -425,26 +431,26 @@ func TestLoginPinsASelfSignedHubAndDoctorUsesThePin(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("COOP_SESSION", "")
 	t.Setenv("COOP_AGENT", "")
-	srv := httptest.NewTLSServer(hub(t, "op.1", "mac.2").Config.Handler)
+	srv := httptest.NewTLSServer(hub(t, "me.1", "mac.2").Config.Handler)
 	defer srv.Close()
 	sum := sha256.Sum256(srv.Certificate().Raw)
 	fp := hex.EncodeToString(sum[:])
 	var out, errOut bytes.Buffer
-	if code := run([]string{"login", srv.URL, "op.1"}, &out, &errOut); code != 0 {
+	if code := run([]string{"login", srv.URL, "me.1"}, &out, &errOut); code != 0 {
 		t.Fatalf("code %d: %s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "self-signed") || !strings.Contains(out.String(), pin.Format(fp)) {
 		t.Fatalf("stdout %q", out.String())
 	}
 	got := config.ReadEnvFile(filepath.Join(home, ".config", "coop", "env"), func(s string) { t.Fatal(s) })
-	if got["COOP_CERT_SHA256"] != fp || got["COOP_OPERATOR_TOKEN"] != "op.1" || got["COOP_URL"] != srv.URL {
+	if got["COOP_CERT_SHA256"] != fp || got["COOP_TOKEN"] != "me.1" || got["COOP_URL"] != srv.URL {
 		t.Fatalf("env file %v", got)
 	}
 	f := &fakeClaude{}
 	f.install(t, "/opt/coop/coop")
 	out.Reset()
 	run([]string{"doctor"}, &out, &errOut)
-	for _, want := range []string{"ok    tls: the hub's certificate is pinned, " + pin.Format(fp), "ok    the hub answers", "ok    operator token accepted"} {
+	for _, want := range []string{"ok    tls: the hub's certificate is pinned, " + pin.Format(fp), "ok    the hub answers", "ok    token accepted"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in\n%s", want, out.String())
 		}
@@ -473,7 +479,7 @@ func TestGlobalAgentFlagSetsTheAgentName(t *testing.T) {
 			t.Fatalf("%v: COOP_AGENT %q", args, got)
 		}
 	}
-	for _, args := range [][]string{{"--agent"}, {"--agent", "Not A Name", "version"}, {"--agent=operator", "version"}, {"--agent", "reviewer"}} {
+	for _, args := range [][]string{{"--agent"}, {"--agent", "Not A Name", "version"}, {"--agent=all", "version"}, {"--agent", "reviewer"}} {
 		t.Setenv("COOP_AGENT", "")
 		var out, errOut bytes.Buffer
 		if code := run(args, &out, &errOut); code != 2 || errOut.Len() == 0 {
