@@ -3,18 +3,12 @@ package config
 import (
 	"cmp"
 	"fmt"
-	"iter"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
-
-// ProjectFile is the per-project file. It holds the session and the agent name, never an
-// address or a token.
-const ProjectFile = ".coop"
 
 // Config is what the coop command needs to reach the hub. An empty string means "not set".
 type Config struct {
@@ -28,94 +22,55 @@ type Config struct {
 }
 
 // Load finds the configuration. For each key, a value in env wins, and an empty value counts as
-// not set. COOP_SESSION and COOP_AGENT then come from the nearest .coop file (FindProjectFile)
-// from cwd, or else from CLAUDE_PROJECT_DIR in env. COOP_URL, the tokens (COOP_TOKEN,
-// COOP_OPERATOR_TOKEN), COOP_CERT_SHA256 and COOP_PUSH then come from the credential file. A .coop file cannot set an address or a
-// token, because a repository can hold one. The default agent name always comes from cwd; in
-// the home directory (HOME in env) it is "agent".
+// not set. COOP_SESSION and COOP_AGENT come only from env: `coop claude` sets both for the
+// Claude Code process that it starts. COOP_URL, the tokens (COOP_TOKEN, COOP_OPERATOR_TOKEN),
+// COOP_CERT_SHA256 and COOP_PUSH then come from the credential file. The default agent name
+// comes from cwd; in the home directory (HOME in env) it is "agent".
 //
 // Load calls warn for a credential file that other users can read, for an invalid session
 // name (Load then uses no session) and for an invalid agent name (Load then uses
-// DefaultAgentName). A bad value in env does not fall back to the .coop file.
+// DefaultAgentName).
 func Load(env map[string]string, file string, warn func(string), cwd string) Config {
 	fromFile := ReadEnvFile(file, warn)
-	projectFile, found := FindProjectFile(cwd)
-	// Claude Code sets CLAUDE_PROJECT_DIR to the project directory when it starts an MCP server
-	// (seen on Claude Code 2.1.287), and the server starts in that directory. When the working
-	// directory is a different one and the search from it finds no .coop file, the search
-	// starts again at CLAUDE_PROJECT_DIR. The TypeScript shim does not do this.
-	if dir := env["CLAUDE_PROJECT_DIR"]; !found && dir != "" {
-		projectFile, _ = FindProjectFile(dir)
-	}
-	fromProject := readProjectFile(projectFile)
-	pick := func(key string, other map[string]string) string {
-		return cmp.Or(env[key], other[key])
-	}
-	// where names the source of a bad value. A value that is not from env is from projectFile.
-	where := func(key string) string {
-		if env[key] != "" {
-			return key
-		}
-		return key + " in " + projectFile
-	}
-
-	session := pick("COOP_SESSION", fromProject)
+	pick := func(key string) string { return cmp.Or(env[key], fromFile[key]) }
+	session := env["COOP_SESSION"]
 	if session != "" && !wire.IsToken(session) {
-		// %q shows a control character as an escape, so a .coop file cannot send one to the
+		// %q shows a control character as an escape, so a value cannot send one to the
 		// terminal.
-		warn(fmt.Sprintf("%s %q is not a valid session name; ignoring it", where("COOP_SESSION"), session))
+		warn(fmt.Sprintf("COOP_SESSION %q is not a valid session name; ignoring it", session))
 		session = ""
 	}
 	fallback := DefaultAgentName(cwd, cmp.Or(env["HOME"], env["USERPROFILE"]))
-	agent := cmp.Or(pick("COOP_AGENT", fromProject), fallback)
+	agent := cmp.Or(env["COOP_AGENT"], fallback)
 	if !wire.IsAgentName(agent) {
-		warn(fmt.Sprintf("%s %q is not a valid agent name; using %q", where("COOP_AGENT"), agent, fallback))
+		warn(fmt.Sprintf("COOP_AGENT %q is not a valid agent name; using %q", agent, fallback))
 		agent = fallback
 	}
 	return Config{
-		URL:           strings.TrimRight(pick("COOP_URL", fromFile), "/"),
-		Token:         pick("COOP_TOKEN", fromFile),
-		OperatorToken: pick("COOP_OPERATOR_TOKEN", fromFile),
-		CertSHA256:    strings.ToLower(pick("COOP_CERT_SHA256", fromFile)),
+		URL:           strings.TrimRight(pick("COOP_URL"), "/"),
+		Token:         pick("COOP_TOKEN"),
+		OperatorToken: pick("COOP_OPERATOR_TOKEN"),
+		CertSHA256:    strings.ToLower(pick("COOP_CERT_SHA256")),
 		Session:       session,
 		Agent:         agent,
-		Push:          pick("COOP_PUSH", fromFile) == "1",
+		Push:          pick("COOP_PUSH") == "1",
 	}
 }
 
-// FindGitRoot returns the nearest directory, from dir upwards, that holds .git. A .git file
-// (a linked worktree or a submodule) counts too.
-func FindGitRoot(dir string) (string, bool) {
-	for d := range ancestors(dir) {
-		if exists(filepath.Join(d, ".git")) {
-			return d, true
-		}
-	}
-	return "", false
+var notInName = regexp.MustCompile(`[^a-z0-9_-]+`)
+
+// Name makes a name token of s: lower case, each run of other characters one "-", no "-" at
+// the start or the end. The name is then cut to 64 characters, so it can end with "-". The
+// result is "" or a name token (wire.IsToken).
+func Name(s string) string {
+	name := strings.Trim(notInName.ReplaceAllString(strings.ToLower(s), "-"), "-")
+	// All characters are ASCII now, so a byte cut is a character cut.
+	return name[:min(len(name), 64)]
 }
 
-// FindProjectFile returns the nearest .coop file from cwd upwards. The search stops at the git
-// root, after it looks there: a .coop file above the repository does not apply to it.
-func FindProjectFile(cwd string) (string, bool) {
-	for d := range ancestors(cwd) {
-		file := filepath.Join(d, ProjectFile)
-		if exists(file) {
-			return file, true
-		}
-		if exists(filepath.Join(d, ".git")) {
-			return "", false
-		}
-	}
-	return "", false
-}
-
-var notInAgentName = regexp.MustCompile(`[^a-z0-9_-]+`)
-
-// DefaultAgentName returns the agent name when no setting gives one: the name of the directory
-// cwd, made valid. Thus two agents in different projects on one machine get different names.
-// The name is in lower case, each run of other characters becomes one "-", and no "-" stays
-// at the start or the end. The name is then cut to 64 characters, so it can end with "-".
-// When the result is empty or reserved, the name is "agent".
+// DefaultAgentName returns the agent name when no setting gives one: the Name of the directory
+// cwd. Thus two agents in different projects on one machine get different names. When the
+// result is empty or reserved, the name is "agent".
 //
 // home is the home directory of the user, or "". An agent that starts there is "agent": the
 // name of that directory is the name of the unix user, which says nothing about the agent
@@ -124,46 +79,21 @@ func DefaultAgentName(cwd, home string) string {
 	if home != "" && filepath.Clean(cwd) == filepath.Clean(home) {
 		return "agent"
 	}
-	name := notInAgentName.ReplaceAllString(strings.ToLower(filepath.Base(cwd)), "-")
-	name = strings.Trim(name, "-")
-	// All characters are ASCII now, so a byte cut is a character cut.
-	name = name[:min(len(name), 64)]
+	name := Name(filepath.Base(cwd))
 	if !wire.IsAgentName(name) {
 		return "agent"
 	}
 	return name
 }
 
-// readProjectFile reads a .coop file. A path that is empty or that cannot be read gives no
-// values. Unlike the credential file, the mode is not checked: the file holds no secret.
-func readProjectFile(path string) map[string]string {
-	if path == "" {
-		return map[string]string{}
+// RepoName gives the name of a repository from the URL of its remote, as `git clone` names its
+// directory: the last part of the path, without ".git". It takes each form that git takes:
+// https://host/org/app.git, git@host:org/app.git, ssh://host/org/app, /srv/git/app.git.
+func RepoName(remote string) string {
+	s := strings.TrimRight(strings.TrimSpace(remote), "/\\")
+	s = strings.TrimSuffix(s, ".git")
+	if i := strings.LastIndexAny(s, "/\\:"); i >= 0 {
+		s = s[i+1:]
 	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return map[string]string{}
-	}
-	return ParseEnv(string(b))
-}
-
-// ancestors yields dir and then each parent directory, up to the root.
-func ancestors(dir string) iter.Seq[string] {
-	return func(yield func(string) bool) {
-		d := filepath.Clean(dir)
-		for yield(d) {
-			parent := filepath.Dir(d)
-			if parent == d {
-				return
-			}
-			d = parent
-		}
-	}
-}
-
-// exists reports whether path names a file or a directory. Like existsSync in Node, it follows
-// a symbolic link and gives false on any error.
-func exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	return s
 }

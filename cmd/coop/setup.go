@@ -97,8 +97,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer) int {
 	if cfg.Token == "" {
 		fmt.Fprintln(stdout, "  coop login <url> <machine token>   # the operator gives you the token")
 	}
-	fmt.Fprintln(stdout, "  cd <project> && coop session <name>  # the project's agents join that session")
-	fmt.Fprintln(stdout, "  coop claude                          # Claude Code with the coop channel (pushes)")
-	fmt.Fprintln(stdout, "  coop doctor                          # when something does not connect")
+	fmt.Fprintln(stdout, "  cd <project> && coop claude   # Claude Code in the session of the git repository")
+	fmt.Fprintln(stdout, "  coop doctor                   # when something does not connect")
 	return 0
 }

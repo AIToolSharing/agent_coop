@@ -92,17 +92,12 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	switch {
-	case env["COOP_SESSION"] != "":
+	if cfg.Session != "" {
 		ok("session " + cfg.Session + " (COOP_SESSION)")
-	case cfg.Session != "":
-		path, _ := config.FindProjectFile(cwd())
-		if path == "" {
-			path, _ = config.FindProjectFile(env["CLAUDE_PROJECT_DIR"])
-		}
-		ok("session " + cfg.Session + " (" + path + ")")
-	default:
-		note("no session here: agents started in this directory get no coop tools; run coop session <name>")
+	} else if session, err := repoSession(cwd()); err == nil {
+		ok("coop claude here joins the session " + session + " (the name of the git repository)")
+	} else {
+		note("not in a git repository: coop claude <session> names the session")
 	}
 	if env["COOP_AGENT"] != "" {
 		ok("agent name " + cfg.Agent + " (COOP_AGENT)")

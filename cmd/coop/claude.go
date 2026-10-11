@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -54,10 +55,46 @@ func launchEnv(env map[string]string, session string, cfg func(map[string]string
 	return out
 }
 
+// gitOut runs git in dir and gives its output without the line end. Tests replace it.
+var gitOut = func(dir string, args ...string) (string, error) {
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+// errNoRepo: coop claude has no session to take from the directory.
+var errNoRepo = errors.New("not in a git repository: give the session, coop claude <session>")
+
+// repoSession gives the session of the git repository of dir: the name of its remote origin,
+// as `git clone` names the directory, so that the clones on each machine meet in one session.
+// A repository with no origin gives the name of its main directory, also from a worktree.
+func repoSession(dir string) (string, error) {
+	if remote, err := gitOut(dir, "remote", "get-url", "origin"); err == nil {
+		if s := config.Name(config.RepoName(remote)); s != "" {
+			return s, nil
+		}
+	}
+	common, err := gitOut(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil || common == "" {
+		return "", errNoRepo
+	}
+	if s := config.Name(filepath.Base(filepath.Dir(common))); s != "" {
+		return s, nil
+	}
+	return "", errNoRepo
+}
+
 // cmdClaude starts Claude Code with the coop channel. Pushes reach the session only through
-// the channel flag during the research preview of channels.
+// the channel flag during the research preview of channels. The session is the first
+// argument, else COOP_SESSION, else the name of the git repository (repoSession).
 func cmdClaude(args []string, stderr io.Writer) int {
 	session, argv := claudeCommand(args, environ())
+	if session == "" && os.Getenv("COOP_SESSION") == "" {
+		var err error
+		if session, err = repoSession(cwd()); err != nil {
+			fmt.Fprintln(stderr, "coop claude:", err)
+			return 2
+		}
+	}
 	path, err := exec.LookPath("claude")
 	if err != nil {
 		fmt.Fprintln(stderr, "claude is not on the PATH: install Claude Code first")

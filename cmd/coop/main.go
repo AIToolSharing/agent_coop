@@ -17,11 +17,10 @@ var version = "dev"
 
 const usageText = `usage:
   coop login <url> <token>        store the hub address and a token of any role
-  coop session <name> [--agent <a>]
-                                  put this directory's agents into a session (writes .coop)
-  coop claude [<session>] [args]  start Claude Code with the coop channel
-  coop --agent <name> claude ...  the same, as the agent <name> (default: the name in .coop,
-                                  then the directory name)
+  coop claude [<session>] [args]  start Claude Code with the coop channel, in <session>
+                                  (default: the name of the git repository)
+  coop --agent <name> claude ...  the same, as the agent <name> (default: the name of the
+                                  directory)
   coop tui [--url <url>] [--token <token>]
                                   watch and steer all sessions (operator token)
   coop setup                      register coop with Claude Code and install the skill
@@ -67,7 +66,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "login":
 		return cmdLogin(args[1:], stdout, stderr)
 	case "session":
-		return cmdSession(args[1:], stdout, stderr)
+		// coop session wrote a .coop file (v0.10.0 and before). coop claude takes the session
+		// from the git repository now.
+		fmt.Fprintln(stderr, "coop session is gone: coop claude takes the session from the git repository, or coop claude <session>")
+		return 2
 	case "claude":
 		return cmdClaude(args[1:], stderr)
 	case "tui":

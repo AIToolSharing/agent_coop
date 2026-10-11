@@ -110,8 +110,7 @@ func cmdLogin(args []string, stdout, stderr io.Writer) int {
 	case wire.RoleOperator:
 		fmt.Fprintln(stdout, "next:  coop tui")
 	default:
-		fmt.Fprintln(stdout, "next:  cd <project> && coop session <name>   # put the project's agents in a session")
-		fmt.Fprintln(stdout, "       coop claude                           # Claude Code with the coop channel")
+		fmt.Fprintln(stdout, "next:  cd <project> && coop claude   # Claude Code in the session of the git repository")
 	}
 	return 0
 }

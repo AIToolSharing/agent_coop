@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -107,28 +108,70 @@ func TestLoginStoresTheTokenUnderTheKeyOfItsRole(t *testing.T) {
 	}
 }
 
-func TestSessionWritesTheProjectFile(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+// git runs git in dir for a test, with a fixed identity, and fails the test on an error.
+func git(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// coop claude with no session takes the name of the git repository: of its origin, as git
+// clone names the directory, so that clones with other directory names meet; else of its main
+// directory, also from a worktree or a subdirectory.
+func TestTheSessionOfARepositoryIsItsName(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on the PATH")
+	}
+	root := t.TempDir()
+	clone := filepath.Join(root, "Some Clone")
+	if err := os.Mkdir(clone, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(dir)
+	git(t, clone, "init", "-q")
+	sub := filepath.Join(clone, "src")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{clone, sub} {
+		if s, err := repoSession(dir); err != nil || s != "some-clone" {
+			t.Fatalf("no origin, %s: %q %v", dir, s, err)
+		}
+	}
+	git(t, clone, "commit", "-q", "--allow-empty", "-m", "x")
+	wt := filepath.Join(root, "wt-1")
+	git(t, clone, "worktree", "add", "-q", wt)
+	if s, err := repoSession(wt); err != nil || s != "some-clone" {
+		t.Fatalf("a worktree: %q %v", s, err)
+	}
+	git(t, clone, "remote", "add", "origin", "git@github.com:AIToolSharing/agent_coop.git")
+	for _, dir := range []string{clone, sub, wt} {
+		if s, err := repoSession(dir); err != nil || s != "agent_coop" {
+			t.Fatalf("origin, %s: %q %v", dir, s, err)
+		}
+	}
+	if s, err := repoSession(t.TempDir()); err == nil {
+		t.Fatalf("not a repository: %q", s)
+	}
+}
+
+// Outside a git repository, coop claude with no session starts nothing and says what to do.
+func TestClaudeOutsideARepositoryNeedsASession(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("COOP_SESSION", "")
 	var out, errOut bytes.Buffer
-	if code := run([]string{"session", "build-42", "--agent", "alice"}, &out, &errOut); code != 0 {
-		t.Fatalf("code %d: %s", code, errOut.String())
+	if code := run([]string{"claude", "-p", "hi"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "coop claude <session>") {
+		t.Fatalf("code %d stderr %q", code, errOut.String())
 	}
-	b, err := os.ReadFile(filepath.Join(dir, ".coop"))
-	if err != nil || string(b) != "COOP_SESSION=build-42\nCOOP_AGENT=alice\n" {
-		t.Fatalf("%q %v", b, err)
-	}
-	if !strings.Contains(out.String(), "added .coop to") {
-		t.Fatalf("stdout %q", out.String())
-	}
-	if code := run([]string{"session", "Bad Name"}, &out, &errOut); code != 1 {
-		t.Fatalf("bad name: code %d", code)
-	}
-	if code := run([]string{"session"}, &out, &errOut); code != 2 {
-		t.Fatalf("no name: code %d", code)
+}
+
+// coop session wrote a .coop file (v0.10.0 and before). It is gone; the message says what
+// takes its place.
+func TestTheSessionCommandIsGone(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := run([]string{"session", "build-42"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "coop claude") {
+		t.Fatalf("code %d stderr %q", code, errOut.String())
 	}
 }
 
@@ -271,7 +314,7 @@ func TestDoctorReportsEachStep(t *testing.T) {
 	if code := run([]string{"doctor"}, &out, &errOut); code != 1 {
 		t.Fatalf("code %d:\n%s", code, out.String())
 	}
-	for _, want := range []string{"FAIL  no credential file", "FAIL  no hub address", "--    no session here", "FAIL  Claude Code has no MCP server named coop: run coop setup"} {
+	for _, want := range []string{"FAIL  no credential file", "FAIL  no hub address", "--    not in a git repository: coop claude <session> names the session", "FAIL  Claude Code has no MCP server named coop: run coop setup"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in\n%s", want, out.String())
 		}
@@ -284,14 +327,13 @@ func TestDoctorReportsEachStep(t *testing.T) {
 	if code := run([]string{"setup"}, &out, &errOut); code != 0 {
 		t.Fatal(errOut.String())
 	}
-	if code := run([]string{"session", "build-42"}, &out, &errOut); code != 0 {
-		t.Fatal(errOut.String())
-	}
+	git(t, dir, "init", "-q")
+	git(t, dir, "remote", "add", "origin", "https://github.com/org/build-42.git")
 	out.Reset()
 	if code := run([]string{"doctor"}, &out, &errOut); code != 0 {
 		t.Fatalf("code %d:\n%s", code, out.String())
 	}
-	for _, want := range []string{"ok    credential file", "ok    hub address " + srv.URL, "ok    the hub answers", "ok    machine token accepted", "--    no operator token", "ok    session build-42 (" + filepath.Join(dir, ".coop") + ")", "ok    agent name " + filepath.Base(dir), "ok    Claude Code starts /opt/coop/coop mcp as coop", "ok    skill "} {
+	for _, want := range []string{"ok    credential file", "ok    hub address " + srv.URL, "ok    the hub answers", "ok    machine token accepted", "--    no operator token", "ok    coop claude here joins the session build-42 (the name of the git repository)", "ok    agent name " + filepath.Base(dir), "ok    Claude Code starts /opt/coop/coop mcp as coop", "ok    skill "} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in\n%s", want, out.String())
 		}
