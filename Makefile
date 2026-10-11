@@ -24,7 +24,7 @@ VERSION := $(shell git describe --tags --always --dirty || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 GOBUILD := go build -trimpath -ldflags "$(LDFLAGS)"
 
-.PHONY: build release hub check test clean install
+.PHONY: build release hub publish check test clean install
 
 # install puts `coop` on the PATH. On Linux and macOS it is a link to the build, so
 # `make build` updates it in place. On Windows a user cannot make a link, so the build goes
@@ -65,6 +65,13 @@ hub: release
 	ssh $(HOST) 'install -d -m 700 .cache/coop-hub && rm -f .cache/coop-hub/*'
 	scp -C dist/coop-*-* deploy/install.sh deploy/coop.service $(HOST):.cache/coop-hub/
 	ssh $(HOST) .cache/coop-hub/install.sh
+
+# publish puts the release of the tag at HEAD on GitHub: the release binaries, the unit, the
+# install script and the TLS files of the hub, with the notes of the tag. A new hub downloads
+# them (README, Setup).
+publish: release
+	@git describe --tags --exact-match --dirty 2>/dev/null | grep -qv dirty || { echo "HEAD must be a tag with no changes"; exit 2; }
+	gh release create $(VERSION) --verify-tag --notes-from-tag dist/coop-*-* deploy/install.sh deploy/coop.service deploy/tls-selfsigned.sh deploy/nginx-coop.conf
 
 # The scripts of the hub's host, and the script that a device runs to install coop.
 SCRIPTS := deploy/*.sh internal/api/install.sh

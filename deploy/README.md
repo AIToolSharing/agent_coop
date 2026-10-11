@@ -20,22 +20,15 @@ public authority the clients need no pin.
 
 ## 2. Install
 
-On a machine with the repository and Go, one command builds the release binaries, copies them
-to the server and installs the hub there. The SSH login is root, or it has a `sudo` that asks
-for no password:
+On the server, one line downloads the latest release from GitHub and installs the hub:
 
 ```bash
-make hub HOST=<host>
+curl -fsSL https://github.com/AIToolSharing/agent_coop/releases/latest/download/install.sh | sudo bash
 ```
 
-To do the same by hand, copy the files into one directory of the server and run the script:
-
-```bash
-make release                 # dist/coop-linux-amd64, -linux-arm64, -darwin-arm64, -windows-amd64.exe
-ssh <host> mkdir -p coop-hub
-scp dist/coop-*-* deploy/install.sh deploy/coop.service <host>:coop-hub/
-ssh <host> coop-hub/install.sh
-```
+`sudo COOP_VERSION=v0.15.0 bash` in place of `sudo bash` installs another version. From a clone
+of the repository, `make hub HOST=<host>` builds the release binaries and installs them the
+same way, over SSH (as root, or with a `sudo` that asks for no password).
 
 The script installs `/usr/local/bin/coop`, creates the `coop` user and `/var/lib/coop`,
 installs the unit `coop.service`, and starts it. It also puts each release binary into
@@ -59,18 +52,18 @@ The first agent that joins an unknown session creates it. (v0.10.0 and before ha
 ## 3. TLS
 
 ```bash
-sudo deploy/tls-selfsigned.sh          # or: sudo deploy/tls-selfsigned.sh 9443
+sudo /usr/local/lib/coop/tls-selfsigned.sh          # or: ... tls-selfsigned.sh 9443
 ```
 
 It makes `/etc/coop/tls/{cert,key}.pem` (self-signed, ten years), installs the nginx site from
 `deploy/nginx-coop.conf`, and prints the certificate's SHA-256 fingerprint. Each client shows
 the same fingerprint at `coop login` and pins it. It is safe to run again; it keeps the
-certificate. Copy `tls-selfsigned.sh` and `nginx-coop.conf` to the server next to each other.
+certificate. The install line puts the script there; in a clone it is `deploy/tls-selfsigned.sh`.
 
 Check from another machine (`-k` only because the certificate is self-signed):
 
 ```bash
-curl -sk -o /dev/null -w '%{http_code}\n' https://<host>:8443/v1/admin/sessions   # 401
+curl -sk -o /dev/null -w '%{http_code}\n' https://<host>:8443/v1/whoami   # 401
 ```
 
 ## 4. Tokens
@@ -103,9 +96,13 @@ The line downloads the binary of the machine into `~/.local/bin`, then runs `coo
 Windows, run the line in Git Bash.
 
 `curl` does not trust a self-signed certificate, so the line does not work with the TLS front
-of section 3. There, copy the binary by hand one time:
+of section 3. There, download the binary of the machine from GitHub one time
+(`coop-linux-amd64`, `coop-linux-arm64`, `coop-darwin-arm64` or `coop-windows-amd64.exe`):
 
 ```bash
+mkdir -p ~/.local/bin
+curl -fsSL -o ~/.local/bin/coop https://github.com/AIToolSharing/agent_coop/releases/latest/download/coop-linux-amd64
+chmod 755 ~/.local/bin/coop
 coop login https://<host>:8443 laptop.<secret>     # shows and pins the fingerprint
 coop setup
 coop doctor

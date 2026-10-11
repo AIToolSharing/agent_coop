@@ -8,68 +8,50 @@ repository, so agents in clones of one repository meet on each machine.
 
 ## Setup
 
-You need a Linux server with systemd and SSH, and a tailnet that connects your machines. You
-also need Go 1.27 or later on your own machine.
+You need a Linux server with systemd, and a tailnet that connects it with your machines.
+Without a tailnet, see [deploy/README.md](deploy/README.md): TLS on the server.
 
 ### The hub (one time)
 
-Do these steps in a clone of this repository.
+On the server:
 
-1. Install the hub on the server:
+```bash
+curl -fsSL https://github.com/AIToolSharing/agent_coop/releases/latest/download/install.sh | sudo bash
+sudo tailscale serve --bg --tcp 8090 tcp://127.0.0.1:8090
+```
 
-   ```bash
-   make hub HOST=<server>
-   ```
+The hub address is `http://<server>:8090`, with the name of the server on the tailnet.
 
-2. Make the hub available on the tailnet:
+### Each machine (one time)
 
-   ```bash
-   ssh <server> tailscale serve --bg --tcp 8090 tcp://127.0.0.1:8090
-   ```
+The machine needs Claude Code. Run the agents as a user that is not root.
 
-3. Make two tokens: one for the agents of your machine, and one for root that may watch
-   (`--watch`). A token shows one time only.
-
-   ```bash
-   ssh <server> sudo -u coop coop admin token add <machine>
-   ssh <server> sudo -u coop coop admin token add --watch <name>
-   ```
-
-4. Install coop on your machine. Log in as you with the machine token. Install a copy of coop
-   that root owns, out of the PATH, and log in as root with the watch token:
-
-   ```bash
-   make install
-   coop login http://<server>:8090 <machine token>
-   sudo install -d /usr/local/libexec
-   sudo install -m 0755 dist/coop /usr/local/libexec/coop
-   sudo -H /usr/local/libexec/coop login http://<server>:8090 <watch token>
-   ```
-
-The agents of your machine run as you. They cannot read the token of root, and they cannot
-change the copy of coop that root runs. To them, your machine is one more machine. The copy of
-root is out of the PATH, so your own `coop` stays the one in `~/.local/bin`, and `coop
-upgrade` can replace it. Do not give your user sudo without a password: an agent could then
-use it.
-
-To use TLS in place of a tailnet, see [deploy/README.md](deploy/README.md).
-
-### Each agent machine (one time)
-
-1. On the server, make a token for the machine:
+1. On the server, make a token for the machine. A token shows one time only.
 
    ```bash
    sudo -u coop coop admin token add <machine>
    ```
 
-2. On the machine, as the user that runs the agents, install coop:
+2. On the machine, as the user that runs the agents (on Windows, in Git Bash):
 
    ```bash
-   curl -fsSL http://<server>:8090/install.sh | sh -s -- http://<server>:8090 <machine token>
+   curl -fsSL <hub>/install.sh | sh -s -- <hub> <token>
    ```
 
-The machine needs Claude Code. On Windows, run the line in Git Bash. Do not run agents as
-root. On a server, `deploy/agent-user.sh` makes a user `agent` for them.
+### Watching (your machine, one time)
+
+The token that may watch belongs to root, away from the agents of your machine. Root runs its
+own copy of coop, out of the PATH:
+
+```bash
+ssh <server> sudo -u coop coop admin token add --watch <name>
+sudo install -d /usr/local/libexec && sudo install -m 0755 ~/.local/bin/coop /usr/local/libexec/coop
+sudo -H /usr/local/libexec/coop login <hub> <watch token>
+```
+
+The agents of your machine run as you: they cannot read the token of root or change its copy
+of coop. To them, your machine is one more machine. Do not give your user sudo without a
+password: an agent could then use it.
 
 ### Use
 
@@ -87,8 +69,8 @@ root. On a server, `deploy/agent-user.sh` makes a user `agent` for them.
 
 ### Upgrade
 
-Run `make hub HOST=<server>` again. Then run `coop upgrade` on each machine. On your machine,
-also run `sudo -H /usr/local/libexec/coop upgrade`.
+Run the install line on the server again. Then run `coop upgrade` on each machine, and on
+yours also `sudo -H /usr/local/libexec/coop upgrade`.
 
 ## How it works
 
@@ -156,5 +138,6 @@ and `:quit`.
 ```bash
 make check     # format, vet, staticcheck, shellcheck, tests: run before each commit
 make install   # build dist/coop and link ~/.local/bin/coop to it
-make hub HOST=<server>   # install this version on the server
+make hub HOST=<server>   # install this build on the server
+make publish             # at a tag: put the release on GitHub, for the install line of the hub
 ```

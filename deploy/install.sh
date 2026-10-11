@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Install the coop hub on one Linux host with systemd: the binary, the `coop` user, the data
 # directory, one unit, and the release binaries that the hub gives to its devices. Run it
-# again with the new binaries for an upgrade. TLS and tokens stay manual steps; it prints them.
+# again for an upgrade. TLS and tokens stay manual steps; it prints them.
 #
+#   curl -fsSL https://github.com/AIToolSharing/agent_coop/releases/latest/download/install.sh | sudo bash
 #   deploy/install.sh [<coop binary>]
 #
 # <coop binary> is the release binary for this host (default: coop-linux-<arch> next to this
@@ -10,7 +11,11 @@
 # /var/lib/coop/dist. A device downloads the one for its platform from the hub: with the
 # install line that this script prints, and later with `coop upgrade`.
 #
-# `make hub HOST=<ssh host>` copies the files to a host and runs this script there.
+# With no binary (the curl line), the script first downloads the files of a release from
+# GitHub: the latest one, or the version in COOP_VERSION (for example v0.15.0).
+# COOP_RELEASE_URL names another place that has the same files.
+#
+# `make hub HOST=<ssh host>` copies the files of a build to a host and runs this script there.
 set -euo pipefail
 
 unit_dir=/etc/systemd/system
@@ -18,8 +23,9 @@ dist=/var/lib/coop/dist
 here=$(cd "$(dirname "$0")" && pwd)
 
 if [ "$(id -u)" -ne 0 ]; then
-  if ! command -v sudo >/dev/null; then
-    echo "run as root: $0 [<coop binary>]" >&2
+  # From a pipe there is no file to run again with sudo.
+  if [ ! -f "$0" ] || ! command -v sudo >/dev/null; then
+    echo "run as root: curl ... | sudo bash, or sudo deploy/install.sh [<coop binary>]" >&2
     exit 2
   fi
   exec sudo "$0" "$@"
@@ -30,6 +36,23 @@ case $(uname -m) in
   *) arch=$(uname -m) ;;
 esac
 bin=${1:-$here/coop-linux-$arch}
+release=""
+if [ $# -eq 0 ] && [ ! -f "$bin" ]; then
+  if [ -n "${COOP_VERSION:-}" ]; then
+    release=https://github.com/AIToolSharing/agent_coop/releases/download/$COOP_VERSION
+  else
+    release=https://github.com/AIToolSharing/agent_coop/releases/latest/download
+  fi
+  release=${COOP_RELEASE_URL:-$release}
+  command -v curl >/dev/null || { echo "missing: curl" >&2; exit 2; }
+  here=$(mktemp -d)
+  trap 'rm -rf "$here"' EXIT
+  echo "download the release from $release"
+  for f in coop-linux-amd64 coop-linux-arm64 coop-darwin-arm64 coop-windows-amd64.exe coop.service tls-selfsigned.sh nginx-coop.conf; do
+    curl -fsSL -o "$here/$f" "$release/$f"
+  done
+  bin=$here/coop-linux-$arch
+fi
 if [ ! -f "$bin" ]; then
   echo "no such file: $bin" >&2
   echo "usage: $0 [<coop binary>]   (for example dist/coop-linux-amd64 from 'make release')" >&2
@@ -51,6 +74,14 @@ id coop >/dev/null 2>&1 || useradd --system --gid coop --home /var/lib/coop --sh
 step "binary"
 install -m 755 "$bin" /usr/local/bin/coop
 /usr/local/bin/coop version
+# The TLS script stays: the downloaded files go when this script ends.
+tlsdir=$here
+if [ -n "$release" ]; then
+  tlsdir=/usr/local/lib/coop
+  install -d -m 755 "$tlsdir"
+  install -m 755 "$here/tls-selfsigned.sh" "$tlsdir/"
+  install -m 644 "$here/nginx-coop.conf" "$tlsdir/"
+fi
 
 step "data in /var/lib/coop"
 install -d -o coop -g coop -m 750 /var/lib/coop
@@ -83,8 +114,10 @@ fi
 
 step "left to do"
 cat <<TEXT
-1. TLS in front of the hub, with a self-signed certificate on this host's nginx:
-     sudo $here/tls-selfsigned.sh          # port 8443; prints the certificate fingerprint
+1. Make the hub reachable. On a tailnet, one line, and the hub address is http://<this host>:8090:
+     tailscale serve --bg --tcp 8090 tcp://127.0.0.1:8090
+   Else TLS in front of the hub, with a self-signed certificate on this host's nginx:
+     sudo $tlsdir/tls-selfsigned.sh          # port 8443; prints the certificate fingerprint
    (Any other reverse proxy works too: proxy to 127.0.0.1:8090 with buffering off.)
 2. A token for root on your own machine; --watch lets it show all sessions (it shows one time):
      sudo -u coop coop admin token add --watch console
