@@ -15,23 +15,19 @@ import (
 // version is set by the Makefile from git describe.
 var version = "dev"
 
+// usageText lists the commands of a machine with agents. The commands of the hub's host (serve,
+// admin) and coop tui are in the README: an agent that runs coop does not see them.
 const usageText = `usage:
-  coop login <url> <token>        store the hub address and a token of any role
+  coop login <url> <token>        store the hub address and the token of this machine
   coop claude [<session>] [args]  start Claude Code with the coop channel, in <session>
                                   (default: the name of the git repository)
   coop --agent <name> claude ...  the same, as the agent <name> (default: the name of the
                                   directory)
-  coop tui [--url <url>] [--token <token>]
-                                  show all sessions (a token that may watch)
   coop setup                      remove what an older coop put into each Claude session
-  coop doctor                     check the connection, the tokens, the session, the setup
+  coop doctor                     check the connection, the token, the session, the setup
   coop upgrade                    take the version of the hub: download the binary of this
                                   device from the hub, then run its setup
   coop mcp                        the MCP server Claude Code starts (stdio)
-  coop serve [--listen <addr>] [--data <dir>] [--dist <dir>]
-                                  run the hub (the server)
-  coop admin token add [--watch] <name> | list | revoke <name>
-                                  manage tokens on the hub's host
   coop version
 `
 

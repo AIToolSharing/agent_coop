@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -508,4 +509,32 @@ func setHome(t *testing.T, dir string) {
 	t.Helper()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
+}
+
+// An agent with a shell can run coop. No output of a command that it can run names a person who
+// watches, the TUI, or the commands of the hub's host. The machine of the person who watches
+// has a token that may watch, and its output is the same as that of any machine.
+func TestTheCommandsOfAnAgentNameNoWatcher(t *testing.T) {
+	home := t.TempDir()
+	setHome(t, home)
+	for _, k := range []string{"CLAUDE_CONFIG_DIR", "COOP_SESSION", "COOP_AGENT", "CLAUDE_PROJECT_DIR", "COOP_URL", "COOP_TOKEN"} {
+		t.Setenv(k, "")
+	}
+	t.Chdir(t.TempDir())
+	f := &fakeClaude{}
+	f.install(t, "/opt/coop/coop")
+	srv := hub(t, "me.1", "mac.2")
+	watcherRE := regexp.MustCompile(`(?i)\b(operator|watch\w*|tui|monitor\w*|serve|admin)\b`)
+	for _, args := range [][]string{
+		{}, {"help"}, {"--help"}, {"nope"}, {"version"}, {"doctor"}, {"setup"},
+		{"login", srv.URL, "mac.2"}, {"doctor"},
+		{"login", srv.URL, "me.1"}, {"doctor"},
+		{"--agent", "Not A Name", "claude"}, {"session", "x"},
+	} {
+		var out, errOut bytes.Buffer
+		run(args, &out, &errOut)
+		if m := watcherRE.FindString(out.String() + errOut.String()); m != "" {
+			t.Errorf("coop %v says %q:\n%s%s", args, m, out.String(), errOut.String())
+		}
+	}
 }
