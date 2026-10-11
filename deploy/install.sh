@@ -88,8 +88,8 @@ cat <<TEXT
    (Any other reverse proxy works too: proxy to 127.0.0.1:8090 with buffering off.)
 2. A token for root on your own machine; --watch lets it show all sessions (it shows one time):
      sudo -u coop coop admin token add --watch console
-     on your machine: sudo -H /usr/local/bin/coop login https://<this host>:8443 console.<secret>
-     on your machine: sudo -H /usr/local/bin/coop tui
+     on your machine: sudo -H /usr/local/libexec/coop login https://<this host>:8443 console.<secret>
+     on your machine: sudo -H /usr/local/libexec/coop tui
 3. One token per agent machine:
      sudo -u coop coop admin token add laptop
    On that machine, as the user that runs the agents, one time:

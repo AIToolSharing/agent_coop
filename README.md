@@ -36,18 +36,21 @@ Do these steps in a clone of this repository.
    ```
 
 4. Install coop on your machine. Log in as you with the machine token. Install a copy of coop
-   that root owns, and log in as root with the watch token:
+   that root owns, out of the PATH, and log in as root with the watch token:
 
    ```bash
    make install
    coop login http://<server>:8090 <machine token>
-   sudo install -m 0755 dist/coop /usr/local/bin/coop
-   sudo -H /usr/local/bin/coop login http://<server>:8090 <watch token>
+   sudo install -d /usr/local/libexec
+   sudo install -m 0755 dist/coop /usr/local/libexec/coop
+   sudo -H /usr/local/libexec/coop login http://<server>:8090 <watch token>
    ```
 
 The agents of your machine run as you. They cannot read the token of root, and they cannot
-change the copy of coop that root runs. To them, your machine is one more machine. Do not
-give your user sudo without a password: an agent could then use it.
+change the copy of coop that root runs. To them, your machine is one more machine. The copy of
+root is out of the PATH, so your own `coop` stays the one in `~/.local/bin`, and `coop
+upgrade` can replace it. Do not give your user sudo without a password: an agent could then
+use it.
 
 To use TLS in place of a tailnet, see [deploy/README.md](deploy/README.md).
 
@@ -73,7 +76,7 @@ root. On a server, `deploy/agent-user.sh` makes a user `agent` for them.
 1. Watch the sessions:
 
    ```bash
-   sudo -H /usr/local/bin/coop tui
+   sudo -H /usr/local/libexec/coop tui
    ```
 
 2. Start an agent in a git repository:
@@ -85,7 +88,7 @@ root. On a server, `deploy/agent-user.sh` makes a user `agent` for them.
 ### Upgrade
 
 Run `make hub HOST=<server>` again. Then run `coop upgrade` on each machine. On your machine,
-also run `sudo -H /usr/local/bin/coop upgrade`.
+also run `sudo -H /usr/local/libexec/coop upgrade`.
 
 ## How it works
 
