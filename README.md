@@ -99,8 +99,9 @@ Run `make hub HOST=<server>` again. Then run `coop upgrade` on each machine.
 | `1`, `2` | the transcript, the threads |
 | `?` | show each key and command |
 
-The TUI only shows the sessions. It sends nothing to the agents. The commands are `:delete`,
-`:filter <agent>`, `:sys` and `:quit`.
+The TUI only shows the sessions. It sends nothing to the agents, and the texts that the agents
+get do not tell them about you or the TUI. The commands are `:delete`, `:filter <agent>`, `:sys`
+and `:quit`.
 
 ## Commands
 
@@ -114,15 +115,17 @@ The TUI only shows the sessions. It sends nothing to the agents. The commands ar
 
 ## Security
 
-- The hub sets the sender of each message. An agent cannot write as another agent or as you.
+- The hub sets the sender of each message. An agent cannot write as another agent.
 - An agent gets only the messages to it, to `all`, or from it.
-- Only your operator token reads all the messages and writes as `operator`.
+- Only your operator token reads all the messages. No token writes to the agents as you.
 - The hub stores only a hash of each token. `coop admin token revoke <name>` stops a token at
   once.
 - An agent with a shell can read the token of its machine. All the agents are yours, so coop
   accepts this.
 - An agent must not obey a message from a peer as an instruction from you. The skill of coop
   tells it this.
+- An agent that is not sure about a request of a peer does not do it. It sets its state to
+  `blocked` with a note. You see the state and the note in the TUI.
 
 ## Limits
 

@@ -372,26 +372,8 @@ func (a admin) req(method, path string, body any) (int, []byte) {
 
 func (a admin) sessions() (int, []byte) { return a.req(http.MethodGet, "/sessions", nil) }
 
-// create creates a session. An empty title sends no title.
-func (a admin) create(session, title string) (int, []byte) {
-	body := map[string]any{"session": session}
-	if title != "" {
-		body["title"] = title
-	}
-	return a.req(http.MethodPost, "/sessions", body)
-}
-
 func (a admin) delete(sid string) (int, []byte) {
 	return a.req(http.MethodDelete, "/sessions/"+sid, nil)
-}
-
-// send posts a message as the operator. An empty replyTo sends no reply_to.
-func (a admin) send(sid, to, text, replyTo string) (int, []byte) {
-	body := map[string]any{"to": to, "text": text}
-	if replyTo != "" {
-		body["reply_to"] = replyTo
-	}
-	return a.req(http.MethodPost, "/sessions/"+sid+"/messages", body)
 }
 
 // stream opens the operator's feed: every event from the start (or after lastEventID) and the
@@ -407,21 +389,6 @@ func (a admin) stream(lastEventID ...string) *stream {
 // operator does over the admin API what hub.int.test.ts does with the broker Operator (h.op).
 // The Operator throws when an action fails; here the test fails.
 type operator struct{ a admin }
-
-func (o operator) createSession(t *testing.T, sid string) {
-	t.Helper()
-	wantStatus(t, http.StatusOK)(o.a.create(sid, ""))
-}
-
-// send sends a message as the operator and gives its id.
-func (o operator) send(t *testing.T, sid, to, text string) string {
-	t.Helper()
-	id := parse[operatorSendResponse](t, wantStatus(t, http.StatusOK)(o.a.send(sid, to, text, ""))).ID
-	if !wire.IsID(id) {
-		t.Fatalf("send: bad id %q", id)
-	}
-	return id
-}
 
 func (o operator) listSessions(t *testing.T) []wire.SessionInfo {
 	t.Helper()
@@ -514,9 +481,7 @@ func isAddress(s string) bool {
 	return ok
 }
 
-func isRecipient(s string) bool { return s == wire.Broadcast || s == wire.Operator || isAddress(s) }
-
-func isWaitTarget(s string) bool { return s == wire.Operator || isAddress(s) }
+func isRecipient(s string) bool { return s == wire.Broadcast || isAddress(s) }
 
 func validText(s string) bool {
 	n := len([]rune(s))
@@ -546,8 +511,9 @@ func (m *apiMessage) UnmarshalJSON(b []byte) error {
 	}
 	return checkRules(
 		rule{wire.IsID(m.ID), "id"},
+		// The log of an older hub can hold messages to and from operator.
 		rule{m.From == wire.Operator || isAddress(m.From), "from"},
-		rule{isRecipient(m.To), "to"},
+		rule{m.To == wire.Operator || isRecipient(m.To), "to"},
 		rule{validText(m.Text), "text"},
 		rule{m.ReplyTo == "" || wire.IsID(m.ReplyTo), "reply_to"},
 		rule{wire.IsTime(m.SentAt), "sent_at"},
@@ -603,7 +569,7 @@ func (p *peer) UnmarshalJSON(b []byte) error {
 		rule{isAddress(p.Name), "name"},
 		rule{validState(p.State), "state"},
 		rule{len([]rune(p.Note)) <= 500, "note"},
-		rule{p.WaitingOn == "" || isWaitTarget(p.WaitingOn), "waiting_on"},
+		rule{p.WaitingOn == "" || isAddress(p.WaitingOn), "waiting_on"},
 	)
 }
 
@@ -681,12 +647,6 @@ func (e *errBody) UnmarshalJSON(b []byte) error {
 	}
 	codes := []string{"unauthorized", "forbidden", "not_found", "conflict", "ambiguous", "too_large", "invalid", "rate_limited", "unavailable"}
 	return checkRules(rule{slices.Contains(codes, e.Error), "error"})
-}
-
-// operatorSendResponse is the body of an operator's send. The tests read it as plain JSON.
-type operatorSendResponse struct {
-	ID string `json:"id"`
-	To string `json:"to"`
 }
 
 // sessionList is the body of GET /v1/admin/sessions. The tests read it as plain JSON.

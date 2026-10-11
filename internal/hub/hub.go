@@ -138,7 +138,7 @@ type SendResponse struct {
 	Online bool   `json:"online"`
 	SentAt string `json:"sent_at"`
 	// State is the recipient's state when it is a peer: working, blocked, done or idle while
-	// it is in the session, else away. Empty for all and operator.
+	// it is in the session, else away. Empty for all.
 	State string `json:"state,omitempty"`
 }
 
@@ -170,16 +170,6 @@ type HistoryQuery struct {
 	Agent string
 	With  string
 	Limit int
-}
-
-type OperatorSendRequest struct {
-	To, Text, ReplyTo string
-}
-
-type OperatorSendResponse struct {
-	ID     string `json:"id"`
-	To     string `json:"to"`
-	SentAt string `json:"sent_at"`
 }
 
 // Owner is who a token belongs to.
@@ -653,12 +643,8 @@ func (h *Hub) Activity(machine, sid string, req ActivityRequest) error {
 		err = evt(&wire.Activity{Kind: "state", State: req.State, Note: req.Note}, false, &store.Known{State: req.State, Note: req.Note})
 	case "wait_start":
 		on := ""
-		switch {
-		case req.From == "":
-		case req.From == wire.Operator:
-			on = wire.Operator
-		default:
-			a, err := h.peerLocked(sid, req.From, &c.me, true)
+		if req.From != "" {
+			a, err := h.peerLocked(sid, req.From, c.me, true)
 			if err != nil {
 				return err
 			}
@@ -713,7 +699,7 @@ func (h *Hub) History(machine, sid string, q HistoryQuery) ([]Message, error) {
 	}
 	var peer *wire.Address
 	if q.With != "" {
-		p, err := h.peerLocked(sid, q.With, &c.me, true)
+		p, err := h.peerLocked(sid, q.With, c.me, true)
 		if err != nil {
 			return nil, err
 		}
@@ -759,20 +745,6 @@ func (h *Hub) ListSessions() ([]wire.SessionInfo, error) {
 	return out, nil
 }
 
-func (h *Hub) CreateSession(sid, title string) (wire.SessionInfo, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	row, err := h.st.CreateSession(sid, title, h.now())
-	if errors.Is(err, store.ErrExists) {
-		return wire.SessionInfo{}, errf("conflict", "session %s exists", sid)
-	}
-	if err != nil {
-		return wire.SessionInfo{}, storeErr(err)
-	}
-	h.feedSession(row)
-	return wire.SessionInfo{Session: sid, SessionRecord: row.Record}, nil
-}
-
 // DeleteSession removes a session with its messages. A session with an agent in it is a
 // conflict: the agent would join again at once, and the join creates the session again.
 func (h *Hub) DeleteSession(sid string) error {
@@ -794,29 +766,6 @@ func (h *Hub) DeleteSession(sid string) error {
 	}
 	h.feedAll("session", sessionOut{Kind: "session", Session: sid, Revision: rev}, "")
 	return nil
-}
-
-// OperatorSend sends as the operator: to all, or to a peer that is or was in the session.
-func (h *Hub) OperatorSend(sid string, req OperatorSendRequest) (OperatorSendResponse, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err := h.requireSessionLocked(sid); err != nil {
-		return OperatorSendResponse{}, err
-	}
-	to := wire.Broadcast
-	if req.To != wire.Broadcast {
-		a, err := h.peerLocked(sid, req.To, nil, false)
-		if err != nil {
-			return OperatorSendResponse{}, err
-		}
-		to = a.String()
-	}
-	sentAt := h.now()
-	seq, err := h.publishLocked(wire.Event{Kind: wire.EventMsg, SID: sid, From: wire.Operator, To: to, Text: req.Text, ReplyTo: req.ReplyTo, SentAt: sentAt}, false, nil)
-	if err != nil {
-		return OperatorSendResponse{}, storeErr(err)
-	}
-	return OperatorSendResponse{ID: strconv.FormatInt(seq, 10), To: to, SentAt: sentAt}, nil
 }
 
 // --- The operator's feed -----------------------------------------------------------------------
@@ -1048,13 +997,12 @@ func (h *Hub) awayLocked(sid string) ([]store.KnownRow, error) {
 	return out, nil
 }
 
-// recipientLocked resolves a `send` target: all, operator (the user), or a peer that is or
-// was in the session.
+// recipientLocked resolves a `send` target: all, or a peer that is or was in the session.
 func (h *Hub) recipientLocked(sid, input string, me wire.Address) (string, error) {
-	if input == wire.Broadcast || input == wire.Operator {
+	if input == wire.Broadcast {
 		return input, nil
 	}
-	a, err := h.peerLocked(sid, input, &me, false)
+	a, err := h.peerLocked(sid, input, me, false)
 	if err != nil {
 		return "", err
 	}
@@ -1062,12 +1010,12 @@ func (h *Hub) recipientLocked(sid, input string, me wire.Address) (string, error
 }
 
 // peerLocked turns a peer as a client writes it (`name` or `name@machine`) into an address,
-// other than me (nil for the operator). A bare name must match exactly one agent in the
+// other than me. A bare name must match exactly one agent in the
 // session now. Only when it matches none, an agent that left matches: the hub keeps the
 // message for it. Thus an agent that left long ago cannot make a name ambiguous. With
 // allowUnknown, a full address passes even if the hub never saw it (a wait or history filter).
 // The error names only the agents in the session now.
-func (h *Hub) peerLocked(sid, input string, me *wire.Address, allowUnknown bool) (wire.Address, error) {
+func (h *Hub) peerLocked(sid, input string, me wire.Address, allowUnknown bool) (wire.Address, error) {
 	var live []wire.Address
 	for _, c := range h.inSessionLocked(sid) {
 		live = append(live, c.me)
@@ -1082,7 +1030,7 @@ func (h *Hub) peerLocked(sid, input string, me *wire.Address, allowUnknown bool)
 			peers = append(peers, a)
 		}
 	}
-	notMe := func(p wire.Address) bool { return me == nil || p != *me }
+	notMe := func(p wire.Address) bool { return p != me }
 	list := func() string {
 		var parts []string
 		for _, p := range live {
@@ -1116,14 +1064,12 @@ func (h *Hub) peerLocked(sid, input string, me *wire.Address, allowUnknown bool)
 	}
 	// Yourself and an ambiguous name conflict with the session state (409), not with the
 	// format.
-	if me != nil {
-		self := input == me.Agent
-		if len(matches) > 0 {
-			self = matches[0] == *me
-		}
-		if self {
-			return wire.Address{}, errf("conflict", "cannot address yourself")
-		}
+	self := input == me.Agent
+	if len(matches) > 0 {
+		self = matches[0] == me
+	}
+	if self {
+		return wire.Address{}, errf("conflict", "cannot address yourself")
 	}
 	if len(matches) > 1 {
 		var names []string

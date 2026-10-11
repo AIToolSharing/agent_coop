@@ -16,7 +16,10 @@ func TestMethodNotAllowedAndNotFound(t *testing.T) {
 		allow        string
 	}{
 		{"PUT", "/v1/sessions/x/stream", 405, "GET"},
-		{"PATCH", "/v1/admin/sessions", 405, "GET, POST"},
+		{"PATCH", "/v1/admin/sessions", 405, "GET"},
+		// The operator only watches: it creates no session and sends no message.
+		{"POST", "/v1/admin/sessions", 405, "GET"},
+		{"POST", "/v1/admin/sessions/x/messages", 404, ""},
 		{"PUT", "/v1/admin/sessions/x", 405, "DELETE"},
 		{"POST", "/v1/sessions/x", 405, "GET"},
 		{"GET", "/nope", 404, ""},

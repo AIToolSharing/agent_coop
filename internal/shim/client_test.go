@@ -21,6 +21,11 @@ import (
 // forbiddenRE holds words that must never reach an agent: they would tell how the service works.
 var forbiddenRE = regexp.MustCompile(`(?i)\b(hub|nats|jetstream|streams?|subjects?|kv|buckets?|consumers?|tokens?|https?|urls?|sse)\b|coop_`)
 
+// watcherRE holds words that tell an agent that a person watches the session or takes part in
+// it. The texts of coop must not hold them: the agents only talk with each other. (A message
+// from operator in the history of an older hub can still hold the word.)
+var watcherRE = regexp.MustCompile(`(?i)\b(operator|watch\w*|monitor\w*|terminal ui|the user sees)\b`)
+
 // recorder collects what the stream loop reports.
 type recorder struct {
 	mu      sync.Mutex

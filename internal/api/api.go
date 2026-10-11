@@ -81,9 +81,7 @@ func New(h *hub.Hub, log func(format string, args ...any)) *Server {
 	s.add("POST", "/v1/sessions/{sid}/activity", kindAgent, s.activity)
 	s.add("GET", "/v1/sessions/{sid}", kindAgent, s.view)
 	s.add("GET", "/v1/admin/sessions", kindOperator, s.adminSessions)
-	s.add("POST", "/v1/admin/sessions", kindOperator, s.adminCreate)
 	s.add("DELETE", "/v1/admin/sessions/{sid}", kindOperator, s.adminDelete)
-	s.add("POST", "/v1/admin/sessions/{sid}/messages", kindOperator, s.adminSend)
 	s.add("GET", "/v1/admin/stream", kindOperator, s.adminStream)
 	return s
 }
@@ -411,24 +409,6 @@ func (s *Server) adminSessions(w http.ResponseWriter, r *http.Request, _ hub.Own
 	writeJSON(w, 200, map[string]any{"sessions": list})
 }
 
-func (s *Server) adminCreate(w http.ResponseWriter, r *http.Request, _ hub.Owner, _ string) {
-	b, ok := body(w, r)
-	if !ok {
-		return
-	}
-	sid, title, err := parseCreateSession(b)
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	info, err := s.hub.CreateSession(sid, title)
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	writeJSON(w, 200, info)
-}
-
 func (s *Server) done(w http.ResponseWriter, err error) {
 	if err != nil {
 		writeHubError(w, err)
@@ -439,24 +419,6 @@ func (s *Server) done(w http.ResponseWriter, err error) {
 
 func (s *Server) adminDelete(w http.ResponseWriter, _ *http.Request, _ hub.Owner, sid string) {
 	s.done(w, s.hub.DeleteSession(sid))
-}
-
-func (s *Server) adminSend(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
-	b, ok := body(w, r)
-	if !ok {
-		return
-	}
-	req, err := parseOperatorSend(b)
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	res, err := s.hub.OperatorSend(sid, req)
-	if err != nil {
-		writeHubError(w, err)
-		return
-	}
-	writeJSON(w, 200, res)
 }
 
 func (s *Server) adminStream(w http.ResponseWriter, r *http.Request, owner hub.Owner, _ string) {

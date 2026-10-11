@@ -207,8 +207,8 @@ func (b *inbox) wait(from string) *pending[[]item] {
 	}}
 }
 
-// expectReply starts a wait for the reply to message id from peer from (an address, or
-// operator). A queued reply ends the wait at once.
+// expectReply starts a wait for the reply to message id from peer from (an address). A queued
+// reply ends the wait at once.
 func (b *inbox) expectReply(id, from string) *pending[askResult] {
 	b.mu.Lock()
 	i := slices.IndexFunc(b.queue, func(it item) bool {

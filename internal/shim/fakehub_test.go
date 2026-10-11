@@ -207,7 +207,7 @@ func (h *fakeHub) send(w http.ResponseWriter, r *http.Request) {
 	}
 	from := req.Agent + "@" + machine
 	to, online, state := req.To, true, ""
-	if to != wire.Broadcast && to != wire.Operator {
+	if to != wire.Broadcast {
 		var found []*fakeAgent
 		for _, a := range s.agents {
 			if matchesPeer(req.To, a.addr) {
@@ -340,11 +340,4 @@ func (h *fakeHub) activities(sid string) []activity {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return slices.Clone(h.sessions[sid].acts)
-}
-
-// messages gives every message of the session, in order.
-func (h *fakeHub) messages(sid string) []message {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return slices.Clone(h.sessions[sid].msgs)
 }

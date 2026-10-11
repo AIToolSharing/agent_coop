@@ -22,7 +22,8 @@ const (
 // IsRole reports whether s is a token role.
 func IsRole(s string) bool { return s == RoleMachine || s == RoleOperator }
 
-// Reserved names in addressing.
+// Reserved names in addressing. No agent can have them. Operator is the sender or recipient of
+// messages that an older hub kept in its log: the hub of now sends no message to or from it.
 const (
 	Operator  = "operator"
 	Broadcast = "all"
@@ -135,7 +136,7 @@ type SessionInfo struct {
 
 // Waiting is what an agent waits for, in its presence record.
 type Waiting struct {
-	On      string `json:"on,omitempty"` // a peer address or operator
+	On      string `json:"on,omitempty"` // a peer address (operator from an older hub)
 	ReplyTo string `json:"reply_to,omitempty"`
 	Since   string `json:"since"`
 }
@@ -190,7 +191,7 @@ type Activity struct {
 	State string `json:"state,omitempty"`
 	Note  string `json:"note,omitempty"`
 	// wait_start
-	From     string `json:"from,omitempty"` // a peer address or operator
+	From     string `json:"from,omitempty"` // a peer address (operator from an older hub)
 	ReplyTo  string `json:"reply_to,omitempty"`
 	TimeoutS int    `json:"timeout_s,omitempty"`
 	// wait_end: message timeout cancelled

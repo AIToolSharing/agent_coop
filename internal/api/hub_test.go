@@ -16,22 +16,32 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
-// hubSuite is what the tests share: one hub, three machines, the operator and the session
-// counter.
+// hubSuite is what the tests share: one hub, three machines and the session counter.
 type hubSuite struct {
 	h                *harness
-	op               operator // h.op in hub.int.test.ts
 	mac1, vps2, mac3 api
 	n                int
 }
 
-// session creates a fresh open session per test, so tests do not see each other's traffic.
+// session gives a fresh session name per test, so tests do not see each other's traffic. The
+// first join creates the session.
 func (x *hubSuite) session(t *testing.T) string {
 	t.Helper()
 	x.n++
-	sid := fmt.Sprintf("s%d", x.n)
-	x.op.createSession(t, sid)
-	return sid
+	return fmt.Sprintf("s%d", x.n)
+}
+
+// writer joins sid as w@mac-3, which creates the session. It gives a function that sends a
+// message to all as w and gives the id of the message.
+func (x *hubSuite) writer(t *testing.T, sid string) func(text string) string {
+	t.Helper()
+	w := x.mac3.stream(sid, "w")
+	t.Cleanup(w.close)
+	w.wait(t, nil)
+	return func(text string) string {
+		t.Helper()
+		return parse[sendResponse](t, wantStatus(t, 200)(x.mac3.send(sid, "w", "all", text, ""))).ID
+	}
 }
 
 func TestHub(t *testing.T) {
@@ -40,7 +50,6 @@ func TestHub(t *testing.T) {
 	h := startHub(t, limits{join: high, msg: high, activity: high}, options{})
 	x := &hubSuite{
 		h:    h,
-		op:   operator{admin{h.base, h.operatorToken("op")}},
 		mac1: api{h.base, h.token("mac-1")},
 		vps2: api{h.base, h.token("vps-2")},
 		mac3: api{h.base, h.token("mac-3")},
@@ -50,7 +59,7 @@ func TestHub(t *testing.T) {
 	t.Run("messages", x.messages)
 	t.Run("rate limits", rateLimits)
 	t.Run("resume", x.resume)
-	t.Run("operator actions reach agents", x.operatorActions)
+	t.Run("the operator only watches", x.operatorWatches)
 	t.Run("peer presence", x.peerPresence)
 	t.Run("peers that left", x.peersThatLeft)
 	t.Run("activity and presence", x.activityAndPresence)
@@ -281,7 +290,6 @@ func (x *hubSuite) messages(t *testing.T) {
 		}
 		wantStatus(t, 409)(x.mac1.send(sid, "alice", "alice", "hi", ""))
 		wantStatus(t, 409)(x.mac1.send(sid, "alice", "alice@mac-1", "hi", ""))
-		wantStatus(t, 200)(x.mac1.send(sid, "alice", "operator", "hi", ""))
 		// Found by Schemathesis: a schema-valid peer that is the caller is a conflict, not bad input.
 		wantStatus(t, 409)(x.mac1.history(sid, "alice", "&with=alice%40mac-1"))
 		wantStatus(t, 200)(x.mac1.send(sid, "alice", "x@mac-3", "hi", ""))
@@ -291,7 +299,7 @@ func (x *hubSuite) messages(t *testing.T) {
 	})
 
 	// Added with v0.3.0: the sender learns the recipient's state and can decide to wait.
-	t.Run("send tells the recipient's state: live state, away, or none for all and operator", func(t *testing.T) {
+	t.Run("send tells the recipient's state: live state, away, or none for all", func(t *testing.T) {
 		sid := x.session(t)
 		a := x.mac1.stream(sid, "alice")
 		defer a.close()
@@ -310,11 +318,9 @@ func (x *hubSuite) messages(t *testing.T) {
 		if r.Online || r.State != "away" {
 			t.Fatalf("send to an away peer: %+v, want online false and state away", r)
 		}
-		for _, to := range []string{"all", "operator"} {
-			r = parse[sendResponse](t, wantStatus(t, 200)(x.mac1.send(sid, "alice", to, "three", "")))
-			if !r.Online || r.State != "" {
-				t.Fatalf("send to %s: %+v, want online true and no state", to, r)
-			}
+		r = parse[sendResponse](t, wantStatus(t, 200)(x.mac1.send(sid, "alice", "all", "three", "")))
+		if !r.Online || r.State != "" {
+			t.Fatalf("send to all: %+v, want online true and no state", r)
 		}
 	})
 
@@ -334,8 +340,6 @@ func rateLimits(t *testing.T) {
 			join: limit{burst: 2, perSecond: 0.001},
 			msg:  limit{burst: 3, perSecond: 0.001},
 		}, options{})
-		op := operator{admin{low.base, low.operatorToken("op")}}
-		op.createSession(t, "rl")
 		mac := api{low.base, low.token("mac-1")}
 		other := api{low.base, low.token("vps-2")}
 		a := mac.stream("rl", "alice")
@@ -382,40 +386,21 @@ func (x *hubSuite) resume(t *testing.T) {
 	})
 }
 
-func (x *hubSuite) operatorActions(t *testing.T) {
-	// Found in the end-to-end run: an agent could not answer the operator ("send can't address operator").
-	t.Run("an agent can answer the operator; no other agent receives it", func(t *testing.T) {
-		sid := x.session(t)
-		a := x.mac1.stream(sid, "alice")
-		defer a.close()
-		b := x.vps2.stream(sid, "bob")
-		defer b.close()
-		a.wait(t, nil)
-		b.wait(t, nil)
-		body := wantStatus(t, 200)(x.mac1.send(sid, "alice", "operator", "ONLINE", ""))
-		if to := parse[sendResponse](t, body).To; to != "operator" {
-			t.Fatalf("to %q", to)
-		}
-		b.none(t, isMsg, 500*time.Millisecond)
-		mine := parse[historyResponse](t, jsonOf(x.mac1.history(sid, "alice", ""))).Messages
-		if !slices.ContainsFunc(mine, func(m apiMessage) bool { return m.To == "operator" && m.Text == "ONLINE" }) {
-			t.Fatalf("history of alice %+v has no [operator ONLINE]", mine)
-		}
-		theirs := parse[historyResponse](t, jsonOf(x.vps2.history(sid, "bob", ""))).Messages
-		if slices.ContainsFunc(theirs, func(m apiMessage) bool { return m.Text == "ONLINE" }) {
-			t.Fatalf("history of bob %+v has ONLINE", theirs)
-		}
-	})
-
-	t.Run("operator messages arrive from operator", func(t *testing.T) {
+func (x *hubSuite) operatorWatches(t *testing.T) {
+	// The operator only watches: an agent cannot write to operator, ask it or wait on it.
+	t.Run("an agent cannot send to operator or wait on it: 422", func(t *testing.T) {
 		sid := x.session(t)
 		a := x.mac1.stream(sid, "alice")
 		defer a.close()
 		a.wait(t, nil)
-		x.op.send(t, sid, "alice@mac-1", "hi from the user")
-		if m := data[apiMessage](t, a.wait(t, isMsg)); m.From != "operator" {
-			t.Fatalf("from %q", m.From)
-		}
+		wantStatus(t, 422)(x.mac1.send(sid, "alice", "operator", "hi", ""))
+		wantStatus(t, 422)(x.mac1.activity(sid, map[string]any{
+			"kind":      "wait_start",
+			"agent":     "alice",
+			"from":      "operator",
+			"reply_to":  "1",
+			"timeout_s": 60,
+		}))
 	})
 
 	t.Run("revoking a token ends its streams and its requests", func(t *testing.T) {
@@ -640,31 +625,6 @@ func (x *hubSuite) activityAndPresence(t *testing.T) {
 		}
 	})
 
-	t.Run("a wait on the operator is recorded and shown to the peers", func(t *testing.T) {
-		sid := x.session(t)
-		a := x.mac1.stream(sid, "alice")
-		defer a.close()
-		a.wait(t, nil)
-		b := x.vps2.stream(sid, "bob")
-		defer b.close()
-		b.wait(t, nil)
-		wantStatus(t, 204)(x.mac1.activity(sid, map[string]any{
-			"kind":      "wait_start",
-			"agent":     "alice",
-			"from":      "operator",
-			"reply_to":  "1",
-			"timeout_s": 60,
-		}))
-		v := parse[sessionView](t, jsonOf(x.vps2.view(sid, "bob")))
-		if want := []peer{{Name: "alice@mac-1", State: "idle", WaitingOn: "operator"}}; !slices.Equal(v.Peers, want) {
-			t.Fatalf("peers %+v, want %+v", v.Peers, want)
-		}
-		rec, ok := x.h.presence(sid + ".mac-1.alice")
-		if !ok || rec.Waiting == nil || rec.Waiting.On != "operator" || rec.Waiting.ReplyTo != "1" {
-			t.Fatalf("presence %v %+v, want waiting on operator with reply_to 1", ok, rec)
-		}
-	})
-
 	t.Run("closing a stream removes presence and records left", func(t *testing.T) {
 		sid := x.session(t)
 		a := x.mac1.stream(sid, "alice")
@@ -714,21 +674,15 @@ func (x *hubSuite) adminAPI(t *testing.T) {
 		wantStatus(t, 401)(admin{x.h.base, "nope"}.sessions())
 	})
 
-	t.Run("session lifecycle: create, list, delete", func(t *testing.T) {
-		x.n++
-		sid := fmt.Sprintf("adm%d", x.n)
-		created := parse[wire.SessionInfo](t, wantStatus(t, 200)(adm.create(sid, "Admin test")))
-		if created.Session != sid || created.CreatedAt == "" || created.Title != "Admin test" {
-			t.Fatalf("created %+v, want session %s, a created_at, title Admin test", created, sid)
-		}
-		wantStatus(t, 409)(adm.create(sid, ""))
+	t.Run("session lifecycle: a join creates, list, delete", func(t *testing.T) {
+		sid := x.session(t)
+		a := x.mac1.stream(sid, "alice")
+		defer a.close()
+		a.wait(t, nil)
 		list := parse[sessionList](t, jsonOf(adm.sessions()))
 		if ids := sessionIDs(list.Sessions); !slices.Contains(ids, sid) {
 			t.Fatalf("sessions %v have no %s", ids, sid)
 		}
-		a := x.mac1.stream(sid, "alice")
-		defer a.close()
-		a.wait(t, nil)
 		// A session with an agent in it is not deleted: the agent would create it again.
 		if m := parse[errBody](t, wantStatus(t, 409)(adm.delete(sid))).Message; !strings.Contains(m, "alice@mac-1") {
 			t.Fatalf("message %q", m)
@@ -743,30 +697,6 @@ func (x *hubSuite) adminAPI(t *testing.T) {
 		wantStatus(t, 404)(adm.delete("nosuch"))
 	})
 
-	t.Run("the operator sends, in a thread", func(t *testing.T) {
-		sid := x.session(t)
-		a := x.mac1.stream(sid, "alice")
-		defer a.close()
-		b := x.vps2.stream(sid, "bob")
-		defer b.close()
-		a.wait(t, nil)
-		b.wait(t, nil)
-		q := parse[sendResponse](t, jsonOf(x.mac1.send(sid, "alice", "operator", "may I?", "")))
-		body := wantStatus(t, 200)(adm.send(sid, "alice", "yes", q.ID))
-		if to := parse[operatorSendResponse](t, body).To; to != "alice@mac-1" {
-			t.Fatalf("to %q", to)
-		}
-		m := data[apiMessage](t, a.wait(t, isMsg))
-		if m.From != "operator" || m.Text != "yes" || m.ReplyTo != q.ID {
-			t.Fatalf("message %+v, want from operator, text yes, reply_to %s", m, q.ID)
-		}
-		b.none(t, isMsg, 300*time.Millisecond)
-		wantStatus(t, 200)(adm.send(sid, "all", "everyone: pause", ""))
-		if m := data[apiMessage](t, b.wait(t, isMsg)); m.Text != "everyone: pause" {
-			t.Fatalf("text %q", m.Text)
-		}
-		wantStatus(t, 404)(adm.send(sid, "zed", "hi", ""))
-	})
 }
 
 func (x *hubSuite) adminFeed(t *testing.T) {
@@ -778,6 +708,7 @@ func (x *hubSuite) adminFeed(t *testing.T) {
 
 	t.Run("the current buckets come first, each closed by a snapshot marker", func(t *testing.T) {
 		sid := x.session(t)
+		x.writer(t, sid)
 		s := adm.stream()
 		defer s.close()
 		wantStatus(t, 200)(s.status(), s.body)
@@ -832,9 +763,10 @@ func (x *hubSuite) adminFeed(t *testing.T) {
 	// feed must not send them: the TUI cannot read them.
 	t.Run("a row of a dropped kind in the log does not reach the feed", func(t *testing.T) {
 		sid := x.session(t)
-		before := x.op.send(t, sid, "all", "before")
+		say := x.writer(t, sid)
+		before := say("before")
 		x.h.appendRaw(sid, "coop."+sid+".ops", `{"kind":"kick","target":"bob@vps-2","at":"2026-09-30T12:01:00.000Z"}`)
-		after := x.op.send(t, sid, "all", "after")
+		after := say("after")
 		s := adm.stream(before)
 		defer s.close()
 		if e := s.wait(t, eventIs("event")); e.id != after {
@@ -844,8 +776,9 @@ func (x *hubSuite) adminFeed(t *testing.T) {
 
 	t.Run("Last-Event-ID resumes after that event; the buckets come again", func(t *testing.T) {
 		sid := x.session(t)
-		id := x.op.send(t, sid, "all", "before")
-		later := x.op.send(t, sid, "all", "after")
+		say := x.writer(t, sid)
+		id := say("before")
+		later := say("after")
 		s := adm.stream(id)
 		defer s.close()
 		// The first event is the one right after `id`: nothing older is sent again.

@@ -35,11 +35,7 @@ func isPeerInput(s string) bool {
 	return wire.IsAgentName(s)
 }
 
-func isRecipientInput(s string) bool {
-	return s == wire.Broadcast || s == wire.Operator || isPeerInput(s)
-}
-
-func isWaitTargetInput(s string) bool { return s == wire.Operator || isPeerInput(s) }
+func isRecipientInput(s string) bool { return s == wire.Broadcast || isPeerInput(s) }
 
 func isText(s string) bool { n := runes(s); return n >= 1 && n <= wire.MaxText }
 
@@ -171,7 +167,7 @@ func parseSend(body []byte) (hub.SendRequest, error) {
 	case !wire.IsAgentName(r.Agent):
 		return r, invalid("agent: not a valid agent name")
 	case !isRecipientInput(r.To):
-		return r, invalid("to: all, operator, or a peer")
+		return r, invalid("to: all or a peer")
 	case !isText(r.Text):
 		return r, invalid("text: 1 to 8000 characters")
 	case b.ReplyTo.set && !wire.IsID(r.ReplyTo):
@@ -231,8 +227,8 @@ func parseActivity(body []byte) (hub.ActivityRequest, error) {
 		if err := allow("from", "reply_to", "timeout_s"); err != nil {
 			return r, err
 		}
-		if b.From.set && !isWaitTargetInput(b.From.val) {
-			return r, invalid("from: operator or a peer")
+		if b.From.set && !isPeerInput(b.From.val) {
+			return r, invalid("from: a peer")
 		}
 		if b.ReplyTo.set && !wire.IsID(b.ReplyTo.val) {
 			return r, invalid("reply_to: not a message id")
@@ -255,50 +251,6 @@ func parseActivity(body []byte) (hub.ActivityRequest, error) {
 		r.Result = b.Result.val
 	default:
 		return r, invalid("kind: state, wait_start or wait_end")
-	}
-	return r, nil
-}
-
-// --- Admin routes ----------------------------------------------------------------------------
-
-type createSessionBody struct {
-	Session string    `json:"session"`
-	Title   optString `json:"title"`
-}
-
-func parseCreateSession(body []byte) (sid, title string, err error) {
-	var b createSessionBody
-	if err := decodeStrict(body, &b); err != nil {
-		return "", "", err
-	}
-	if !wire.IsToken(b.Session) {
-		return "", "", invalid("session: not a valid session name")
-	}
-	if runes(b.Title.val) > 200 {
-		return "", "", invalid("title: at most 200 characters")
-	}
-	return b.Session, b.Title.val, nil
-}
-
-type operatorSendBody struct {
-	To      string    `json:"to"`
-	Text    string    `json:"text"`
-	ReplyTo optString `json:"reply_to"`
-}
-
-func parseOperatorSend(body []byte) (hub.OperatorSendRequest, error) {
-	var b operatorSendBody
-	if err := decodeStrict(body, &b); err != nil {
-		return hub.OperatorSendRequest{}, err
-	}
-	r := hub.OperatorSendRequest{To: b.To, Text: b.Text, ReplyTo: b.ReplyTo.val}
-	switch {
-	case r.To != wire.Broadcast && !isPeerInput(r.To):
-		return r, invalid("to: all, or a peer")
-	case !isText(r.Text):
-		return r, invalid("text: 1 to 8000 characters")
-	case b.ReplyTo.set && !wire.IsID(r.ReplyTo):
-		return r, invalid("reply_to: not a message id")
 	}
 	return r, nil
 }

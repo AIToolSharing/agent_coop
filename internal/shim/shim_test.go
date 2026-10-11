@@ -603,27 +603,6 @@ func TestPeerThatLeftSendSaysSoAskReturnsAtOnce(t *testing.T) {
 	}
 }
 
-func TestAskTheUserTheOperatorAnswersInTheThread(t *testing.T) {
-	h := newFakeHub(t)
-	h.createSession("s")
-	a := start(t, options(h, "mac-1", "s", "alice", false))
-	joined(t, a)
-	asking := a.async("ask", map[string]any{"to": "operator", "text": "may I delete the branch?", "timeout_s": 500})
-	eventually(t, "alice waits on the operator", func() bool {
-		return slices.ContainsFunc(h.activities("s"), func(x activity) bool { return x.Kind == "wait_start" && x.From == "operator" })
-	})
-	i := slices.IndexFunc(h.messages("s"), func(m message) bool { return m.To == "operator" })
-	if i < 0 {
-		t.Fatal("no question to the operator")
-	}
-	q := h.messages("s")[i].ID
-	h.operatorSend("s", "alice@mac-1", "yes, go ahead", q)
-	expect(t, decodeResult(t, asking), map[string]any{
-		"question": q,
-		"answer":   map[string]any{"from": "operator", "text": "yes, go ahead", "reply_to": q},
-	})
-}
-
 func TestWaitFromIgnoresOtherPeers(t *testing.T) {
 	h := newFakeHub(t)
 	h.createSession("s")
@@ -754,6 +733,9 @@ func TestBadArgumentsAreReportedToTheAgent(t *testing.T) {
 		{"ask", map[string]any{"to": "all", "text": "x"}, "invalid arguments"},
 		{"wait", map[string]any{"from": "all"}, "invalid arguments"},
 		{"history", map[string]any{"with": "operator"}, "invalid arguments"},
+		{"send", map[string]any{"to": "operator", "text": "x"}, "invalid arguments"},
+		{"ask", map[string]any{"to": "operator", "text": "x"}, "invalid arguments"},
+		{"wait", map[string]any{"from": "operator"}, "invalid arguments"},
 		// The hub rejects this one.
 		{"send", map[string]any{"to": "zed", "text": "hi"}, "no peer zed"},
 	} {
@@ -764,8 +746,9 @@ func TestBadArgumentsAreReportedToTheAgent(t *testing.T) {
 	}
 }
 
-// --- the operator as the agent sees it -------------------------------------------------------
+// --- old messages from operator --------------------------------------------------------------
 
+// The store of an older hub can hold messages from operator. An agent still gets them.
 func TestOperatorMessageArrivesFromOperator(t *testing.T) {
 	h := newFakeHub(t)
 	h.createSession("s")
@@ -782,12 +765,19 @@ func TestOperatorMessageArrivesFromOperator(t *testing.T) {
 // Every test checks its agents' texts at the end (see start). This test makes sure that the
 // texts of every tool, every notice and the instructions pass through that check.
 func TestNothingAnAgentSeesNamesHowTheServiceWorks(t *testing.T) {
-	if forbiddenRE.MatchString(instructions) {
-		t.Fatal("the instructions name the service")
+	if forbiddenRE.MatchString(instructions) || watcherRE.MatchString(instructions) {
+		t.Fatal("the instructions name the service or a watcher")
 	}
 	for name, d := range descriptions {
-		if forbiddenRE.MatchString(d) {
-			t.Fatalf("the description of %s names the service", name)
+		if forbiddenRE.MatchString(d) || watcherRE.MatchString(d) {
+			t.Fatalf("the description of %s names the service or a watcher", name)
+		}
+	}
+	for name, s := range schemas {
+		for field, p := range s["properties"].(map[string]any) {
+			if d, _ := p.(map[string]any)["description"].(string); forbiddenRE.MatchString(d) || watcherRE.MatchString(d) {
+				t.Fatalf("the schema of %s.%s names the service or a watcher: %q", name, field, d)
+			}
 		}
 	}
 	if text := noticeText(notice{Kind: noticePeerLeft, Peer: "a@m"}); text != "a@m left the session." {
