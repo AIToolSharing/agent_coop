@@ -78,10 +78,11 @@ curl -sk -o /dev/null -w '%{http_code}\n' https://<host>:8443/v1/admin/sessions 
 Run the token commands on the server as the `coop` user, so that the database files keep
 that owner. A token shows one time only.
 
-The token of your own machine. `--watch` lets it also show all sessions in `coop tui`:
+A token for root on your own machine. `--watch` lets it show all sessions in `coop tui`. Keep
+it with root, away from the agents: see the main README.
 
 ```bash
-sudo -u coop coop admin token add --watch mymachine
+sudo -u coop coop admin token add --watch console
 ```
 
 One token per agent machine:

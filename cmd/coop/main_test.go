@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -530,11 +531,22 @@ func TestTheCommandsOfAnAgentNameNoWatcher(t *testing.T) {
 		{"login", srv.URL, "mac.2"}, {"doctor"},
 		{"login", srv.URL, "me.1"}, {"doctor"},
 		{"--agent", "Not A Name", "claude"}, {"session", "x"},
+		// coop admin needs the hub's database, and coop tui a token that may watch. To an
+		// agent, the two do not exist.
+		{"admin"}, {"admin", "token", "list"}, {"admin", "token", "add", "--watch", "x"}, {"admin", "token", "add", "--help"},
+		{"tui"}, {"tui", "--help"}, {"tui", "--url", srv.URL, "--token", "mac.2"},
 	} {
 		var out, errOut bytes.Buffer
-		run(args, &out, &errOut)
-		if m := watcherRE.FindString(out.String() + errOut.String()); m != "" {
-			t.Errorf("coop %v says %q:\n%s%s", args, m, out.String(), errOut.String())
+		code := run(args, &out, &errOut)
+		if len(args) > 0 && (args[0] == "admin" || args[0] == "tui") {
+			if want := fmt.Sprintf("coop: unknown command %q\n%s", args[0], usageText); code != 2 || out.Len() != 0 || errOut.String() != want {
+				t.Errorf("coop %v: code %d, not the answer to an unknown command:\n%s%s", args, code, out.String(), errOut.String())
+			}
+		}
+		// The answer to an unknown command repeats its name: that line tells nothing.
+		text := regexp.MustCompile(`coop: unknown command "[^"]*"\n`).ReplaceAllString(out.String()+errOut.String(), "")
+		if m := watcherRE.FindString(text); m != "" {
+			t.Errorf("coop %v says %q:\n%s", args, m, text)
 		}
 	}
 }

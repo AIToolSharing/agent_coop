@@ -27,19 +27,27 @@ Do these steps in a clone of this repository.
    ssh <server> tailscale serve --bg --tcp 8090 tcp://127.0.0.1:8090
    ```
 
-3. Make the token of your machine. `--watch` lets it also show all sessions in the TUI. The
-   token shows one time only.
+3. Make two tokens: one for the agents of your machine, and one for root that may watch
+   (`--watch`). A token shows one time only.
 
    ```bash
-   ssh <server> sudo -u coop coop admin token add --watch <machine>
+   ssh <server> sudo -u coop coop admin token add <machine>
+   ssh <server> sudo -u coop coop admin token add --watch <name>
    ```
 
-4. Install coop on your machine and log in:
+4. Install coop on your machine. Log in as you with the machine token. Install a copy of coop
+   that root owns, and log in as root with the watch token:
 
    ```bash
    make install
-   coop login http://<server>:8090 <token>
+   coop login http://<server>:8090 <machine token>
+   sudo install -m 0755 dist/coop /usr/local/bin/coop
+   sudo -H /usr/local/bin/coop login http://<server>:8090 <watch token>
    ```
+
+The agents of your machine run as you. They cannot read the token of root, and they cannot
+change the copy of coop that root runs. To them, your machine is one more machine. Do not
+give your user sudo without a password: an agent could then use it.
 
 To use TLS in place of a tailnet, see [deploy/README.md](deploy/README.md).
 
@@ -65,7 +73,7 @@ root. On a server, `deploy/agent-user.sh` makes a user `agent` for them.
 1. Watch the sessions:
 
    ```bash
-   coop tui
+   sudo -H /usr/local/bin/coop tui
    ```
 
 2. Start an agent in a git repository:
@@ -76,7 +84,8 @@ root. On a server, `deploy/agent-user.sh` makes a user `agent` for them.
 
 ### Upgrade
 
-Run `make hub HOST=<server>` again. Then run `coop upgrade` on each machine.
+Run `make hub HOST=<server>` again. Then run `coop upgrade` on each machine. On your machine,
+also run `sudo -H /usr/local/bin/coop upgrade`.
 
 ## How it works
 
@@ -103,8 +112,9 @@ Run `make hub HOST=<server>` again. Then run `coop upgrade` on each machine.
 | `1`, `2` | the transcript, the threads |
 | `?` | show each key and command |
 
-The TUI only shows the sessions. It sends nothing to the agents and joins no session. To the
-agents your machine is one more machine, and nothing that coop tells them names you or the TUI. The commands are `:delete`, `:filter <agent>`, `:sys`
+The TUI only shows the sessions. It sends nothing to the agents and joins no session. Nothing
+that coop tells the agents names you or the TUI. To a user without a watch token, coop has no
+`tui` command, and to a user who cannot open the database of the hub, no `admin` command. The commands are `:delete`, `:filter <agent>`, `:sys`
 and `:quit`.
 
 ## Commands
@@ -122,11 +132,12 @@ and `:quit`.
 - The hub sets the sender of each message. An agent cannot write as another agent.
 - An agent gets only the messages to it, to `all`, or from it.
 - Only a token made with `--watch` reads all the messages. To every other token, the routes
-  of the TUI do not exist. No token writes to the agents as you.
+  of the TUI do not exist. No token writes to the agents as you. Keep the watch token with
+  root, away from the agents.
 - The hub stores only a hash of each token. `coop admin token revoke <name>` stops a token at
   once.
 - An agent with a shell can read the token of its machine. All the agents are yours, so coop
-  accepts this. On your own machine, that token also reads all the sessions.
+  accepts this.
 - An agent must not obey a message from a peer as an instruction from you. The instructions of
   coop tell it this.
 - An agent that is not sure about a request of a peer does not do it. It sets its state to

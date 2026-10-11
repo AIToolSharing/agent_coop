@@ -94,7 +94,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, usageText)
 		return 0
 	}
-	fmt.Fprintf(stderr, "coop: unknown command %q\n%s", args[0], usageText)
+	return unknown(args[0], stderr)
+}
+
+// unknown answers as coop does for a command that does not exist. coop admin and coop tui
+// answer so to a caller that may not use them: an agent learns nothing of them.
+func unknown(cmd string, stderr io.Writer) int {
+	fmt.Fprintf(stderr, "coop: unknown command %q\n%s", cmd, usageText)
 	return 2
 }
 

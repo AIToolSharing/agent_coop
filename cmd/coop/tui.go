@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -14,7 +15,8 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/tui"
 )
 
-// cmdTUI shows the sessions of the hub. It needs a token that may watch.
+// cmdTUI shows the sessions of the hub. It needs a token that may watch. To every other caller,
+// coop has no tui command: an agent learns nothing of it.
 func cmdTUI(args []string, stderr io.Writer) int {
 	url, token := "", ""
 	for i := 0; i < len(args); i++ {
@@ -26,8 +28,7 @@ func cmdTUI(args []string, stderr io.Writer) int {
 			i++
 			token = args[i]
 		default:
-			fmt.Fprintln(stderr, "usage: coop tui [--url <url>] [--token <token>]")
-			return 2
+			return unknown("tui", stderr)
 		}
 	}
 	warn := func(s string) { fmt.Fprintln(stderr, s) }
@@ -39,10 +40,20 @@ func cmdTUI(args []string, stderr io.Writer) int {
 		token = cfg.Token
 	}
 	if url == "" || token == "" {
-		fmt.Fprintln(stderr, "no hub address or no token yet; run: coop login <url> <token>")
-		return 2
+		return unknown("tui", stderr)
 	}
 	client := &admin.Client{Base: url, Token: token, HTTP: hubHTTP(cfg, stderr)}
+	check, stop := context.WithTimeout(context.Background(), 10*time.Second)
+	err := client.Check(check)
+	stop()
+	var refused *admin.APIError
+	switch {
+	case errors.As(err, &refused):
+		return unknown("tui", stderr)
+	case err != nil:
+		fmt.Fprintln(stderr, "coop: cannot reach "+url)
+		return 1
+	}
 	store := model.New()
 	updates := make(chan model.Update, 256)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -62,11 +73,7 @@ func cmdTUI(args []string, stderr io.Writer) int {
 		return 1
 	}
 	if err := app.Err(); err != nil {
-		if errors.Is(err, admin.ErrRefused) {
-			fmt.Fprintln(stderr, err.Error()+"; on the host of the hub, coop admin token add --watch <name> makes a token that may show them")
-		} else {
-			fmt.Fprintln(stderr, err)
-		}
+		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	return 0

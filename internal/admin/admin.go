@@ -240,6 +240,12 @@ func (c *Client) do(ctx context.Context, method, path string) error {
 	return nil
 }
 
+// Check asks the hub whether the token may watch. To a token that may not, the hub answers
+// 404, and Check gives an *APIError.
+func (c *Client) Check(ctx context.Context) error {
+	return c.do(ctx, http.MethodGet, "/sessions")
+}
+
 func (c *Client) DeleteSession(ctx context.Context, sid string) error {
 	return c.do(ctx, http.MethodDelete, "/sessions/"+url.PathEscape(sid))
 }

@@ -86,10 +86,10 @@ cat <<TEXT
 1. TLS in front of the hub, with a self-signed certificate on this host's nginx:
      sudo $here/tls-selfsigned.sh          # port 8443; prints the certificate fingerprint
    (Any other reverse proxy works too: proxy to 127.0.0.1:8090 with buffering off.)
-2. The token of your own machine; --watch lets it also show all sessions (it shows one time):
-     sudo -u coop coop admin token add --watch mymachine
-     coop login https://<this host>:8443 mymachine.<secret>
-     coop tui
+2. A token for root on your own machine; --watch lets it show all sessions (it shows one time):
+     sudo -u coop coop admin token add --watch console
+     on your machine: sudo -H /usr/local/bin/coop login https://<this host>:8443 console.<secret>
+     on your machine: sudo -H /usr/local/bin/coop tui
 3. One token per agent machine:
      sudo -u coop coop admin token add laptop
    On that machine, as the user that runs the agents, one time:

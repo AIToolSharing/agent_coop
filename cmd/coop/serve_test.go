@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AIToolSharing/agent_coop/internal/store"
 )
 
 func TestServeListensAndStopsWithTheContext(t *testing.T) {
@@ -62,6 +64,16 @@ func TestServeRefusesAnArgument(t *testing.T) {
 
 func TestAdminTokens(t *testing.T) {
 	data := t.TempDir()
+	// coop admin works only on the database of a hub: without one, coop has no admin command.
+	var noOut, noErr bytes.Buffer
+	if code := run([]string{"admin", "token", "list", "--data", data}, &noOut, &noErr); code != 2 || !strings.Contains(noErr.String(), `unknown command "admin"`) || noOut.Len() != 0 {
+		t.Fatalf("no database: code %d stdout %q stderr %q", code, noOut.String(), noErr.String())
+	}
+	st, err := store.Open(filepath.Join(data, dbName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = st.Close()
 	call := func(args ...string) (int, string, string) {
 		var out, errOut bytes.Buffer
 		code := run(append([]string{"admin"}, args...), &out, &errOut)
@@ -117,6 +129,11 @@ func TestServeGivesItsVersionAndItsBinaries(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dist, "coop-linux-amd64"), []byte("the binary"), 0o755); err != nil {
 			t.Fatal(err)
 		}
+		st, err := store.Open(filepath.Join(data, dbName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = st.Close()
 		var out, errOut bytes.Buffer
 		if code := run([]string{"admin", "token", "add", "--data", data, "mac-1"}, &out, &errOut); code != 0 {
 			t.Fatalf("token: %d %s", code, errOut.String())
