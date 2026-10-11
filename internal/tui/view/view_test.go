@@ -200,52 +200,42 @@ func extraTraffic(n int, seed int64) []model.Update {
 
 // Found in use: three agents of a test run each joined for some seconds, and their "left" rows
 // stayed in the sidebar and in the session count for ever (smoke-researcher, smoke2, eng-t1).
-// An agent that left stays for five minutes.
-func TestAgentsThatLeftGoFromTheSidebar(t *testing.T) {
+// Later: agents that left stayed as "ghosts". An agent that left goes from the list at once.
+func TestAnAgentThatLeftGoesFromTheSidebar(t *testing.T) {
 	s := store()
 	now := modeltest.Now
 	iso := func(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z07:00") }
 	act := func(seq int64, a wire.Activity) {
 		s.Apply(model.Update{Event: &wire.Event{Kind: wire.EventActivity, Seq: seq, SID: "build-42", From: "bob@vps-2", Activity: &a}})
 	}
-	sidebar := func(at time.Time) string {
+	sidebar := func() string {
 		v := s.View("build-42")
-		sb := view.RenderSidebar(view.Summaries(s, at), view.Listed(v, at), view.Selection{SID: "build-42", Cursor: -1}, 60, at)
+		sb := view.RenderSidebar(view.Summaries(s, now), view.Listed(v), view.Selection{SID: "build-42", Cursor: -1}, 60, now)
 		return strings.Join(texts(sb.Rendered), "\n")
 	}
-	counts := func(at time.Time) string {
-		for _, sum := range view.Summaries(s, at) {
+	online := func() int {
+		for _, sum := range view.Summaries(s, now) {
 			if sum.SID == "build-42" {
-				return fmt.Sprintf("%d/%d", sum.Online, sum.Agents)
+				return sum.Online
 			}
 		}
-		return "?"
+		return -1
 	}
-	listed := func(at time.Time) bool { return strings.Contains(sidebar(at), "bob@vps-2") }
-
-	// bob leaves one minute before now.
+	// bob leaves.
 	s.Apply(model.Update{Presence: &wire.PresenceUpdate{Key: "build-42.vps-2.bob", Revision: 1000}})
-	act(500, wire.Activity{Kind: "left", Reason: "disconnected", At: iso(now.Add(-time.Minute))})
-	if got := sidebar(now); !strings.Contains(got, "bob@vps-2 left") || counts(now) != "2/3" {
-		t.Fatalf("one minute after the leave: counts %s, sidebar:\n%s", counts(now), got)
+	act(500, wire.Activity{Kind: "left", Reason: "disconnected", At: iso(now.Add(-time.Second))})
+	if got := sidebar(); strings.Contains(got, "bob@vps-2") || online() != 2 {
+		t.Fatalf("after the leave: online %d, sidebar:\n%s", online(), got)
 	}
-	if at := now.Add(4*time.Minute - time.Second); !listed(at) {
-		t.Fatalf("one second before five minutes after the leave, bob is not listed:\n%s", sidebar(at))
-	}
-	late := now.Add(4 * time.Minute)
-	if listed(late) || counts(late) != "2/2" {
-		t.Fatalf("five minutes after the leave: counts %s, sidebar:\n%s", counts(late), sidebar(late))
-	}
-	// The agent stays known, so that the history finds it.
+	// The agent stays known, so that the history and a message to him find him.
 	if s.View("build-42").Agents["bob@vps-2"] == nil {
 		t.Fatal("AgentList lost the agent that left")
 	}
-
 	// bob joins again: he is listed again.
 	act(502, wire.Activity{Kind: "joined", Host: "vps-2", Cwd: "/srv/api", Client: wire.Client{Name: "codex", Version: "0.9"}, At: iso(now)})
 	s.Apply(model.Update{Presence: &wire.PresenceUpdate{Key: "build-42.vps-2.bob", Revision: 1001, Record: &wire.PresenceRecord{Host: "vps-2", Cwd: "/srv/api", State: "idle", JoinedAt: iso(now)}}})
-	if !listed(late) || counts(late) != "3/3" {
-		t.Fatalf("after the new join: counts %s, sidebar:\n%s", counts(late), sidebar(late))
+	if got := sidebar(); !strings.Contains(got, "bob@vps-2") || online() != 3 {
+		t.Fatalf("after the new join: online %d, sidebar:\n%s", online(), got)
 	}
 }
 
@@ -256,7 +246,7 @@ func TestADuplicateSessionShowsUnderTheAgentThatHoldsTheName(t *testing.T) {
 	now := modeltest.Now
 	sidebar := func(at time.Time) []string {
 		v := s.View("build-42")
-		return texts(view.RenderSidebar(view.Summaries(s, at), view.Listed(v, at), view.Selection{SID: "build-42", Cursor: -1}, 60, at).Rendered)
+		return texts(view.RenderSidebar(view.Summaries(s, at), view.Listed(v), view.Selection{SID: "build-42", Cursor: -1}, 60, at).Rendered)
 	}
 	under := func(lines []string, name string) string {
 		for i, l := range lines {
@@ -277,8 +267,8 @@ func TestADuplicateSessionShowsUnderTheAgentThatHoldsTheName(t *testing.T) {
 		t.Fatalf("under alice: %q in\n%s", got, strings.Join(lines, "\n"))
 	}
 	for _, sum := range view.Summaries(s, now) {
-		if sum.SID == "build-42" && (sum.Online != 3 || sum.Agents != 3) {
-			t.Fatalf("counts %d/%d, want 3/3: a duplicate is no agent of its own", sum.Online, sum.Agents)
+		if sum.SID == "build-42" && sum.Online != 3 {
+			t.Fatalf("online %d, want 3: a duplicate is no agent of its own", sum.Online)
 		}
 	}
 	if details := strings.Join(texts(view.RenderAgent(s.View("build-42"), "alice@mac-1", opts(110))), "\n"); !strings.Contains(details, "is in use: a second session tried to join with this name") {
@@ -302,7 +292,7 @@ func TestSidebarListsSessionsThenAgents(t *testing.T) {
 	if len(sums) != 3 || sums[0].SID != model.AllSessions || sums[1].SID != "build-42" || sums[2].SID != "docs" {
 		t.Fatalf("summaries %+v", sums)
 	}
-	if sums[1].Online != 3 || sums[1].Agents != 3 || sums[1].OpenAsks != 1 || sums[2].Online != 0 {
+	if sums[1].Online != 3 || sums[1].OpenAsks != 1 || sums[2].Online != 0 {
 		t.Fatalf("build-42 summary %+v", sums[1])
 	}
 	v := s.View("build-42")
@@ -311,7 +301,7 @@ func TestSidebarListsSessionsThenAgents(t *testing.T) {
 	checkShape(t, sb.Rendered, width-1)
 	lines := texts(sb.Rendered)
 	joined := strings.Join(lines, "\n")
-	for _, want := range []string{"SESSIONS", "all traffic", "● build-42 3/3 1 ask", "○ docs 0/0", "AGENTS · build-42", "● alice", "working", "● bob", "blocked", "● carol", "⏳"} {
+	for _, want := range []string{"SESSIONS", "all traffic", "● build-42 3 1 ask", "○ docs 0", "AGENTS · build-42", "● alice", "working", "● bob", "blocked", "● carol", "⏳"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in\n%s", want, joined)
 		}

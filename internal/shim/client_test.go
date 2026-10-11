@@ -459,7 +459,7 @@ func TestCallsFollowTheContract(t *testing.T) {
 		t.Fatalf("activity call %+v", got)
 	}
 
-	view := `{"session":"s","me":"a@m","peers":[{"name":"b@m","state":"blocked","note":"n","online":false,"waiting_on":"operator"}]}`
+	view := `{"session":"s","me":"a@m","peers":[{"name":"b@m","state":"blocked","note":"n","waiting_on":"operator"}]}`
 	srv, calls = restHub(t, 200, view)
 	c = testClient(t, srv.URL, &recorder{})
 	v, err := c.view(ctx)

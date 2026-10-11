@@ -282,8 +282,8 @@ func (h *fakeHub) view(w http.ResponseWriter, r *http.Request) {
 	me := r.URL.Query().Get("agent") + "@" + machine
 	v := sessionView{Session: r.PathValue("sid"), Me: me, Peers: []peer{}}
 	for _, a := range s.agents {
-		if a.addr != me {
-			v.Peers = append(v.Peers, peer{Name: a.addr, State: a.state, Note: a.note, Online: a.online})
+		if a.addr != me && a.online {
+			v.Peers = append(v.Peers, peer{Name: a.addr, State: a.state, Note: a.note})
 		}
 	}
 	h.mu.Unlock()

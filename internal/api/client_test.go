@@ -591,13 +591,12 @@ type peer struct {
 	Name      string `json:"name"`
 	State     string `json:"state"`
 	Note      string `json:"note"`
-	Online    bool   `json:"online"`
 	WaitingOn string `json:"waiting_on"`
 }
 
 func (p *peer) UnmarshalJSON(b []byte) error {
 	type plain peer
-	if err := strictDecode(b, (*plain)(p), "name", "state", "online"); err != nil {
+	if err := strictDecode(b, (*plain)(p), "name", "state"); err != nil {
 		return err
 	}
 	return checkRules(

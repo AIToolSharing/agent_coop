@@ -591,8 +591,8 @@ func TestPeerThatLeftSendSaysSoAskReturnsAtOnce(t *testing.T) {
 	joined(t, a)
 	joined(t, b)
 	b.stop()
-	eventually(t, "status lists bob offline", func() bool {
-		return match(a.json("status", nil), map[string]any{"peers": []any{map[string]any{"name": "bob@vps-2", "state": "idle", "online": false}}})
+	eventually(t, "status lists no peer", func() bool {
+		return match(a.json("status", nil), map[string]any{"peers": []any{}})
 	})
 	expect(t, a.json("send", map[string]any{"to": "bob", "text": "read me later"}), map[string]any{"to": "bob@vps-2", "online": false})
 	t0 := time.Now()
@@ -691,7 +691,7 @@ func TestStatusListsPeersWithTheirState(t *testing.T) {
 	}
 	expect(t, a.json("status", nil), map[string]any{
 		"joined": true, "session": "s", "me": "alice@mac-1",
-		"peers":  []any{map[string]any{"name": "bob@vps-2", "state": "blocked", "note": "need the schema", "online": true}},
+		"peers":  []any{map[string]any{"name": "bob@vps-2", "state": "blocked", "note": "need the schema"}},
 		"unread": 0,
 	})
 }

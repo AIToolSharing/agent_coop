@@ -86,13 +86,11 @@ type activity struct {
 	Result   string `json:"result,omitempty"`
 }
 
-// peer is one other agent of the session. A peer that left has Online false; it keeps its
-// last state and can still get messages.
+// peer is one other agent in the session now.
 type peer struct {
 	Name      string `json:"name"`
 	State     string `json:"state"`
 	Note      string `json:"note,omitempty"`
-	Online    bool   `json:"online"`
 	WaitingOn string `json:"waiting_on,omitempty"`
 }
 

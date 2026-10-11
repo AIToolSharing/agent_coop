@@ -139,7 +139,7 @@ func contains(t *testing.T, frame string, wants ...string) {
 func TestShowsTheSidebarTheTranscriptAndTheHints(t *testing.T) {
 	h := start(t, nil)
 	f := h.frame()
-	contains(t, f, "coop · all sessions · transcript  follow ●  [connecting]", "SESSIONS", "all traffic", "● build-42 3/3 1 ask", "○ docs", "Please run the tests before you say done", "m message · r reply · a attention")
+	contains(t, f, "coop · all sessions · transcript  follow ●  [connecting]", "SESSIONS", "all traffic", "● build-42 3 1 ask", "○ docs", "Please run the tests before you say done", "m message · r reply · a attention")
 	if n := len(strings.Split(f, "\n")); n != 30 {
 		t.Errorf("%d rows, want 30", n)
 	}

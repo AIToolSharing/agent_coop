@@ -472,9 +472,10 @@ func (x *hubSuite) peersThatLeft(t *testing.T) {
 			t.Fatalf("send %+v, want to bob@vps-2 and online false", r)
 		}
 		x.mac1.send(sid, "alice", "all", "news while away", "")
-		v := parse[sessionView](t, jsonOf(x.mac1.view(sid, "alice")))
-		if want := []peer{{Name: "bob@vps-2", State: "done", Note: "shipped", Online: false}}; !slices.Equal(v.Peers, want) {
-			t.Fatalf("peers %+v, want %+v", v.Peers, want)
+		// Found in use: agents that left stayed peers for ever ("ghosts"). An agent that left
+		// is no peer; the hub still keeps the messages for it.
+		if v := parse[sessionView](t, jsonOf(x.mac1.view(sid, "alice"))); len(v.Peers) != 0 {
+			t.Fatalf("peers %+v, want none", v.Peers)
 		}
 		// A new process without Last-Event-ID gets what it missed, in order, and nothing older.
 		b2 := x.vps2.stream(sid, "bob")
@@ -494,6 +495,34 @@ func (x *hubSuite) peersThatLeft(t *testing.T) {
 		if m := data[apiMessage](t, b2.wait(t, isMsg)); m.Text != "live" {
 			t.Fatalf("text %q", m.Text)
 		}
+	})
+
+	// An agent that left must not make a name ambiguous, and must not show in the list of an
+	// error.
+	t.Run("a bare name goes to the agent in the session, not to one that left", func(t *testing.T) {
+		sid := x.session(t)
+		a := x.mac1.stream(sid, "alice")
+		defer a.close()
+		a.wait(t, nil)
+		old := x.vps2.stream(sid, "bob")
+		old.wait(t, nil)
+		old.close()
+		a.wait(t, notice)
+		// Only the bob that left: the message is kept for him.
+		if r := parse[sendResponse](t, wantStatus(t, 200)(x.mac1.send(sid, "alice", "bob", "for later", ""))); r.To != "bob@vps-2" || r.Online {
+			t.Fatalf("send %+v, want to bob@vps-2 and online false", r)
+		}
+		b := x.mac3.stream(sid, "bob")
+		defer b.close()
+		b.wait(t, nil)
+		if r := parse[sendResponse](t, wantStatus(t, 200)(x.mac1.send(sid, "alice", "bob", "now", ""))); r.To != "bob@mac-3" || !r.Online {
+			t.Fatalf("send %+v, want to bob@mac-3 and online true", r)
+		}
+		if m := parse[errBody](t, wantStatus(t, 404)(x.mac1.send(sid, "alice", "zed", "hi", ""))).Message; m != "no peer zed in this session; peers: bob@mac-3" {
+			t.Fatalf("message %q", m)
+		}
+		// A full address still reaches the agent that left.
+		wantStatus(t, 200)(x.mac1.send(sid, "alice", "bob@vps-2", "full", ""))
 	})
 
 	t.Run("the replay stops at the newest 100 missed messages", func(t *testing.T) {
@@ -583,7 +612,6 @@ func (x *hubSuite) activityAndPresence(t *testing.T) {
 			Name:      "bob@vps-2",
 			State:     "blocked",
 			Note:      "need API",
-			Online:    true,
 			WaitingOn: "alice@mac-1",
 		}}
 		if !slices.Equal(v.Peers, want) {
@@ -628,7 +656,7 @@ func (x *hubSuite) activityAndPresence(t *testing.T) {
 			"timeout_s": 60,
 		}))
 		v := parse[sessionView](t, jsonOf(x.vps2.view(sid, "bob")))
-		if want := []peer{{Name: "alice@mac-1", State: "idle", Online: true, WaitingOn: "operator"}}; !slices.Equal(v.Peers, want) {
+		if want := []peer{{Name: "alice@mac-1", State: "idle", WaitingOn: "operator"}}; !slices.Equal(v.Peers, want) {
 			t.Fatalf("peers %+v, want %+v", v.Peers, want)
 		}
 		rec, ok := x.h.presence(sid + ".mac-1.alice")

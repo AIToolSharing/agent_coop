@@ -151,13 +151,12 @@ type ActivityRequest struct {
 	Result        string // wait_end
 }
 
+// Peer is another agent in the session now. An agent that left is no peer: it can still get
+// a message (see Send), but it is not listed.
 type Peer struct {
-	Name  string `json:"name"`
-	State string `json:"state"`
-	Note  string `json:"note,omitempty"`
-	// Online is false for a peer that left; it is listed with its last state and can still be
-	// written to.
-	Online    bool   `json:"online"`
+	Name      string `json:"name"`
+	State     string `json:"state"`
+	Note      string `json:"note,omitempty"`
 	WaitingOn string `json:"waiting_on,omitempty"`
 }
 
@@ -696,21 +695,11 @@ func (h *Hub) View(machine, sid, agent string) (SessionView, error) {
 		if p == c {
 			continue
 		}
-		peer := Peer{Name: p.me.String(), State: p.state, Note: p.note, Online: true}
+		peer := Peer{Name: p.me.String(), State: p.state, Note: p.note}
 		if p.waiting != nil {
 			peer.WaitingOn = p.waiting.On
 		}
 		peers = append(peers, peer)
-	}
-	away, err := h.awayLocked(sid)
-	if err != nil {
-		return SessionView{}, storeErr(err)
-	}
-	for _, k := range away {
-		if k.Agent == c.me.String() {
-			continue
-		}
-		peers = append(peers, Peer{Name: k.Agent, State: k.State, Note: k.Note, Online: false})
 	}
 	return SessionView{Session: sid, Me: c.me.String(), Peers: peers}, nil
 }
@@ -1072,10 +1061,12 @@ func (h *Hub) recipientLocked(sid, input string, me wire.Address) (string, error
 	return a.String(), nil
 }
 
-// peerLocked turns a peer as a client writes it (`name` or `name@machine`) into an address. A
-// bare name must match exactly one agent that is or was in the session, other than me (nil
-// for the operator). With allowUnknown, a full address passes even if the hub never saw it (a
-// wait or history filter).
+// peerLocked turns a peer as a client writes it (`name` or `name@machine`) into an address,
+// other than me (nil for the operator). A bare name must match exactly one agent in the
+// session now. Only when it matches none, an agent that left matches: the hub keeps the
+// message for it. Thus an agent that left long ago cannot make a name ambiguous. With
+// allowUnknown, a full address passes even if the hub never saw it (a wait or history filter).
+// The error names only the agents in the session now.
 func (h *Hub) peerLocked(sid, input string, me *wire.Address, allowUnknown bool) (wire.Address, error) {
 	var live []wire.Address
 	for _, c := range h.inSessionLocked(sid) {
@@ -1092,23 +1083,26 @@ func (h *Hub) peerLocked(sid, input string, me *wire.Address, allowUnknown bool)
 		}
 	}
 	notMe := func(p wire.Address) bool { return me == nil || p != *me }
-	isLive := func(p wire.Address) bool { return slices.Contains(live, p) }
 	list := func() string {
 		var parts []string
-		for _, p := range peers {
-			if !notMe(p) {
-				continue
-			}
-			if isLive(p) {
+		for _, p := range live {
+			if notMe(p) {
 				parts = append(parts, p.String())
-			} else {
-				parts = append(parts, p.String()+" (away)")
 			}
 		}
 		if len(parts) == 0 {
 			return "none"
 		}
 		return strings.Join(parts, ", ")
+	}
+	named := func(from []wire.Address) []wire.Address {
+		var out []wire.Address
+		for _, p := range from {
+			if p.Agent == input && notMe(p) {
+				out = append(out, p)
+			}
+		}
+		return out
 	}
 	var matches []wire.Address
 	if strings.Contains(input, "@") {
@@ -1117,12 +1111,8 @@ func (h *Hub) peerLocked(sid, input string, me *wire.Address, allowUnknown bool)
 			return wire.Address{}, errf("invalid", "bad peer %s", input)
 		}
 		matches = []wire.Address{full}
-	} else {
-		for _, p := range peers {
-			if p.Agent == input && notMe(p) {
-				matches = append(matches, p)
-			}
-		}
+	} else if matches = named(live); len(matches) == 0 {
+		matches = named(peers[len(live):])
 	}
 	// Yourself and an ambiguous name conflict with the session state (409), not with the
 	// format.

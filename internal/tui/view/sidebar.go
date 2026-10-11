@@ -10,8 +10,7 @@ import (
 // Summary is one session row of the sidebar.
 type Summary struct {
 	SID      string // model.AllSessions for the row of all traffic
-	Online   int
-	Agents   int
+	Online   int    // the agents in the session now
 	OpenAsks int
 	// PerMinute counts the messages of the last minute.
 	PerMinute int
@@ -20,32 +19,21 @@ type Summary struct {
 // RefusedFor is how long the line of a refused second session stays under an agent.
 const RefusedFor = 5 * time.Minute
 
-// LeftFor is how long an agent that left stays in the list.
-const LeftFor = 5 * time.Minute
-
 // lately reports whether the time iso is within the last RefusedFor.
 func lately(iso string, now time.Time) bool {
 	t, ok := parseTime(iso)
 	return ok && now.Sub(t) < RefusedFor
 }
 
-// gone reports whether the agent left LeftFor ago or earlier.
-func gone(a *model.Agent, now time.Time) bool {
-	if a.Left == nil {
-		return false
-	}
-	t, ok := parseTime(a.Left.At)
-	return ok && now.Sub(t) >= LeftFor
-}
-
-// Listed gives the agents that the sidebar shows and the session count takes: every agent but
-// those that left LeftFor ago or earlier. A short run, such as a headless agent that did its
-// task, must not fill the list for good. AgentList keeps every agent, for the history.
-func Listed(v *model.Session, now time.Time) []*model.Agent {
+// Listed gives the agents that the sidebar shows: the agents in the session now. An agent that
+// left goes from the list at once (found in use: agents that left stayed as "ghosts"). The
+// transcript keeps its leave, and AgentList keeps every agent, for the history and for a
+// message to an agent that left.
+func Listed(v *model.Session) []*model.Agent {
 	all := v.AgentList()
 	out := all[:0]
 	for _, a := range all {
-		if a.Online || !gone(a, now) {
+		if a.Online {
 			out = append(out, a)
 		}
 	}
@@ -58,12 +46,7 @@ func Summaries(s *model.Store, now time.Time) []Summary {
 	one := func(sid string) Summary {
 		v := s.View(sid)
 		sum := Summary{SID: sid, OpenAsks: len(v.OpenAsks())}
-		for _, a := range Listed(v, now) {
-			sum.Agents++
-			if a.Online {
-				sum.Online++
-			}
-		}
+		sum.Online = len(Listed(v))
 		// Count from the newest message back to the first one older than a minute. The scan
 		// stops after 1000 messages: a rate past that is noise, and a clock ahead of ours
 		// must not make every repaint walk the whole history.
@@ -149,7 +132,7 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 		if s.Online > 0 {
 			icon, color = "● ", "green"
 		}
-		l := Line{Color(icon, color), Styled(s.SID, Style{Bold: current, Inverse: here}), Dim(" " + itoa(int64(s.Online)) + "/" + itoa(int64(s.Agents)))}
+		l := Line{Color(icon, color), Styled(s.SID, Style{Bold: current, Inverse: here}), Dim(" " + itoa(int64(s.Online)))}
 		if s.OpenAsks > 0 {
 			plural := ""
 			if s.OpenAsks > 1 {
