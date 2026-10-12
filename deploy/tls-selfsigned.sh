@@ -25,6 +25,8 @@ sed "s/__PORT__/$port/g" "$here/nginx-coop.conf" > /etc/nginx/sites-available/co
 ln -sf /etc/nginx/sites-available/coop /etc/nginx/sites-enabled/coop
 nginx -t
 systemctl reload nginx
+fp=$(openssl x509 -in "$tls/cert.pem" -noout -fingerprint -sha256 | cut -d= -f2)
 echo "hub: https://$ip:$port"
-echo "certificate fingerprint (coop login shows the same one on each client):"
-openssl x509 -in "$tls/cert.pem" -noout -fingerprint -sha256
+echo "certificate fingerprint (coop login shows the same one on each client): $fp"
+echo "on each machine, as the user that runs the agents, with the token of the machine:"
+echo "  curl -fsSL https://github.com/AIToolSharing/agent_coop/releases/latest/download/device.sh | COOP_CERT_SHA256=$fp sh -s -- https://$ip:$port <token>"

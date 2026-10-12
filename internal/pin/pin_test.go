@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/AIToolSharing/agent_coop/internal/pin"
+	"pgregory.net/rapid"
 )
 
 func get(t *testing.T, c *http.Client, url string) (int, error) {
@@ -78,5 +79,25 @@ func TestBadPinsAndFormat(t *testing.T) {
 	}
 	if !pin.IsCertError(nil) == false && pin.IsCertError(context.Canceled) {
 		t.Error("a cancel is not a certificate error")
+	}
+}
+
+// Parse reads a fingerprint as openssl and coop show it, and as plain hex: Format and Parse
+// are inverse.
+func TestParseReadsWhatFormatAndOpensslShow(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		raw := rapid.SliceOfN(rapid.Byte(), sha256.Size, sha256.Size).Draw(t, "fingerprint")
+		want := hex.EncodeToString(raw)
+		shown := pin.Format(want)
+		for _, s := range []string{want, strings.ToUpper(want), shown, "sha256 Fingerprint=" + strings.TrimPrefix(shown, "SHA256:"), "  " + shown + "\n"} {
+			if got, err := pin.Parse(s); err != nil || got != want {
+				t.Fatalf("Parse(%q) = %q, %v; want %q", s, got, err, want)
+			}
+		}
+	})
+	for _, bad := range []string{"", "SHA256:", "ab:cd", strings.Repeat("g", 64), strings.Repeat("a", 66)} {
+		if got, err := pin.Parse(bad); err == nil {
+			t.Errorf("Parse(%q) = %q, no error", bad, got)
+		}
 	}
 }

@@ -96,17 +96,18 @@ The line downloads the binary of the machine into `~/.local/bin`, then runs `coo
 Windows, run the line in Git Bash.
 
 `curl` does not trust a self-signed certificate, so the line does not work with the TLS front
-of section 3. There, download the binary of the machine from GitHub one time
-(`coop-linux-amd64`, `coop-linux-arm64`, `coop-darwin-arm64` or `coop-windows-amd64.exe`):
+of section 3. There, take the same script from GitHub:
 
 ```bash
-mkdir -p ~/.local/bin
-curl -fsSL -o ~/.local/bin/coop https://github.com/AIToolSharing/agent_coop/releases/latest/download/coop-linux-amd64
-chmod 755 ~/.local/bin/coop
-coop login https://<host>:8443 laptop.<secret>     # shows and pins the fingerprint
-coop setup
-coop doctor
+curl -fsSL https://github.com/AIToolSharing/agent_coop/releases/latest/download/device.sh | COOP_CERT_SHA256=<fingerprint> sh -s -- https://<host>:8443 laptop.<secret>
 ```
+
+`tls-selfsigned.sh` prints this line with the fingerprint in it. The script downloads the binary
+from the release on GitHub. `coop login` sends the token only when the hub's certificate has
+that fingerprint, and pins it. Then `coop upgrade` takes the version of the hub through the
+pinned certificate. Without `COOP_CERT_SHA256`, `coop login` trusts the first certificate that
+it gets and shows its fingerprint: compare it with the one of the hub's host, and revoke the
+token if they differ. On a network that you do not trust, always give the fingerprint.
 
 `coop upgrade` works with the pinned certificate, so the later versions come from the hub.
 

@@ -67,11 +67,12 @@ hub: release
 	ssh $(HOST) .cache/coop-hub/install.sh
 
 # publish puts the release of the tag at HEAD on GitHub: the release binaries, the unit, the
-# install script and the TLS files of the hub, with the notes of the tag. A new hub downloads
-# them (README, Setup).
+# install script and the TLS files of the hub, and the install script of a device (device.sh),
+# with the notes of the tag. A new hub and a new device download them (README, Setup).
 publish: release
 	@git describe --tags --exact-match --dirty 2>/dev/null | grep -qv dirty || { echo "HEAD must be a tag with no changes"; exit 2; }
-	gh release create $(VERSION) --verify-tag --notes-from-tag dist/coop-*-* deploy/install.sh deploy/coop.service deploy/tls-selfsigned.sh deploy/nginx-coop.conf
+	cp internal/api/install.sh dist/device.sh
+	gh release create $(VERSION) --verify-tag --notes-from-tag dist/coop-*-* dist/device.sh deploy/install.sh deploy/coop.service deploy/tls-selfsigned.sh deploy/nginx-coop.conf
 
 # The scripts of the hub's host, and the script that a device runs to install coop.
 SCRIPTS := deploy/*.sh internal/api/install.sh

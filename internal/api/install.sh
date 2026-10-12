@@ -2,6 +2,13 @@
 # Install coop on this device, from its hub. Run it one time, as the user that runs the agents:
 #
 #   curl -fsSL <hub>/install.sh | sh -s -- <hub> <machine token>
+#   curl -fsSL https://github.com/AIToolSharing/agent_coop/releases/latest/download/device.sh | sh -s -- <hub> <machine token>
+#
+# The second line also works for a hub with a self-signed certificate, which curl does not
+# trust: the script then takes the binary from the release on GitHub (COOP_RELEASE_URL names
+# another place), coop login pins the certificate of the hub, and coop upgrade takes the version
+# of the hub through it. With COOP_CERT_SHA256=<fingerprint> in front of sh (tls-selfsigned.sh
+# prints the line), coop login sends the token only to the certificate with that fingerprint.
 #
 #   <hub>            the address of the hub, for example http://hub.example:8090
 #   <machine token>  from the host of the hub: coop admin token add <machine>
@@ -58,7 +65,19 @@ main() {
   new=$dir/.coop-new.$$$exe
   trap 'rm -f "$new"' EXIT
   echo "download $hub/dl/$file"
-  if ! curl -fsSL -H "Authorization: Bearer $token" -o "$new" "$hub/dl/$file"; then
+  rc=0
+  curl -fsSL -H "Authorization: Bearer $token" -o "$new" "$hub/dl/$file" || rc=$?
+  pin=
+  if [ "$rc" = 60 ]; then
+    # 60: curl cannot check the certificate of the hub. coop can: coop login pins it below.
+    release=${COOP_RELEASE_URL:-https://github.com/AIToolSharing/agent_coop/releases/latest/download}
+    echo "the certificate of the hub is self-signed: download $release/$file"
+    if ! curl -fsSL -o "$new" "$release/$file"; then
+      echo "No download of $file from $release." >&2
+      exit 1
+    fi
+    pin=1
+  elif [ "$rc" != 0 ]; then
     echo "No download of $file from $hub. The line of curl above gives the cause:" >&2
     echo "401 is a wrong token, 404 is a hub that has no binary for this device." >&2
     exit 1
@@ -77,6 +96,10 @@ main() {
 
   # The commands read nothing from the terminal: stdin is this script.
   "$coop" login "$hub" "$token" </dev/null
+  if [ -n "$pin" ]; then
+    # The release on GitHub can be newer or older than the hub: take the version of the hub.
+    "$coop" upgrade </dev/null
+  fi
   if command -v claude >/dev/null 2>&1; then
     "$coop" setup </dev/null
   else

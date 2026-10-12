@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/AIToolSharing/agent_coop/internal/pin"
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
@@ -39,6 +40,11 @@ func Load(env map[string]string, file string, warn func(string), cwd string) Con
 		warn(fmt.Sprintf("COOP_SESSION %q is not a valid session name; ignoring it", session))
 		session = ""
 	}
+	// A fingerprint as openssl or coop shows it becomes the hex that the pin takes.
+	cert := strings.ToLower(pick("COOP_CERT_SHA256"))
+	if fp, err := pin.Parse(cert); err == nil {
+		cert = fp
+	}
 	fallback := DefaultAgentName(cwd, cmp.Or(env["HOME"], env["USERPROFILE"]))
 	agent := cmp.Or(env["COOP_AGENT"], fallback)
 	if !wire.IsAgentName(agent) {
@@ -48,7 +54,7 @@ func Load(env map[string]string, file string, warn func(string), cwd string) Con
 	return Config{
 		URL:        strings.TrimRight(pick("COOP_URL"), "/"),
 		Token:      pick("COOP_TOKEN"),
-		CertSHA256: strings.ToLower(pick("COOP_CERT_SHA256")),
+		CertSHA256: cert,
 		Session:    session,
 		Agent:      agent,
 		Push:       env["COOP_PUSH"] == "1",

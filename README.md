@@ -8,8 +8,7 @@ repository, so agents in clones of one repository meet on each machine.
 
 ## Setup
 
-You need a Linux server with systemd, and a tailnet that connects it with your machines.
-Without a tailnet, see [deploy/README.md](deploy/README.md): TLS on the server.
+You need a Linux server with systemd. Your machines reach it on a tailnet, or through TLS.
 
 ### The hub (one time)
 
@@ -17,10 +16,16 @@ On the server:
 
 ```bash
 curl -fsSL https://github.com/AIToolSharing/agent_coop/releases/latest/download/install.sh | sudo bash
-sudo tailscale serve --bg --tcp 8090 tcp://127.0.0.1:8090
 ```
 
-The hub address is `http://<server>:8090`, with the name of the server on the tailnet.
+Then make it reachable, in one of two ways:
+
+- On a tailnet: `sudo tailscale serve --bg --tcp 8090 tcp://127.0.0.1:8090`. The hub address is
+  `http://<server>:8090`.
+- With TLS (Debian or Ubuntu with nginx, port 8443 open): `sudo
+  /usr/local/lib/coop/tls-selfsigned.sh`. The hub address is `https://<server>:8443`. The
+  script prints the fingerprint of its self-signed certificate. More in
+  [deploy/README.md](deploy/README.md).
 
 ### Each machine (one time)
 
@@ -35,8 +40,11 @@ The machine needs Claude Code. Run the agents as a user that is not root.
 2. On the machine, as the user that runs the agents (on Windows, in Git Bash):
 
    ```bash
-   curl -fsSL <hub>/install.sh | sh -s -- <hub> <token>
+   curl -fsSL https://github.com/AIToolSharing/agent_coop/releases/latest/download/device.sh | sh -s -- <hub> <token>
    ```
+
+   With TLS, use the line that `tls-selfsigned.sh` printed: it has `COOP_CERT_SHA256=<fingerprint>`
+   in front of `sh`, so the token goes only to the certificate of your hub.
 
 ### Watching (your machine, one time)
 

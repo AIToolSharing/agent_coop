@@ -457,6 +457,27 @@ func TestLoginPinsASelfSignedHubAndDoctorUsesThePin(t *testing.T) {
 			t.Errorf("missing %q in\n%s", want, out.String())
 		}
 	}
+	// With COOP_CERT_SHA256, login checks the certificate before the token goes: a wrong
+	// fingerprint stops it, and the hub never sees the token.
+	var seen []string
+	checked := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Header.Get("Authorization"))
+		hub(t, "me.1", "mac.2").Config.Handler.ServeHTTP(w, r)
+	}))
+	defer checked.Close()
+	sum = sha256.Sum256(checked.Certificate().Raw)
+	right := hex.EncodeToString(sum[:])
+	t.Setenv("COOP_CERT_SHA256", pin.Format(strings.Repeat("ab", 32)))
+	errOut.Reset()
+	if code := run([]string{"login", checked.URL, "me.1"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "sent no token") || slices.Contains(seen, "Bearer me.1") {
+		t.Fatalf("wrong fingerprint: code %d stderr %q, the hub saw %q", code, errOut.String(), seen)
+	}
+	t.Setenv("COOP_CERT_SHA256", "sha256 Fingerprint="+strings.TrimPrefix(pin.Format(right), "SHA256:"))
+	out.Reset()
+	if code := run([]string{"login", checked.URL, "me.1"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "matches") {
+		t.Fatalf("right fingerprint: code %d stdout %q stderr %q", code, out.String(), errOut.String())
+	}
+	t.Setenv("COOP_CERT_SHA256", "")
 	// A login to a plain hub clears the pin.
 	plain := hub(t, "op.1", "mac.2")
 	if code := run([]string{"login", plain.URL, "mac.2"}, &out, &errOut); code != 0 {

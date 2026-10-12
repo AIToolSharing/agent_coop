@@ -305,6 +305,13 @@ func TestLoadTakesThePinnedCertificateFromTheCredentialFile(t *testing.T) {
 	if c := config.Load(map[string]string{"COOP_CERT_SHA256": "ef01"}, cred, noWarn, tr.deep); c.CertSHA256 != "ef01" {
 		t.Fatalf("environment: %q", c.CertSHA256)
 	}
+	// The fingerprint as openssl on the hub's host shows it: device.sh passes it on to coop
+	// upgrade and coop doctor, and they must pin the same certificate as coop login.
+	hex := strings.Repeat("c6", 32)
+	shown := "sha256 Fingerprint=" + strings.TrimSuffix(strings.Repeat("C6:", 32), ":")
+	if c := config.Load(map[string]string{"COOP_CERT_SHA256": shown}, cred, noWarn, tr.deep); c.CertSHA256 != hex {
+		t.Fatalf("openssl form: %q", c.CertSHA256)
+	}
 }
 
 // COOP_ROLE and COOP_ORCHESTRATOR_TOKEN were settings of v0.10.0 and before. A machine that

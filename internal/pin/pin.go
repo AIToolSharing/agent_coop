@@ -29,6 +29,23 @@ func Format(pin string) string {
 	return "SHA256:" + strings.Join(parts, ":")
 }
 
+// Parse reads a fingerprint as openssl shows it (sha256 Fingerprint=AB:CD:...), as Format shows
+// it, or as hex, and gives it as Client takes it: 64 hex digits in lower case.
+func Parse(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if _, after, ok := strings.Cut(s, "="); ok {
+		s = after
+	}
+	if len(s) >= 7 && strings.EqualFold(s[:7], "SHA256:") {
+		s = s[7:]
+	}
+	s = strings.ToLower(strings.ReplaceAll(s, ":", ""))
+	if _, err := decode(s); err != nil {
+		return "", err
+	}
+	return s, nil
+}
+
 func decode(pin string) ([]byte, error) {
 	raw, err := hex.DecodeString(pin)
 	if err != nil || len(raw) != sha256.Size {
