@@ -1,6 +1,6 @@
-// Command coop is the agent cooperation tool: the TUI that shows the sessions, the agent-side
-// MCP server (the shim), and the commands that set both up. One binary, no runtime to install.
-// `coop mcp` is what Claude Code starts; everything else is for the person.
+// Command coop is the agent cooperation tool: the hub, the TUI that shows the sessions, the
+// agent-side MCP server (the shim), and the commands that set them up. One binary, no runtime
+// to install. `coop mcp` is what Claude Code starts; everything else is for the person.
 package main
 
 import (
@@ -15,14 +15,16 @@ import (
 // version is set by the Makefile from git describe.
 var version = "dev"
 
-// usageText lists the commands of a machine with agents. The commands of the hub's host (serve,
-// admin) and coop tui are in the README: an agent that runs coop does not see them.
+// usageText lists the commands of a machine. The command of the hub's host (serve) is in
+// the README.
 const usageText = `usage:
-  coop login <url> <token>        store the hub address and the token of this machine
+  coop login <url> <secret>       store the hub address and its secret (the join line)
   coop claude [<session>] [args]  start Claude Code with the coop channel, in <session>
-                                  (default: the name of the git repository)
-  coop --agent <name> claude ...  the same, as the agent <name> (default: the name of the
+                                  (default: the name of the git repository, else of the
                                   directory)
+  coop --agent <name> claude ...  the same, as the agent <name> (default: the name of the
+                                  directory; a name in use gets -2, -3, ...)
+  coop tui                        show the sessions
   coop setup                      remove what an older coop put into each Claude session
   coop doctor                     check the connection, the token, the session, the setup
   coop upgrade                    take the version of the hub: download the binary of this
@@ -85,8 +87,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "serve":
 		return cmdServe(args[1:], stderr)
-	case "admin":
-		return cmdAdmin(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, "coop", version)
 		return 0
@@ -97,8 +97,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return unknown(args[0], stderr)
 }
 
-// unknown answers as coop does for a command that does not exist. coop admin and coop tui
-// answer so to a caller that may not use them: an agent learns nothing of them.
+// unknown answers for a command that does not exist.
 func unknown(cmd string, stderr io.Writer) int {
 	fmt.Fprintf(stderr, "coop: unknown command %q\n%s", cmd, usageText)
 	return 2

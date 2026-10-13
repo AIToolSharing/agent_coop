@@ -7,20 +7,19 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
 	"github.com/AIToolSharing/agent_coop/internal/pin"
+	"github.com/AIToolSharing/agent_coop/internal/wire"
 	"pgregory.net/rapid"
 )
 
@@ -40,19 +39,23 @@ func TestUsageAndVersion(t *testing.T) {
 	}
 }
 
-// hub stands in for a hub that knows two tokens. To each client the hub calls each token a
-// machine token, also a token that may watch.
+// hub stands in for a hub with the secrets of two tokens: it accepts `<machine>.<secret>` for
+// each machine name.
 func hub(t *testing.T, watch, machine string) *httptest.Server {
 	t.Helper()
-	roles := map[string]string{watch: "machine", machine: "machine"}
+	secrets := map[string]bool{}
+	for _, tok := range []string{watch, machine} {
+		_, secret, _ := strings.Cut(tok, ".")
+		secrets[secret] = true
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		name, secret, _ := strings.Cut(auth, ".")
 		switch {
 		case r.URL.Path != "/v1/whoami":
 			w.WriteHeader(404)
-		case roles[auth] != "":
-			name, _, _ := strings.Cut(auth, ".")
-			_, _ = w.Write([]byte(`{"name":"` + name + `","role":"` + roles[auth] + `"}`))
+		case wire.IsToken(name) && secrets[secret]:
+			_, _ = w.Write([]byte(`{"machine":"` + name + `"}`))
 		default:
 			w.WriteHeader(401)
 			_, _ = w.Write([]byte(`{"error":"unauthorized","message":"bad token"}`))
@@ -84,8 +87,9 @@ func TestProbeTokenChecksTheToken(t *testing.T) {
 	}
 }
 
-// A machine has one token, COOP_TOKEN, also the machine of the person who watches. login
-// removes the second token of coop v0.13.0 and before, and its line.
+// A machine has one token, COOP_TOKEN: the secret of the hub behind the name of the machine,
+// which is the hostname. A whole token names the machine itself. login removes the second
+// token of coop v0.13.0 and before, and its line.
 func TestLoginStoresTheOneTokenOfTheMachine(t *testing.T) {
 	home := t.TempDir()
 	setHome(t, home)
@@ -106,15 +110,48 @@ func TestLoginStoresTheOneTokenOfTheMachine(t *testing.T) {
 	if text, _ := os.ReadFile(file); strings.Contains(string(text), "OPERATOR") {
 		t.Fatalf("env file %q", text)
 	}
-	if !strings.Contains(out.String(), "the token for "+srv.URL) || strings.Contains(out.String(), "operator") {
+	if !strings.Contains(out.String(), "this machine is me to the hub "+srv.URL) || strings.Contains(out.String(), "operator") {
+		t.Fatalf("stdout %q", out.String())
+	}
+	// The secret alone: the machine is the hostname.
+	hostname, _ := os.Hostname()
+	host, _, _ := strings.Cut(hostname, ".")
+	out.Reset()
+	if code := run([]string{"login", srv.URL, "1"}, &out, &errOut); code != 0 {
+		t.Fatalf("code %d: %s", code, errOut.String())
+	}
+	if got := config.ReadEnvFile(file, func(s string) { t.Fatal(s) }); got["COOP_TOKEN"] != config.Name(host)+".1" {
+		t.Fatalf("env file %v, want the token %s.1", got, config.Name(host))
+	}
+	if !strings.Contains(out.String(), "this machine is "+config.Name(host)+" to the hub") {
 		t.Fatalf("stdout %q", out.String())
 	}
 	errOut.Reset()
-	if code := run([]string{"login", srv.URL, "bad"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "refused") {
-		t.Fatalf("bad token: code %d, stderr %q", code, errOut.String())
+	if code := run([]string{"login", srv.URL, "bad"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "refused the secret") {
+		t.Fatalf("bad secret: code %d, stderr %q", code, errOut.String())
+	}
+	if code := run([]string{"login", srv.URL, "Bad Name.1"}, &out, &errOut); code != 2 {
+		t.Fatalf("bad machine name: code %d", code)
 	}
 	if code := run([]string{"login", "ftp://x", "t"}, &out, &errOut); code != 2 {
 		t.Fatalf("bad scheme: code %d", code)
+	}
+}
+
+func TestMachineToken(t *testing.T) {
+	for _, c := range []struct{ secret, host, want string }{
+		{"s3", "mattbook.local", "mattbook.s3"},
+		{"s3", "My PC", "my-pc.s3"},
+		{"s3", "", "machine.s3"},
+		{"laptop.s3", "other", "laptop.s3"},
+		{"laptop.s3.x", "other", "laptop.s3.x"},
+		{"Bad.s3", "other", ""},
+		{"", "host", ""},
+	} {
+		got, err := machineToken(c.secret, c.host)
+		if (err == nil) != (c.want != "") || got != c.want {
+			t.Errorf("machineToken(%q, %q) = %q, %v; want %q", c.secret, c.host, got, err, c.want)
+		}
 	}
 }
 
@@ -145,34 +182,33 @@ func TestTheSessionOfARepositoryIsItsName(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, dir := range []string{clone, sub} {
-		if s, err := repoSession(dir); err != nil || s != "some-clone" {
-			t.Fatalf("no origin, %s: %q %v", dir, s, err)
+		if s, repo := repoSession(dir); !repo || s != "some-clone" {
+			t.Fatalf("no origin, %s: %q %v", dir, s, repo)
 		}
+	}
+	// No repository: the directory, from its absolute path.
+	plain := filepath.Join(root, "Not A Repo")
+	if err := os.Mkdir(plain, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if s, repo := repoSession(plain); repo || s != "not-a-repo" {
+		t.Fatalf("no repository: %q %v", s, repo)
+	}
+	t.Chdir(plain)
+	if s, repo := repoSession("."); repo || s != "not-a-repo" {
+		t.Fatalf("no repository, from \".\": %q %v", s, repo)
 	}
 	git(t, clone, "commit", "-q", "--allow-empty", "-m", "x")
 	wt := filepath.Join(root, "wt-1")
 	git(t, clone, "worktree", "add", "-q", wt)
-	if s, err := repoSession(wt); err != nil || s != "some-clone" {
-		t.Fatalf("a worktree: %q %v", s, err)
+	if s, repo := repoSession(wt); !repo || s != "some-clone" {
+		t.Fatalf("a worktree: %q %v", s, repo)
 	}
 	git(t, clone, "remote", "add", "origin", "git@github.com:AIToolSharing/agent_coop.git")
 	for _, dir := range []string{clone, sub, wt} {
-		if s, err := repoSession(dir); err != nil || s != "agent_coop" {
-			t.Fatalf("origin, %s: %q %v", dir, s, err)
+		if s, repo := repoSession(dir); !repo || s != "agent_coop" {
+			t.Fatalf("origin, %s: %q %v", dir, s, repo)
 		}
-	}
-	if s, err := repoSession(t.TempDir()); err == nil {
-		t.Fatalf("not a repository: %q", s)
-	}
-}
-
-// Outside a git repository, coop claude with no session starts nothing and says what to do.
-func TestClaudeOutsideARepositoryNeedsASession(t *testing.T) {
-	t.Chdir(t.TempDir())
-	t.Setenv("COOP_SESSION", "")
-	var out, errOut bytes.Buffer
-	if code := run([]string{"claude", "-p", "hi"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "coop claude <session>") {
-		t.Fatalf("code %d stderr %q", code, errOut.String())
 	}
 }
 
@@ -386,7 +422,7 @@ func TestDoctorReportsEachStep(t *testing.T) {
 	if code := run([]string{"doctor"}, &out, &errOut); code != 1 {
 		t.Fatalf("code %d:\n%s", code, out.String())
 	}
-	for _, want := range []string{"FAIL  no credential file", "FAIL  no hub address", "--    not in a git repository: coop claude <session> names the session", "ok    a plain claude has no coop; coop claude loads /opt/coop/coop mcp"} {
+	for _, want := range []string{"FAIL  no credential file", "FAIL  no hub address", "ok    coop claude here joins the session " + config.Name(filepath.Base(dir)) + " (the name of the directory; not in a git repository)", "ok    a plain claude has no coop; coop claude loads /opt/coop/coop mcp"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in\n%s", want, out.String())
 		}
@@ -412,7 +448,7 @@ func TestDoctorReportsEachStep(t *testing.T) {
 	if code := run([]string{"doctor"}, &out, &errOut); code != 0 {
 		t.Fatalf("code %d:\n%s", code, out.String())
 	}
-	for _, want := range []string{"ok    credential file", "ok    hub address " + srv.URL, "ok    the hub answers", "ok    token accepted", "ok    coop claude here joins the session build-42 (the name of the git repository)", "ok    agent name " + filepath.Base(dir), "ok    a plain claude has no coop; coop claude loads /opt/coop/coop mcp"} {
+	for _, want := range []string{"ok    credential file", "ok    hub address " + srv.URL, "ok    the hub answers", "ok    secret accepted: this machine is mac to the hub", "ok    coop claude here joins the session build-42 (the name of the git repository)", "ok    agent name " + filepath.Base(dir), "ok    a plain claude has no coop; coop claude loads /opt/coop/coop mcp"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in\n%s", want, out.String())
 		}
@@ -452,7 +488,7 @@ func TestLoginPinsASelfSignedHubAndDoctorUsesThePin(t *testing.T) {
 	f.install(t, "/opt/coop/coop")
 	out.Reset()
 	run([]string{"doctor"}, &out, &errOut)
-	for _, want := range []string{"ok    tls: the hub's certificate is pinned, " + pin.Format(fp), "ok    the hub answers", "ok    token accepted"} {
+	for _, want := range []string{"ok    tls: the hub's certificate is pinned, " + pin.Format(fp), "ok    the hub answers", "ok    secret accepted: this machine is me to the hub"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in\n%s", want, out.String())
 		}
@@ -531,43 +567,4 @@ func setHome(t *testing.T, dir string) {
 	t.Helper()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
-}
-
-// An agent with a shell can run coop. No output of a command that it can run names a person who
-// watches, the TUI, or the commands of the hub's host. The machine of the person who watches
-// has a token that may watch, and its output is the same as that of any machine.
-func TestTheCommandsOfAnAgentNameNoWatcher(t *testing.T) {
-	home := t.TempDir()
-	setHome(t, home)
-	for _, k := range []string{"CLAUDE_CONFIG_DIR", "COOP_SESSION", "COOP_AGENT", "CLAUDE_PROJECT_DIR", "COOP_URL", "COOP_TOKEN"} {
-		t.Setenv(k, "")
-	}
-	t.Chdir(t.TempDir())
-	f := &fakeClaude{}
-	f.install(t, "/opt/coop/coop")
-	srv := hub(t, "me.1", "mac.2")
-	watcherRE := regexp.MustCompile(`(?i)\b(operator|watch\w*|tui|monitor\w*|serve|admin)\b`)
-	for _, args := range [][]string{
-		{}, {"help"}, {"--help"}, {"nope"}, {"version"}, {"doctor"}, {"setup"},
-		{"login", srv.URL, "mac.2"}, {"doctor"},
-		{"login", srv.URL, "me.1"}, {"doctor"},
-		{"--agent", "Not A Name", "claude"}, {"session", "x"},
-		// coop admin needs the hub's database, and coop tui a token that may watch. To an
-		// agent, the two do not exist.
-		{"admin"}, {"admin", "token", "list"}, {"admin", "token", "add", "--watch", "x"}, {"admin", "token", "add", "--help"},
-		{"tui"}, {"tui", "--help"}, {"tui", "--url", srv.URL, "--token", "mac.2"},
-	} {
-		var out, errOut bytes.Buffer
-		code := run(args, &out, &errOut)
-		if len(args) > 0 && (args[0] == "admin" || args[0] == "tui") {
-			if want := fmt.Sprintf("coop: unknown command %q\n%s", args[0], usageText); code != 2 || out.Len() != 0 || errOut.String() != want {
-				t.Errorf("coop %v: code %d, not the answer to an unknown command:\n%s%s", args, code, out.String(), errOut.String())
-			}
-		}
-		// The answer to an unknown command repeats its name: that line tells nothing.
-		text := regexp.MustCompile(`coop: unknown command "[^"]*"\n`).ReplaceAllString(out.String()+errOut.String(), "")
-		if m := watcherRE.FindString(text); m != "" {
-			t.Errorf("coop %v says %q:\n%s", args, m, text)
-		}
-	}
 }

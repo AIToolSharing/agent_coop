@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/AIToolSharing/agent_coop/internal/store"
@@ -289,74 +288,6 @@ func TestSessions(t *testing.T) {
 	}
 }
 
-func TestTokens(t *testing.T) {
-	s, _ := open(t)
-	tok := must(s.IssueToken("mac-1", "machine", at))
-	name, secret, ok := strings.Cut(tok, ".")
-	if !ok || name != "mac-1" || len(secret) < 40 || strings.ContainsAny(secret, "+/=") {
-		t.Fatalf("token %q", tok)
-	}
-	if n, role, ok := must3(s.VerifyToken(tok)); !ok || n != "mac-1" || role != "machine" {
-		t.Fatalf("verify: %s %s %v", n, role, ok)
-	}
-	for _, bad := range []string{"", "mac-1", "mac-1.", ".x", "mac-1.wrong", "Mac-1." + secret, "mac-1." + secret + "x"} {
-		if _, _, ok := must3(s.VerifyToken(bad)); ok {
-			t.Errorf("verify accepted %q", bad)
-		}
-	}
-	op := must(s.IssueToken("matt", "watch", at))
-	if _, role, _ := must3(s.VerifyToken(op)); role != "watch" {
-		t.Fatalf("role %s", role)
-	}
-	// A new token of the same name replaces the old one.
-	tok2 := must(s.IssueToken("mac-1", "machine", at))
-	if _, _, ok := must3(s.VerifyToken(tok)); ok {
-		t.Fatal("old token still valid after replace")
-	}
-	if _, _, ok := must3(s.VerifyToken(tok2)); !ok {
-		t.Fatal("new token invalid")
-	}
-	if !must(s.TokenValid("mac-1")) {
-		t.Fatal("TokenValid")
-	}
-	if !must(s.RevokeToken("mac-1", "2026-10-02T11:00:00.000Z")) {
-		t.Fatal("revoke")
-	}
-	if must(s.RevokeToken("mac-1", at)) || must(s.RevokeToken("nosuch", at)) {
-		t.Fatal("revoke twice or unknown")
-	}
-	if _, _, ok := must3(s.VerifyToken(tok2)); ok {
-		t.Fatal("revoked token valid")
-	}
-	if must(s.TokenValid("mac-1")) {
-		t.Fatal("TokenValid after revoke")
-	}
-	rows := must(s.Tokens())
-	want := []store.TokenRow{
-		{Name: "mac-1", Role: "machine", CreatedAt: at, RevokedAt: "2026-10-02T11:00:00.000Z"},
-		{Name: "matt", Role: "watch", CreatedAt: at},
-	}
-	if !reflect.DeepEqual(rows, want) {
-		t.Fatalf("Tokens:\n got %+v\nwant %+v", rows, want)
-	}
-	if _, err := s.IssueToken("bad name", "machine", at); err == nil {
-		t.Fatal("bad name accepted")
-	}
-	if _, err := s.IssueToken("x", "root", at); err == nil {
-		t.Fatal("bad role accepted")
-	}
-	if _, err := s.IssueToken("x", "orchestrator", at); err == nil {
-		t.Fatal("the role orchestrator accepted")
-	}
-}
-
-func must3[T, U any](v T, u U, ok bool, err error) (T, U, bool) {
-	if err != nil {
-		panic(err)
-	}
-	return v, u, ok
-}
-
 // The feed of the TUI sends the rows as the wire form: subject and payload, byte for byte
 // what the encoder gave.
 func TestRowsAreTheWireForm(t *testing.T) {
@@ -391,27 +322,4 @@ func TestOpenCreatesTheDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = s.Close()
-}
-
-// coop v0.13.0 and before stored the token of the person who watches with the role operator.
-// Open gives such a token the role watch, and the token stays valid.
-func TestOpenGivesAnOldOperatorTokenTheRoleWatch(t *testing.T) {
-	s, path := open(t)
-	tok := must(s.IssueToken("me", "machine", at))
-	old, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := old.Exec(`UPDATE tokens SET role = 'operator' WHERE name = 'me'`); err != nil {
-		t.Fatal(err)
-	}
-	_ = old.Close()
-	again := must(store.Open(path))
-	defer again.Close()
-	if rows := must(again.Tokens()); len(rows) != 1 || rows[0].Role != "watch" {
-		t.Fatalf("tokens %+v", rows)
-	}
-	if name, role, ok, err := again.VerifyToken(tok); err != nil || !ok || name != "me" || role != "watch" {
-		t.Fatalf("verify: %q %q %v %v", name, role, ok, err)
-	}
 }

@@ -95,13 +95,11 @@ func distDir(t *testing.T) (dir string, files map[string]string) {
 func TestTheHubGivesItsBinariesToEachValidToken(t *testing.T) {
 	dir, files := distDir(t)
 	h := startHub(t, limits{}, options{dist: dir})
-	for role, token := range map[string]string{"machine": h.token("t-machine"), "watch": h.watchToken("t-watch")} {
-		status, header, body := get(t, h.base+"/dl/coop-linux-amd64", token)
-		if status != 200 || string(body) != files["coop-linux-amd64"] || header.Get("Content-Type") != "application/octet-stream" {
-			t.Errorf("%s token: %d %q %q", role, status, body, header.Get("Content-Type"))
-		}
-	}
 	tok := h.token("mac")
+	status, header, body := get(t, h.base+"/dl/coop-linux-amd64", tok)
+	if status != 200 || string(body) != files["coop-linux-amd64"] || header.Get("Content-Type") != "application/octet-stream" {
+		t.Errorf("the binary: %d %q %q", status, body, header.Get("Content-Type"))
+	}
 	if status, _, body := get(t, h.base+"/dl/coop-windows-amd64.exe", tok); status != 200 || string(body) != files["coop-windows-amd64.exe"] {
 		t.Errorf("the windows binary: %d %q", status, body)
 	}
@@ -112,7 +110,7 @@ func TestTheHubGivesItsBinariesToEachValidToken(t *testing.T) {
 		}
 	}
 	// The hub has no binary for this platform: the answer names the file.
-	status, _, body := get(t, h.base+"/dl/coop-darwin-arm64", tok)
+	status, _, body = get(t, h.base+"/dl/coop-darwin-arm64", tok)
 	if status != 404 || !strings.Contains(string(body), "coop-darwin-arm64") {
 		t.Errorf("a binary that the hub does not have: %d %s", status, body)
 	}

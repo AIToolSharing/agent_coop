@@ -30,7 +30,7 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 
 	file := config.DefaultEnvFile()
 	if info, err := os.Stat(file); err != nil {
-		fail("no credential file " + file + ": run coop login <url> <token>")
+		fail("no credential file " + file + ": run the join line of the hub, or coop login <url> <secret>")
 	} else if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		fail(file + " is readable by others: chmod 600 " + file)
 	} else {
@@ -43,7 +43,7 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 		fail(w)
 	}
 	if cfg.URL == "" {
-		fail("no hub address: run coop login <url> <token>")
+		fail("no hub address: run the join line of the hub, or coop login <url> <secret>")
 	} else {
 		ok("hub address " + cfg.URL)
 		if cfg.CertSHA256 != "" {
@@ -53,7 +53,7 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := probeToken(ctx, client, cfg.URL, "none"); err != nil && pin.IsCertError(err) {
-			fail("the hub's certificate is not trusted or has changed: run coop login " + cfg.URL + " <token> again")
+			fail("the hub's certificate is not trusted or has changed: run coop login " + cfg.URL + " <secret> again")
 		} else if err != nil && strings.Contains(err.Error(), "cannot reach") {
 			fail(err.Error())
 		} else {
@@ -61,11 +61,11 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 			// The hub tells its version to a token that it accepts.
 			hubVersion, accepted := "", false
 			if cfg.Token == "" {
-				note("no token (COOP_TOKEN): coop login " + cfg.URL + " <token>")
+				note("no secret (COOP_TOKEN): coop login " + cfg.URL + " <secret>")
 			} else if me, err := whoami(ctx, client, cfg.URL, cfg.Token); err != nil {
 				fail("COOP_TOKEN: " + err.Error())
 			} else {
-				ok("token accepted")
+				ok("secret accepted: this machine is " + me.Machine + " to the hub")
 				hubVersion, accepted = me.Version, true
 			}
 			// The hub and its devices must have one version: a part drops a message that only a
@@ -83,10 +83,10 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 	}
 	if cfg.Session != "" {
 		ok("session " + cfg.Session + " (COOP_SESSION)")
-	} else if session, err := repoSession(cwd()); err == nil {
+	} else if session, repo := repoSession(cwd()); repo {
 		ok("coop claude here joins the session " + session + " (the name of the git repository)")
 	} else {
-		note("not in a git repository: coop claude <session> names the session")
+		ok("coop claude here joins the session " + session + " (the name of the directory; not in a git repository)")
 	}
 	if env["COOP_AGENT"] != "" {
 		ok("agent name " + cfg.Agent + " (COOP_AGENT)")

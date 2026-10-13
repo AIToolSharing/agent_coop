@@ -11,6 +11,7 @@ package hub
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"slices"
@@ -82,6 +83,9 @@ var DefaultLimits = Limits{
 
 // Options configures a Hub.
 type Options struct {
+	// Secret is what every machine presents: the bearer token is `<machine>.<secret>`. A hub
+	// with an empty secret accepts no request.
+	Secret string
 	// Ping is the interval of the SSE ping, and of the check of each live connection's token
 	// and session. Zero means 15 s.
 	Ping time.Duration
@@ -172,10 +176,9 @@ type HistoryQuery struct {
 	Limit int
 }
 
-// Owner is who a token belongs to.
+// Owner is the machine that sent a request.
 type Owner struct {
 	Name string
-	Role string // machine or watch
 }
 
 // Sink is where a connection's server-sent events go. The hub calls it from one goroutine.
@@ -261,16 +264,14 @@ func (h *Hub) Presence(key string) (wire.PresenceRecord, bool) {
 	return c.presence(), true
 }
 
-// Auth gives the owner of a bearer token.
+// Auth gives the machine of a bearer token `<machine>.<secret>`.
 func (h *Hub) Auth(header string) (Owner, error) {
 	token, ok := strings.CutPrefix(header, "Bearer ")
 	if ok {
-		name, role, valid, err := h.st.VerifyToken(token)
-		if err != nil {
-			return Owner{}, errf("unavailable", "token check failed")
-		}
-		if valid {
-			return Owner{Name: name, Role: role}, nil
+		name, secret, found := strings.Cut(token, ".")
+		if found && wire.IsToken(name) && h.opt.Secret != "" &&
+			subtle.ConstantTimeCompare([]byte(secret), []byte(h.opt.Secret)) == 1 {
+			return Owner{Name: name}, nil
 		}
 	}
 	return Owner{}, errf("unauthorized", "missing or invalid token")
@@ -501,19 +502,11 @@ func (h *Hub) deliver(c *Conn, it item, sink Sink) bool {
 	return true
 }
 
-// sweep checks what another process may have changed: the machine's token and the session.
-// It gives false when the stream must end.
+// sweep checks what another process may have changed: the session. It gives false when the
+// stream must end.
 func (h *Hub) sweep(c *Conn) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	valid, err := h.st.TokenValid(c.me.Machine)
-	if err != nil {
-		return true
-	}
-	if !valid {
-		c.close("revoked")
-		return false
-	}
 	if _, ok, err := h.st.Session(c.sid); err == nil && !ok {
 		c.close("closed")
 		return false
@@ -916,9 +909,6 @@ func (h *Hub) AdminFeed(ctx context.Context, name string, sink Sink, fromSeq int
 			}
 		case <-ticker.C:
 			if sink.Ping() != nil {
-				return
-			}
-			if valid, err := h.st.TokenValid(name); err == nil && !valid {
 				return
 			}
 		}

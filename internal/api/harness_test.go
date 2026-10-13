@@ -25,14 +25,18 @@ type limit struct {
 // limits are the rate limits of a test hub; a zero limit means the hub's default.
 type limits struct{ join, msg, activity limit }
 
-// options of a test hub: version is the version that the hub reports, and dist is the
-// directory of the binaries that it gives to devices.
+// options of a test hub: version is the version that the hub reports, dist is the directory
+// of the binaries that it gives to devices, and secret is the secret of the hub ("" means
+// testSecret).
 type options struct {
-	version, dist string
+	version, dist, secret string
 }
 
-// testPing is the hub's ping and sweep interval in tests, so that a revoked token or a
-// changed session shows within a second.
+// testSecret is the secret of a test hub with no other.
+const testSecret = "s3cret"
+
+// testPing is the hub's ping and sweep interval in tests, so that a changed session shows
+// within a second.
 const testPing = 200 * time.Millisecond
 
 type harness struct {
@@ -59,6 +63,9 @@ func startHub(t *testing.T, l limits, o options) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if o.secret == "" {
+		o.secret = testSecret
+	}
 	h := &harness{t: t, path: path, st: st, l: l, o: o, addr: "127.0.0.1:0"}
 	h.start()
 	t.Cleanup(func() {
@@ -80,6 +87,7 @@ func (h *harness) start() {
 	h.base = "http://" + h.addr
 	conv := func(l limit) hub.Limit { return hub.Limit{Burst: l.burst, PerSecond: l.perSecond} }
 	h.h = hub.New(h.st, hub.Options{
+		Secret: h.o.secret,
 		Ping:   testPing,
 		Limits: hub.Limits{Join: conv(h.l.join), Msg: conv(h.l.msg), Activity: conv(h.l.activity)},
 	})
@@ -109,49 +117,9 @@ func (h *harness) restart() {
 	h.start()
 }
 
-func (h *harness) now() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00") }
-
-// token issues a machine token; it replaces the old token of that name.
+// token gives the token of a machine: `<machine>.<secret>`.
 func (h *harness) token(machine string) string {
-	h.t.Helper()
-	tok, err := h.st.IssueToken(machine, "machine", h.now())
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	return tok
-}
-
-// watchToken issues a token that may also watch every session.
-func (h *harness) watchToken(name string) string {
-	h.t.Helper()
-	tok, err := h.st.IssueToken(name, "watch", h.now())
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	return tok
-}
-
-// revoke revokes a token (as the CLI on the server does). The hub notices a revoked token at
-// its next ping tick.
-func (h *harness) revoke(name string) {
-	h.t.Helper()
-	if _, err := h.st.RevokeToken(name, h.now()); err != nil {
-		h.t.Fatal(err)
-	}
-}
-
-// tokenRoles gives the role of every token by name.
-func (h *harness) tokenRoles() map[string]string {
-	h.t.Helper()
-	rows, err := h.st.Tokens()
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	out := map[string]string{}
-	for _, r := range rows {
-		out[r.Name] = r.Role
-	}
-	return out
+	return machine + "." + h.o.secret
 }
 
 // presence gives the hub's live presence record of key "<sid>.<machine>.<agent>", or false.

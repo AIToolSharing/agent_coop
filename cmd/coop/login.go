@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -15,18 +16,20 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
-// errBadToken: the hub answered, and refused the token.
-var errBadToken = errors.New("the hub refused the token")
+// errBadToken: the hub answered, and refused the secret.
+var errBadToken = errors.New("the hub refused the secret")
 
-// hubIdentity is what the hub says of a token and of itself. Role is machine for each token.
+// hubIdentity is what the hub says of the token and of itself.
 type hubIdentity struct {
-	Role string `json:"role"`
+	// Machine is the name under which the hub knows this machine: the part of the token
+	// before the dot.
+	Machine string `json:"machine"`
 	// Version is the version of the hub: "" from a hub of a version that reports none.
 	Version string `json:"version"`
 }
 
-// whoami asks the hub whether it accepts the token: GET /v1/whoami gives the version of the
-// hub, and 401 for a token that the hub does not know.
+// whoami asks the hub whether it accepts the token `<machine>.<secret>`: GET /v1/whoami gives
+// the version of the hub, and 401 for a secret that is not the hub's.
 func whoami(ctx context.Context, c *http.Client, base, token string) (hubIdentity, error) {
 	var me hubIdentity
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/whoami", nil)
@@ -41,8 +44,8 @@ func whoami(ctx context.Context, c *http.Client, base, token string) (hubIdentit
 	defer res.Body.Close()
 	switch res.StatusCode {
 	case 200:
-		if err := json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&me); err != nil || !wire.IsRole(me.Role) {
-			return me, fmt.Errorf("%s gave no role for the token", base)
+		if err := json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&me); err != nil || !wire.IsToken(me.Machine) {
+			return me, fmt.Errorf("%s gave no machine name for the token", base)
 		}
 		return me, nil
 	case 401:
@@ -59,16 +62,44 @@ func probeToken(ctx context.Context, c *http.Client, base, token string) error {
 	return err
 }
 
+// machineToken gives the token of this machine for the secret of the hub: `<hostname>.<secret>`,
+// with the hostname cut at its first dot and made a name. A secret that has a dot is a whole
+// token, `<machine>.<secret>`, and names the machine itself.
+func machineToken(secret, hostname string) (string, error) {
+	if strings.Contains(secret, ".") {
+		machine, _, _ := strings.Cut(secret, ".")
+		if !wire.IsToken(machine) {
+			return "", fmt.Errorf("%q is not a machine name: a-z, 0-9, - and _", machine)
+		}
+		return secret, nil
+	}
+	if secret == "" {
+		return "", errors.New("the secret is empty")
+	}
+	host, _, _ := strings.Cut(hostname, ".")
+	machine := config.Name(host)
+	if machine == "" {
+		machine = "machine"
+	}
+	return machine + "." + secret, nil
+}
+
 // cmdLogin stores the hub address and the token of this machine in the credential file. It
 // removes COOP_OPERATOR_TOKEN, the second token of coop v0.13.0 and before.
 func cmdLogin(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 2 {
-		fmt.Fprintln(stderr, "usage: coop login <url> <token>")
+		fmt.Fprintln(stderr, "usage: coop login <url> <secret>")
 		return 2
 	}
 	base := strings.TrimRight(args[0], "/")
 	if !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
 		fmt.Fprintln(stderr, "the address must start with http:// or https://")
+		return 2
+	}
+	hostname, _ := os.Hostname()
+	token, err := machineToken(args[1], hostname)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
 		return 2
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -77,8 +108,8 @@ func cmdLogin(args []string, stdout, stderr io.Writer) int {
 	// is pinned by its fingerprint after the token was accepted through it. With the
 	// fingerprint in COOP_CERT_SHA256 (as the hub's host shows it), login checks the
 	// certificate before the token goes; without it, the first certificate is trusted.
-	values := map[string]string{"COOP_URL": base, "COOP_TOKEN": args[1], "COOP_CERT_SHA256": "", "COOP_OPERATOR_TOKEN": ""}
-	err := probeToken(ctx, &http.Client{}, base, args[1])
+	values := map[string]string{"COOP_URL": base, "COOP_TOKEN": token, "COOP_CERT_SHA256": "", "COOP_OPERATOR_TOKEN": ""}
+	err = probeToken(ctx, &http.Client{}, base, token)
 	if err != nil && pin.IsCertError(err) && strings.HasPrefix(base, "https://") {
 		fp, ferr := pin.Fingerprint(ctx, base)
 		if ferr != nil {
@@ -98,7 +129,7 @@ func cmdLogin(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		pinned, _ := pin.Client(fp)
-		if err = probeToken(ctx, pinned, base, args[1]); err == nil {
+		if err = probeToken(ctx, pinned, base, token); err == nil {
 			values["COOP_CERT_SHA256"] = fp
 			if want != "" {
 				fmt.Fprintf(stdout, "the hub's certificate matches COOP_CERT_SHA256; its fingerprint is pinned for %s:\n  %s\n", base, pin.Format(fp))
@@ -116,7 +147,9 @@ func cmdLogin(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "wrote %s (mode 0600): the token for %s\n", file, base)
+	machine, _, _ := strings.Cut(token, ".")
+	fmt.Fprintf(stdout, "wrote %s (mode 0600): this machine is %s to the hub %s\n", file, machine, base)
 	fmt.Fprintln(stdout, "next:  cd <project> && coop claude   # Claude Code in the session of the git repository")
+	fmt.Fprintln(stdout, "       coop tui                      # the sessions")
 	return 0
 }

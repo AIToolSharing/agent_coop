@@ -15,8 +15,7 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/tui"
 )
 
-// cmdTUI shows the sessions of the hub. It needs a token that may watch. To every other caller,
-// coop has no tui command: an agent learns nothing of it.
+// cmdTUI shows the sessions of the hub.
 func cmdTUI(args []string, stderr io.Writer) int {
 	url, token := "", ""
 	for i := 0; i < len(args); i++ {
@@ -40,7 +39,8 @@ func cmdTUI(args []string, stderr io.Writer) int {
 		token = cfg.Token
 	}
 	if url == "" || token == "" {
-		return unknown("tui", stderr)
+		fmt.Fprintln(stderr, "coop tui: no hub address or no secret: run the join line of the hub, or coop login <url> <secret>")
+		return 1
 	}
 	client := &admin.Client{Base: url, Token: token, HTTP: hubHTTP(cfg, stderr)}
 	check, stop := context.WithTimeout(context.Background(), 10*time.Second)
@@ -49,7 +49,8 @@ func cmdTUI(args []string, stderr io.Writer) int {
 	var refused *admin.APIError
 	switch {
 	case errors.As(err, &refused):
-		return unknown("tui", stderr)
+		fmt.Fprintln(stderr, "coop tui: the hub refused the secret: run the join line of the hub again")
+		return 1
 	case err != nil:
 		fmt.Fprintln(stderr, "coop: cannot reach "+url)
 		return 1

@@ -1,5 +1,5 @@
 // Package admin is the hub's watch API as the TUI uses it: the live feed with reconnect and
-// resume, and the deletion of a session. Both need a watch token.
+// resume, and the deletion of a session.
 package admin
 
 import (
@@ -19,9 +19,8 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
-// ErrRefused means the service is reachable and refuses the token, or the token may not watch:
-// a retry cannot help.
-var ErrRefused = errors.New("the service refused the token, or the token may not show the sessions")
+// ErrRefused means the service is reachable and refuses the token: a retry cannot help.
+var ErrRefused = errors.New("the service refused the token")
 
 // APIError is a non-2xx answer of an action.
 type APIError struct {
@@ -31,7 +30,7 @@ type APIError struct {
 
 func (e *APIError) Error() string { return e.Message }
 
-// Client talks to one hub with one watch token.
+// Client talks to one hub with the token of this machine.
 type Client struct {
 	Base  string
 	Token string
@@ -139,7 +138,6 @@ func (c *Client) stream(ctx context.Context, fromID string, lastID *string, emit
 		return err
 	}
 	defer res.Body.Close()
-	// To a token that may not watch, the hub has no such route: 404.
 	if res.StatusCode == 401 || res.StatusCode == 403 || res.StatusCode == 404 {
 		return fmt.Errorf("%w: %s", ErrRefused, message(res))
 	}
@@ -240,8 +238,7 @@ func (c *Client) do(ctx context.Context, method, path string) error {
 	return nil
 }
 
-// Check asks the hub whether the token may watch. To a token that may not, the hub answers
-// 404, and Check gives an *APIError.
+// Check asks the hub whether it accepts the token. When it does not, Check gives an *APIError.
 func (c *Client) Check(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/sessions")
 }

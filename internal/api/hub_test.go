@@ -69,35 +69,26 @@ func TestHub(t *testing.T) {
 }
 
 func (x *hubSuite) authentication(t *testing.T) {
-	t.Run("a request without a valid token gets 401", func(t *testing.T) {
+	// The token is `<machine>.<secret>`: the secret of the hub, behind the name of the machine.
+	t.Run("a request without the secret gets 401", func(t *testing.T) {
 		sid := x.session(t)
-		wantStatus(t, 401)(api{x.h.base, "nope"}.view(sid, "a"))
-		wantStatus(t, 401)(api{x.h.base, "mac-1.wrong-secret"}.view(sid, "a"))
+		for _, bad := range []string{"nope", "mac-1.wrong-secret", "mac-1." + testSecret + "x", "Mac 1." + testSecret, "." + testSecret, testSecret} {
+			wantStatus(t, 401)(api{x.h.base, bad}.view(sid, "a"))
+		}
 		wantStatus(t, 401)(fetch(x.h.base + "/v1/sessions/" + sid))
+		// A hub with no secret accepts no request.
+		none := startHub(t, limits{}, options{secret: " "})
+		wantStatus(t, 401)(api{none.base, "mac-1. "}.view(sid, "a"))
+		wantStatus(t, 401)(api{none.base, "mac-1."}.view(sid, "a"))
 	})
 
-	// The person who watches is one more machine to the agents: a token that may watch also
-	// acts as an agent, and whoami calls each token a machine token.
-	t.Run("a watch token also acts as an agent; whoami calls it a machine token", func(t *testing.T) {
-		sid := x.session(t)
-		w := api{x.h.base, x.h.watchToken("matt")}
-		s := w.stream(sid, "a")
-		defer s.close()
-		wantStatus(t, 200)(s.status(), s.body)
-		s.wait(t, nil)
-		wantStatus(t, 200)(w.view(sid, "a"))
-		for _, tok := range []string{w.token, x.mac1.token} {
+	t.Run("whoami names the machine of the token", func(t *testing.T) {
+		for _, tok := range []string{x.mac1.token, x.h.token("any-name")} {
 			status, _, body := get(t, x.h.base+"/v1/whoami", tok)
-			if status != 200 || !strings.Contains(string(body), `"role":"machine"`) {
+			machine, _, _ := strings.Cut(tok, ".")
+			if status != 200 || !strings.Contains(string(body), `"machine":"`+machine+`"`) {
 				t.Fatalf("whoami: %d %s", status, body)
 			}
-		}
-		roles := x.h.tokenRoles()
-		if roles["matt"] != "watch" {
-			t.Fatalf("role of matt: %q", roles["matt"])
-		}
-		if roles["mac-1"] != "machine" {
-			t.Fatalf("role of mac-1: %q", roles["mac-1"])
 		}
 	})
 }
@@ -412,18 +403,6 @@ func (x *hubSuite) operatorIsAName(t *testing.T) {
 		}))
 	})
 
-	t.Run("revoking a token ends its streams and its requests", func(t *testing.T) {
-		tmp := api{x.h.base, x.h.token("temp")}
-		sid := x.session(t)
-		s := tmp.stream(sid, "tmp")
-		defer s.close()
-		s.wait(t, nil)
-		x.h.revoke("temp")
-		if err := s.ended(0); err != nil {
-			t.Fatal(err)
-		}
-		wantStatus(t, 401)(tmp.view(sid, "tmp"))
-	})
 }
 
 func (x *hubSuite) peerPresence(t *testing.T) {
@@ -653,7 +632,7 @@ func (x *hubSuite) activityAndPresence(t *testing.T) {
 func (x *hubSuite) autoCreate(t *testing.T) {
 	t.Run("a join of an unknown session creates it; the operator sees it", func(t *testing.T) {
 		auto := startHub(t, limits{}, options{})
-		op := operator{admin{auto.base, auto.watchToken("op")}}
+		op := operator{admin{auto.base, auto.token("op")}}
 		mac := api{auto.base, auto.token("mac-1")}
 		s := mac.stream("fresh", "alice")
 		defer s.close()
@@ -672,15 +651,12 @@ func (x *hubSuite) autoCreate(t *testing.T) {
 }
 
 func (x *hubSuite) adminAPI(t *testing.T) {
-	adm := admin{x.h.base, x.h.watchToken("matt")}
+	adm := admin{x.h.base, x.h.token("matt")}
 
-	// To each token that may not watch, the admin routes do not exist: no 403 or 401 tells
-	// that they are there.
-	t.Run("for a machine token, a bad token and no token, the admin routes are not there: 404", func(t *testing.T) {
-		// mac1's own token: a new h.token("mac-1") would replace it and log mac1 out.
-		for _, tok := range []string{x.mac1.token, "nope", ""} {
-			body := wantStatus(t, 404)(admin{x.h.base, tok}.sessions())
-			if m := parse[errBody](t, body).Message; m != "no such route" {
+	t.Run("without the secret, the admin routes are 401", func(t *testing.T) {
+		for _, tok := range []string{"nope", "matt.wrong", ""} {
+			body := wantStatus(t, 401)(admin{x.h.base, tok}.sessions())
+			if m := parse[errBody](t, body).Message; m != "missing or invalid token" {
 				t.Fatalf("token %q: message %q", tok, m)
 			}
 		}
@@ -712,10 +688,10 @@ func (x *hubSuite) adminAPI(t *testing.T) {
 }
 
 func (x *hubSuite) adminFeed(t *testing.T) {
-	adm := admin{x.h.base, x.h.watchToken("viewer")}
+	adm := admin{x.h.base, x.h.token("viewer")}
 
-	t.Run("for a machine token, the feed is not there", func(t *testing.T) {
-		wantStatus(t, 404)(admin{x.h.base, x.mac1.token}.stream().result())
+	t.Run("without the secret, there is no feed", func(t *testing.T) {
+		wantStatus(t, 401)(admin{x.h.base, "viewer.wrong"}.stream().result())
 	})
 
 	t.Run("the current buckets come first, each closed by a snapshot marker", func(t *testing.T) {
@@ -806,18 +782,6 @@ func (x *hubSuite) adminFeed(t *testing.T) {
 			t.Fatalf("payload %s has no \"after\"", parsed.Payload)
 		}
 		s.wait(t, eventIs("snapshot"))
-	})
-
-	t.Run("revoking the watch token ends the feed; the feed is then not there", func(t *testing.T) {
-		temp := admin{x.h.base, x.h.watchToken("temp-op")}
-		s := temp.stream()
-		defer s.close()
-		s.wait(t, eventIs("snapshot"))
-		x.h.revoke("temp-op")
-		if err := s.ended(0); err != nil {
-			t.Fatal(err)
-		}
-		wantStatus(t, 404)(temp.stream().result())
 	})
 }
 

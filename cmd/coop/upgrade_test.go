@@ -41,9 +41,9 @@ func newDistHub(t *testing.T, version string, binary string) *distHub {
 		name, isBinary := strings.CutPrefix(r.URL.Path, "/dl/")
 		switch {
 		case r.URL.Path == "/v1/whoami" && h.version == "":
-			_, _ = w.Write([]byte(`{"name":"mac","role":"machine"}`))
+			_, _ = w.Write([]byte(`{"machine":"mac"}`))
 		case r.URL.Path == "/v1/whoami":
-			_, _ = w.Write([]byte(`{"name":"mac","role":"machine","version":"` + h.version + `"}`))
+			_, _ = w.Write([]byte(`{"machine":"mac","version":"` + h.version + `"}`))
 		case isBinary && h.binaries[name] != "":
 			h.downloads++
 			_, _ = w.Write([]byte(h.binaries[name]))

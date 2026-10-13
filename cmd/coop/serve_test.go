@@ -7,11 +7,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/AIToolSharing/agent_coop/internal/store"
 )
 
 func TestServeListensAndStopsWithTheContext(t *testing.T) {
@@ -55,60 +54,70 @@ func TestServeListensAndStopsWithTheContext(t *testing.T) {
 	}
 }
 
+// secretOf reads the secret that a hub made in its data directory.
+func secretOf(t *testing.T, data string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(data, secretName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// The hub makes its secret at the first start and keeps it: the file <data>/secret, for the
+// owner only. Every machine presents it behind its name. A file that holds no secret stops
+// the hub.
+func TestServeMakesItsSecretOnceAndKeepsIt(t *testing.T) {
+	data := t.TempDir()
+	start := func() (secret string, stderr string) {
+		t.Helper()
+		ready := make(chan string, 1)
+		serveReady = func(addr string) { ready <- addr }
+		t.Cleanup(func() { serveReady = nil })
+		ctx, cancel := context.WithCancel(context.Background())
+		var errOut bytes.Buffer
+		done := make(chan int, 1)
+		go func() { done <- serve(ctx, []string{"--listen", "127.0.0.1:0", "--data", data}, &errOut) }()
+		addr := <-ready
+		secret = secretOf(t, data)
+		req, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/v1/whoami", nil)
+		req.Header.Set("Authorization", "Bearer laptop."+secret)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != 200 || !strings.Contains(string(body), `"machine":"laptop"`) {
+			t.Fatalf("whoami with the secret: %d %s", res.StatusCode, body)
+		}
+		cancel()
+		<-done
+		return secret, errOut.String()
+	}
+	first, stderr := start()
+	if len(first) < 40 || strings.ContainsAny(first, ".+/=") || !strings.Contains(stderr, "made "+filepath.Join(data, secretName)) {
+		t.Fatalf("first start: secret %q, stderr %q", first, stderr)
+	}
+	if info, err := os.Stat(filepath.Join(data, secretName)); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
+		t.Fatalf("secret file: %v %v", info, err)
+	}
+	if again, stderr := start(); again != first || strings.Contains(stderr, "made ") {
+		t.Fatalf("second start: secret %q (first %q), stderr %q", again, first, stderr)
+	}
+	if err := os.WriteFile(filepath.Join(data, secretName), []byte("has.a.dot\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var errOut bytes.Buffer
+	if code := serve(context.Background(), []string{"--listen", "127.0.0.1:0", "--data", data}, &errOut); code != 1 || !strings.Contains(errOut.String(), "does not hold a secret") {
+		t.Fatalf("a bad secret file: code %d, stderr %q", code, errOut.String())
+	}
+}
+
 func TestServeRefusesAnArgument(t *testing.T) {
 	var errOut bytes.Buffer
 	if code := serve(context.Background(), []string{"extra"}, &errOut); code != 2 {
 		t.Fatalf("code %d", code)
-	}
-}
-
-func TestAdminTokens(t *testing.T) {
-	data := t.TempDir()
-	// coop admin works only on the database of a hub: without one, coop has no admin command.
-	var noOut, noErr bytes.Buffer
-	if code := run([]string{"admin", "token", "list", "--data", data}, &noOut, &noErr); code != 2 || !strings.Contains(noErr.String(), `unknown command "admin"`) || noOut.Len() != 0 {
-		t.Fatalf("no database: code %d stdout %q stderr %q", code, noOut.String(), noErr.String())
-	}
-	st, err := store.Open(filepath.Join(data, dbName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = st.Close()
-	call := func(args ...string) (int, string, string) {
-		var out, errOut bytes.Buffer
-		code := run(append([]string{"admin"}, args...), &out, &errOut)
-		return code, out.String(), errOut.String()
-	}
-	code, out, _ := call("token", "add", "--data", data, "mac-1")
-	if code != 0 || !strings.HasPrefix(out, "mac-1.") || len(strings.TrimSpace(out)) < 40 {
-		t.Fatalf("add: %d %q", code, out)
-	}
-	if code, out, _ := call("token", "add", "--watch", "--data", data, "me"); code != 0 || !strings.HasPrefix(out, "me.") {
-		t.Fatalf("add --watch: %d %q", code, out)
-	}
-	if code, _, _ := call("token", "add", "--operator", "--data", data, "old"); code != 2 {
-		t.Fatalf("--operator is gone: %d", code)
-	}
-	code, out, _ = call("token", "list", "--data", data)
-	if code != 0 || !strings.Contains(out, "mac-1\tmachine\t") || !strings.Contains(out, "me\twatch\t") || !strings.Contains(out, "\tvalid\n") {
-		t.Fatalf("list: %d %q", code, out)
-	}
-	if code, _, errOut := call("token", "revoke", "--data", data, "mac-1"); code != 0 || !strings.Contains(errOut, "revoked mac-1") {
-		t.Fatalf("revoke: %d %q", code, errOut)
-	}
-	if code, _, errOut := call("token", "revoke", "--data", data, "mac-1"); code != 1 || !strings.Contains(errOut, "no valid token") {
-		t.Fatalf("revoke twice: %d %q", code, errOut)
-	}
-	if _, out, _ := call("token", "list", "--data", data); !strings.Contains(out, "mac-1\tmachine\tcreated ") || !strings.Contains(out, "\trevoked ") {
-		t.Fatalf("list after revoke: %q", out)
-	}
-	if code, _, _ := call("token", "add", "--data", data, "Bad Name"); code != 1 {
-		t.Fatalf("bad name: %d", code)
-	}
-	for _, bad := range [][]string{{}, {"token"}, {"token", "add", "--data", data}, {"token", "list", "--data", data, "x"}, {"session", "list"}} {
-		if code, _, errOut := call(bad...); code != 2 || !strings.Contains(errOut, "usage:") {
-			t.Fatalf("%v: %d %q", bad, code, errOut)
-		}
 	}
 }
 
@@ -129,16 +138,7 @@ func TestServeGivesItsVersionAndItsBinaries(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dist, "coop-linux-amd64"), []byte("the binary"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		st, err := store.Open(filepath.Join(data, dbName))
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = st.Close()
-		var out, errOut bytes.Buffer
-		if code := run([]string{"admin", "token", "add", "--data", data, "mac-1"}, &out, &errOut); code != 0 {
-			t.Fatalf("token: %d %s", code, errOut.String())
-		}
-		token := strings.TrimSpace(out.String())
+		var errOut bytes.Buffer
 		ready := make(chan string, 1)
 		serveReady = func(addr string) { ready <- addr }
 		t.Cleanup(func() { serveReady = nil })
@@ -146,6 +146,7 @@ func TestServeGivesItsVersionAndItsBinaries(t *testing.T) {
 		done := make(chan int, 1)
 		go func() { done <- serve(ctx, args, &errOut) }()
 		base := "http://" + <-ready
+		token := "mac-1." + secretOf(t, data)
 		get := func(path string) (int, string) {
 			req, _ := http.NewRequest(http.MethodGet, base+path, nil)
 			req.Header.Set("Authorization", "Bearer "+token)

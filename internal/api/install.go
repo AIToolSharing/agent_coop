@@ -19,8 +19,8 @@ var InstallScript []byte
 // that matches has no path separator, so it is a file of the directory Dist and no other.
 var binaryRE = regexp.MustCompile(`^coop-[a-z0-9]+-[a-z0-9]+(\.exe)?$`)
 
-// install serves what a device needs to install coop: the script, with no token, and the
-// binaries of the hub's version, to each valid token. It reports whether the path is one of
+// install serves what a device needs to install coop: the script, with no secret, and the
+// binaries of the hub's version, with the secret. It reports whether the path is one of
 // these.
 func (s *Server) install(w http.ResponseWriter, r *http.Request) bool {
 	name, binary := strings.CutPrefix(r.URL.Path, "/dl/")
@@ -37,7 +37,7 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request) bool {
 		_, _ = w.Write(InstallScript)
 		return true
 	}
-	if _, err := s.auth(r, kindAny); err != nil {
+	if _, err := s.auth(r); err != nil {
 		writeHubError(w, err)
 		return true
 	}

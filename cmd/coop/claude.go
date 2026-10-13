@@ -63,39 +63,39 @@ var gitOut = func(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// errNoRepo: coop claude has no session to take from the directory.
-var errNoRepo = errors.New("not in a git repository: give the session, coop claude <session>")
-
-// repoSession gives the session of the git repository of dir: the name of its remote origin,
-// as `git clone` names the directory, so that the clones on each machine meet in one session.
-// A repository with no origin gives the name of its main directory, also from a worktree.
-func repoSession(dir string) (string, error) {
+// repoSession gives the session of dir: the name of the git repository, or the name of the
+// directory when dir is in no repository (repo is then false). The name of a repository is
+// the name of its remote origin, as `git clone` names the directory, so that the clones on
+// each machine meet in one session; a repository with no origin gives the name of its main
+// directory, also from a worktree.
+func repoSession(dir string) (session string, repo bool) {
 	if remote, err := gitOut(dir, "remote", "get-url", "origin"); err == nil {
 		if s := config.Name(config.RepoName(remote)); s != "" {
-			return s, nil
+			return s, true
 		}
 	}
-	common, err := gitOut(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil || common == "" {
-		return "", errNoRepo
+	if common, err := gitOut(dir, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil && common != "" {
+		if s := config.Name(filepath.Base(filepath.Dir(common))); s != "" {
+			return s, true
+		}
 	}
-	if s := config.Name(filepath.Base(filepath.Dir(common))); s != "" {
-		return s, nil
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
 	}
-	return "", errNoRepo
+	if s := config.Name(filepath.Base(dir)); s != "" {
+		return s, false
+	}
+	return "session", false
 }
 
 // cmdClaude starts Claude Code with the coop channel. Pushes reach the session only through
 // the channel flag during the research preview of channels. The session is the first
-// argument, else COOP_SESSION, else the name of the git repository (repoSession).
+// argument, else COOP_SESSION, else the name of the git repository or of the directory
+// (repoSession).
 func cmdClaude(args []string, stderr io.Writer) int {
 	session, argv := claudeCommand(args, executable())
 	if session == "" && os.Getenv("COOP_SESSION") == "" {
-		var err error
-		if session, err = repoSession(cwd()); err != nil {
-			fmt.Fprintln(stderr, "coop claude:", err)
-			return 2
-		}
+		session, _ = repoSession(cwd())
 	}
 	path, err := exec.LookPath("claude")
 	if err != nil {

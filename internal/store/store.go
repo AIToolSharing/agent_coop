@@ -1,5 +1,4 @@
-// Package store keeps the hub's state in one SQLite file: the event log, the sessions, the
-// tokens, and what the hub knows about each agent. It replaces the NATS stream and
+// Package store keeps the hub's state in one SQLite file: the event log, the sessions, and what the hub knows about each agent. It replaces the NATS stream and
 // the KV buckets of the TypeScript hub.
 //
 // The store has no clock: the caller passes every time stamp. One connection serves all
@@ -8,12 +7,7 @@
 package store
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
 	"database/sql"
-	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -58,13 +52,6 @@ CREATE TABLE IF NOT EXISTS sessions (
 	closed_at  TEXT NOT NULL DEFAULT '',
 	revision   INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS tokens (
-	name       TEXT PRIMARY KEY,
-	sha256     TEXT NOT NULL,
-	role       TEXT NOT NULL,
-	created_at TEXT NOT NULL,
-	revoked_at TEXT NOT NULL DEFAULT ''
-);
 CREATE TABLE IF NOT EXISTS known (
 	sid      TEXT NOT NULL,
 	agent    TEXT NOT NULL,
@@ -73,12 +60,11 @@ CREATE TABLE IF NOT EXISTS known (
 	seen_seq INTEGER NOT NULL,
 	PRIMARY KEY (sid, agent)
 );
--- coop v0.13.0 and before named the role watch operator.
-UPDATE tokens SET role = 'watch' WHERE role = 'operator';
 `
 
-// A database of an earlier version has more: the table kicks, the column known.gate, and
-// closed sessions (sessions.status, sessions.closed_at). This version does not read them.
+// A database of an earlier version has more: the tables kicks and tokens, the column
+// known.gate, and closed sessions (sessions.status, sessions.closed_at). This version does not
+// read them.
 
 // Open opens or creates the database at path, with its directory.
 func Open(path string) (*Store, error) {
@@ -378,97 +364,4 @@ func (s *Store) KnownAgent(sid, agent string) (KnownRow, bool, error) {
 		return KnownRow{}, false, nil
 	}
 	return k, err == nil, err
-}
-
-// --- Tokens --------------------------------------------------------------------------------
-
-// TokenRow is one token: its name, role and dates. The secret is never stored.
-type TokenRow struct {
-	Name      string
-	Role      string // a wire role: machine or watch
-	CreatedAt string
-	RevokedAt string // "" while valid
-}
-
-func sha(secret string) string {
-	sum := sha256.Sum256([]byte(secret))
-	return hex.EncodeToString(sum[:])
-}
-
-// IssueToken makes a token `<name>.<secret>` with a role of wire.IsRole. It replaces the old
-// token of that name. Only the hash of the secret is stored.
-func (s *Store) IssueToken(name, role, at string) (string, error) {
-	if !wire.IsToken(name) {
-		return "", fmt.Errorf("invalid token name: %s", name)
-	}
-	if !wire.IsRole(role) {
-		return "", fmt.Errorf("invalid token role: %s", role)
-	}
-	var raw [32]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	secret := base64.RawURLEncoding.EncodeToString(raw[:])
-	_, err := s.db.Exec(`INSERT INTO tokens (name, sha256, role, created_at, revoked_at) VALUES (?, ?, ?, ?, '')
-		ON CONFLICT (name) DO UPDATE SET sha256 = excluded.sha256, role = excluded.role, created_at = excluded.created_at, revoked_at = ''`,
-		name, sha(secret), role, at)
-	if err != nil {
-		return "", err
-	}
-	return name + "." + secret, nil
-}
-
-// RevokeToken ends a token. It gives false when the name has no valid token.
-func (s *Store) RevokeToken(name, at string) (bool, error) {
-	res, err := s.db.Exec(`UPDATE tokens SET revoked_at = ? WHERE name = ? AND revoked_at = ''`, at, name)
-	if err != nil {
-		return false, err
-	}
-	n, err := res.RowsAffected()
-	return n == 1, err
-}
-
-// Tokens gives every token, by name.
-func (s *Store) Tokens() ([]TokenRow, error) {
-	rs, err := s.db.Query(`SELECT name, role, created_at, revoked_at FROM tokens ORDER BY name`)
-	if err != nil {
-		return nil, err
-	}
-	defer rs.Close()
-	var out []TokenRow
-	for rs.Next() {
-		var t TokenRow
-		if err := rs.Scan(&t.Name, &t.Role, &t.CreatedAt, &t.RevokedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rs.Err()
-}
-
-// VerifyToken gives the name and the role of a valid bearer token.
-func (s *Store) VerifyToken(token string) (name, role string, ok bool, err error) {
-	name, secret, found := strings.Cut(token, ".")
-	if !found || !wire.IsToken(name) || secret == "" {
-		return "", "", false, nil
-	}
-	var hash, revoked string
-	err = s.db.QueryRow(`SELECT sha256, role, revoked_at FROM tokens WHERE name = ?`, name).Scan(&hash, &role, &revoked)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", false, nil
-	}
-	if err != nil {
-		return "", "", false, err
-	}
-	if revoked != "" || subtle.ConstantTimeCompare([]byte(hash), []byte(sha(secret))) != 1 {
-		return "", "", false, nil
-	}
-	return name, role, true, nil
-}
-
-// TokenValid reports whether name has a valid token now.
-func (s *Store) TokenValid(name string) (bool, error) {
-	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM tokens WHERE name = ? AND revoked_at = ''`, name).Scan(&n)
-	return n == 1, err
 }

@@ -14,17 +14,6 @@ import (
 	"time"
 )
 
-// Token roles. A machine token acts as the agents of one machine. A watch token does the same,
-// and it may also read every session (coop tui). Only the hub knows the difference: to every
-// client, a watch token is a machine token.
-const (
-	RoleMachine = "machine"
-	RoleWatch   = "watch"
-)
-
-// IsRole reports whether s is a token role.
-func IsRole(s string) bool { return s == RoleMachine || s == RoleWatch }
-
 // Broadcast is the recipient "all": the reserved name in addressing. No agent can have it.
 const Broadcast = "all"
 
