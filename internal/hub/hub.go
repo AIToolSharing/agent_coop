@@ -198,10 +198,8 @@ type Hub struct {
 	mu             sync.Mutex
 	conns          map[string]*Conn // live connections, by presence key
 	feeds          map[*feed]struct{}
-	// refusedAt is when the hub last recorded a refused join, by presence key.
-	refusedAt map[string]time.Time
-	closed    bool
-	wg        sync.WaitGroup
+	closed         bool
+	wg             sync.WaitGroup
 }
 
 // New makes a hub over st.
@@ -224,14 +222,13 @@ func New(st *store.Store, opt Options) *Hub {
 		Activity: pick(opt.Limits.Activity, DefaultLimits.Activity),
 	}
 	return &Hub{
-		st:        st,
-		opt:       opt,
-		join:      newLimiter(opt.Limits.Join, opt.Now),
-		msg:       newLimiter(opt.Limits.Msg, opt.Now),
-		act:       newLimiter(opt.Limits.Activity, opt.Now),
-		conns:     map[string]*Conn{},
-		feeds:     map[*feed]struct{}{},
-		refusedAt: map[string]time.Time{},
+		st:    st,
+		opt:   opt,
+		join:  newLimiter(opt.Limits.Join, opt.Now),
+		msg:   newLimiter(opt.Limits.Msg, opt.Now),
+		act:   newLimiter(opt.Limits.Activity, opt.Now),
+		conns: map[string]*Conn{},
+		feeds: map[*feed]struct{}{},
 	}
 }
 
@@ -380,7 +377,6 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 	key := wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: me})
 	old := h.conns[key]
 	if old != nil && old.instance != q.Instance {
-		h.refusedLocked(sid, me)
 		return nil, errf("conflict", "name %s is taken", me)
 	}
 	if old != nil {
@@ -396,25 +392,6 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 	h.conns[key] = c
 	h.wg.Add(1)
 	return &Joined{Conn: c, StartSeq: startSeq, CatchUpUntil: end}, nil
-}
-
-// refusedEvery is the least time between two records of a refused join of one agent. It is a
-// little under the five minutes that the TUI shows such a join, so that a session that keeps
-// trying stays in view, and a retry loop does not fill the log.
-const refusedEvery = 4 * time.Minute
-
-// refusedLocked records a join that the hub did not let in because another session holds the
-// name, so that the TUI shows it.
-func (h *Hub) refusedLocked(sid string, me wire.Address) {
-	key := wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: me})
-	now := h.opt.Now()
-	if last, ok := h.refusedAt[key]; ok && now.Sub(last) < refusedEvery {
-		return
-	}
-	h.refusedAt[key] = now
-	_, _ = h.publishLocked(wire.Event{Kind: wire.EventActivity, SID: sid, From: me.String(), Activity: &wire.Activity{
-		Kind: "refused", Reason: "taken", At: h.now(),
-	}}, false, nil)
 }
 
 // Run delivers events to one connection until it closes, the client goes (ctx), or a write

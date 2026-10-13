@@ -142,34 +142,6 @@ func (x *hubSuite) joining(t *testing.T) {
 		}
 	})
 
-	// Asked for by the operator: a session that is refused because the name is in use must
-	// show.
-	t.Run("a join refused for a name in use leaves a refused record; a repeat soon after leaves none", func(t *testing.T) {
-		sid := x.session(t)
-		a := x.mac1.stream(sid, "alice")
-		defer a.close()
-		a.wait(t, nil)
-		taken := func() int {
-			n := 0
-			for _, e := range x.h.events(sid) {
-				if e.Kind == wire.EventActivity && e.From == "alice@mac-1" && e.Activity != nil && e.Activity.Kind == "refused" && e.Activity.Reason == "taken" {
-					n++
-				}
-			}
-			return n
-		}
-		wantStatus(t, 409)(x.mac1.stream(sid, "alice").result())
-		if n := taken(); n != 1 {
-			t.Fatalf("%d refused records after the first try, want 1", n)
-		}
-		wantStatus(t, 409)(x.mac1.stream(sid, "alice").result())
-		if n := taken(); n != 1 {
-			t.Fatalf("%d refused records after a second try soon after, want 1", n)
-		}
-		// The agent that holds the name is not disturbed.
-		a.none(t, eventIs("notice"), 200*time.Millisecond)
-	})
-
 	// A shim of v0.10.0 or before joins with gated=1. The hub of now has no gate; the join is
 	// accepted, so that a device that did not upgrade yet keeps its messages.
 	t.Run("a join with the gated parameter of an older shim is accepted", func(t *testing.T) {

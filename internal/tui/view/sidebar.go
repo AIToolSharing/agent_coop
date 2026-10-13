@@ -17,15 +17,6 @@ type Summary struct {
 	PerMinute int
 }
 
-// RefusedFor is how long the line of a refused second session stays under an agent.
-const RefusedFor = 5 * time.Minute
-
-// lately reports whether the time iso is within the last RefusedFor.
-func lately(iso string, now time.Time) bool {
-	t, ok := parseTime(iso)
-	return ok && now.Sub(t) < RefusedFor
-}
-
 // Listed gives the agents that the sidebar shows: the agents in the session now. An agent that
 // left goes from the list at once (found in use: agents that left stayed as "ghosts"). The
 // transcript keeps its leave, and AgentList keeps every agent, for the history and for a
@@ -102,9 +93,6 @@ func SidebarWidth(sums []Summary, agents []*model.Agent, maxWidth int, now time.
 	}
 	for _, a := range agents {
 		longest = max(longest, Width(a.Address)+18)
-		if lately(a.DuplicateAt, now) {
-			longest = max(longest, 30) // "  ↳ duplicate refused 59m ago"
-		}
 	}
 	return min(max(maxWidth, 26), longest)
 }
@@ -168,11 +156,6 @@ func RenderSidebar(sums []Summary, agents []*model.Agent, sel Selection, width i
 			l = append(l, Color(" ⏳"+Age(a.Waiting.Since, now), "yellow"))
 		}
 		add(l, &Row{Address: a.Address})
-		if lately(a.DuplicateAt, now) {
-			// A second session asked for this name and the hub refused it. It has no row of
-			// its own: its address is this agent's.
-			add(Line{S("  "), Color("↳ duplicate refused "+Age(a.DuplicateAt, now)+" ago", "red")}, nil)
-		}
 	}
 	return sb
 }

@@ -96,7 +96,7 @@ func event() *rapid.Generator[wire.Event] {
 			e.Kind = wire.EventActivity
 			e.From = address().Draw(t, "from").String()
 			a := wire.Activity{At: iso.Draw(t, "at")}
-			switch rapid.IntRange(0, 5).Draw(t, "akind") {
+			switch rapid.IntRange(0, 4).Draw(t, "akind") {
 			case 0:
 				a.Kind = "joined"
 				a.Host = token.Draw(t, "host")
@@ -120,9 +120,6 @@ func event() *rapid.Generator[wire.Event] {
 					a.ReplyTo = id.Draw(t, "wreply")
 				}
 				a.TimeoutS = rapid.IntRange(1, 600).Draw(t, "timeout")
-			case 4:
-				a.Kind = "refused"
-				a.Reason = "taken"
 			default:
 				a.Kind = "wait_end"
 				a.Result = rapid.SampledFrom([]string{"message", "timeout", "cancelled"}).Draw(t, "result")
@@ -184,7 +181,7 @@ func TestDecodeMatchesTheTypeScriptWireFormat(t *testing.T) {
 		{"coop.build-42.evt.vps-2.bob", `{"kind":"wait_start","from":"operator","timeout_s":60,"at":"2026-09-30T12:00:45.000Z"}`},
 		{"coop.build-42.evt.vps-2.bob", `{"kind":"gate","gate":"paused","at":"2026-09-30T12:00:45.000Z"}`},
 		{"coop.build-42.evt.vps-2.bob", `{"kind":"forgotten","at":"2026-09-30T12:00:45.000Z"}`},
-		{"coop.build-42.evt.vps-2.bob", `{"kind":"refused","reason":"removed","at":"2026-09-30T12:00:45.000Z"}`},
+		{"coop.build-42.evt.vps-2.bob", `{"kind":"refused","reason":"taken","at":"2026-09-30T12:00:45.000Z"}`},
 		{"coop.build-42.msg.mac-1.alice", `{"to":"all","text":"x","sent_at":"2026-09-30T12:00:20.000Z","role":"orchestrator"}`},
 	} {
 		if got, ok := wire.DecodeEvent(old.subject, []byte(old.payload), 6); ok {

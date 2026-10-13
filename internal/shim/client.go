@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -49,7 +50,7 @@ type streamHandlers struct {
 
 // joinInfo is the query of a join.
 type joinInfo struct {
-	agent         string
+	agent         string // the name that the client tries now: as given, or numbered
 	instance      string // random per shim process; a join with the same instance resumes
 	host          string
 	cwd           string
@@ -58,8 +59,11 @@ type joinInfo struct {
 }
 
 const (
-	// retryTaken is the wait before the next join when another session holds the name. The
-	// hub drops a dead holder within about 25 s, so a restarted session gets its name soon.
+	// maxNumbered is the last numbered name that the client tries when sessions on this
+	// machine hold the name: <name>, <name>-2 ... <name>-maxNumbered.
+	maxNumbered = 9
+	// retryTaken is the wait before the next join when every numbered name is in use. The
+	// hub drops a dead holder within about 25 s, so a restarted session gets a name soon.
 	retryTaken = 10 * time.Second
 	// maxBackoff limits the wait before the next join after a failure.
 	maxBackoff = 30 * time.Second
@@ -71,6 +75,10 @@ const (
 type hubClient struct {
 	base, token, session string
 	join                 joinInfo
+	// name is the agent name as given. numbered is the number of the name that the client
+	// tries: 1 for name, 2 for <name>-2, and so on.
+	name     string
+	numbered int
 	// httpc nil means http.DefaultClient.
 	httpc *http.Client
 	// idle is how long the stream may be silent before the client opens it again.
@@ -80,7 +88,7 @@ type hubClient struct {
 }
 
 func newHubClient(base, token, session string, join joinInfo) *hubClient {
-	return &hubClient{base: base, token: token, session: session, join: join, idle: defaultIdle, sleep: sleep}
+	return &hubClient{base: base, token: token, session: session, join: join, name: join.agent, numbered: 1, idle: defaultIdle, sleep: sleep}
 }
 
 func sleep(ctx context.Context, d time.Duration) bool {
@@ -136,10 +144,16 @@ func (c *hubClient) run(ctx context.Context, h streamHandlers) {
 			watchdog.Stop()
 			cancel()
 			switch {
-			case res.StatusCode == 409:
+			case res.StatusCode == 409 && lastID == "" && c.numbered < maxNumbered:
 				// Another session on this machine holds the name. It keeps its place; this
-				// one says why it is out and joins when the name is free.
-				h.state(link{kind: linkTaken, me: c.join.agent})
+				// one takes the next numbered name at once. After a resume (lastID set) a
+				// 409 is not a taken name, and the name stays.
+				c.numbered++
+				c.join.agent = fmt.Sprintf("%s-%d", c.name, c.numbered)
+			case res.StatusCode == 409:
+				// Every numbered name is in use. This one says why it is out and joins when
+				// a name is free.
+				h.state(link{kind: linkTaken, me: c.name})
 				if !c.sleep(ctx, retryTaken) {
 					return
 				}

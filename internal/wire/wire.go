@@ -159,14 +159,13 @@ type Event struct {
 
 // Activity is what an agent did, on `coop.<sid>.evt.<machine>.<agent>`.
 type Activity struct {
-	Kind string `json:"kind"` // joined left state wait_start wait_end refused
+	Kind string `json:"kind"` // joined left state wait_start wait_end
 	At   string `json:"at"`
 	// joined
 	Host   string `json:"host,omitempty"`
 	Cwd    string `json:"cwd,omitempty"`
 	Client Client `json:"client,omitzero"`
-	// left: disconnected, revoked or closed. refused (a join that the hub did not let in):
-	// taken (another session holds the name).
+	// left: disconnected, revoked or closed.
 	Reason string `json:"reason,omitempty"`
 	// state: working blocked done idle
 	State string `json:"state,omitempty"`
@@ -271,8 +270,6 @@ func validActivity(a Activity) bool {
 		return (a.From == "" || isAddress(a.From)) && optionalID(a.ReplyTo) && a.TimeoutS >= 1 && a.TimeoutS <= 600
 	case "wait_end":
 		return slices.Contains([]string{"message", "timeout", "cancelled"}, a.Result)
-	case "refused":
-		return a.Reason == "taken"
 	}
 	return false
 }

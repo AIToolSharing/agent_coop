@@ -249,9 +249,9 @@ func TestJoinSendsTheQueryAndTheCredential(t *testing.T) {
 	}
 }
 
-// A name that another session on the machine holds is not taken over, and the client takes no
-// numbered name. It says why it is blocked and tries again until the name is free.
-func TestATakenNameBlocksTheClientUntilTheNameIsFree(t *testing.T) {
+// A name that another session on the machine holds is not taken over: the client takes the
+// next numbered name at once, with no wait. The holder keeps its place.
+func TestATakenNameGetsTheNextNumber(t *testing.T) {
 	var mu sync.Mutex
 	var names []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -264,7 +264,7 @@ func TestATakenNameBlocksTheClientUntilTheNameIsFree(t *testing.T) {
 			return
 		}
 		openStream(w)
-		writeEvent(w, "joined", "", map[string]string{"me": "dev@m", "session": "s"})
+		writeEvent(w, "joined", "", map[string]string{"me": "dev-3@m", "session": "s"})
 		<-r.Context().Done()
 	}))
 	defer srv.Close()
@@ -274,7 +274,45 @@ func TestATakenNameBlocksTheClientUntilTheNameIsFree(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	states, _, _, sleeps := rec.snapshot()
-	if !slices.Equal(names, []string{"dev", "dev", "dev"}) || !slices.Equal(states, []string{linkTaken, linkTaken, linkJoined}) {
+	if !slices.Equal(names, []string{"dev", "dev-2", "dev-3"}) || !slices.Equal(states, []string{linkJoined}) {
+		t.Fatalf("names %v, states %v", names, states)
+	}
+	if len(sleeps) != 0 || c.agent() != "dev-3" {
+		t.Fatalf("waits %v, agent %q", sleeps, c.agent())
+	}
+}
+
+// When the name and its numbers up to maxNumbered are all in use, the client waits as before:
+// it says why it is out and tries the name again until one is free.
+func TestEveryNumberedNameInUseBlocksTheClient(t *testing.T) {
+	var mu sync.Mutex
+	var names []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		names = append(names, r.URL.Query().Get("agent"))
+		n := len(names)
+		mu.Unlock()
+		if n <= maxNumbered+1 {
+			writeError(w, 409, "conflict", "taken")
+			return
+		}
+		openStream(w)
+		writeEvent(w, "joined", "", map[string]string{"me": "dev-9@m", "session": "s"})
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	rec := &recorder{}
+	c := testClientAs(t, srv.URL, rec, "dev")
+	runUntil(t, c, rec, func() bool { s, _, _, _ := rec.snapshot(); return slices.Contains(s, linkJoined) })
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"dev"}
+	for n := 2; n <= maxNumbered; n++ {
+		want = append(want, fmt.Sprintf("dev-%d", n))
+	}
+	want = append(want, "dev-9", "dev-9")
+	states, _, _, sleeps := rec.snapshot()
+	if !slices.Equal(names, want) || !slices.Equal(states, []string{linkTaken, linkTaken, linkJoined}) {
 		t.Fatalf("names %v, states %v", names, states)
 	}
 	if !slices.Equal(sleeps, []time.Duration{retryTaken, retryTaken}) {

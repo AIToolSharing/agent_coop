@@ -75,10 +75,7 @@ type Agent struct {
 	Waiting    *Waiting
 	Sent       int
 	JoinedAt   string
-	// DuplicateAt is the time of the last join that the hub refused because this agent holds
-	// the name: a second session asked for it. "" for none, and after a later join.
-	DuplicateAt string
-	Left        *Left
+	Left       *Left
 	// FirstSeq is the sequence of the agent's first event: the order agents are listed in.
 	FirstSeq int64
 
@@ -422,8 +419,6 @@ func (v *Session) applyEvent(e *wire.Event) {
 			}
 		case "wait_end":
 			sys("wait ended: " + x.Result)
-		case "refused":
-			sys("is in use: a second session tried to join with this name and waits (coop --agent <name> claude gives it its own)")
 		}
 	}
 }
@@ -506,7 +501,7 @@ func (a *Agent) addEvent(seq int64, x *wire.Activity) {
 
 // derive replays the agent's events in sequence order, as the TS model did for all events.
 func (a *Agent) derive() {
-	a.Host, a.Cwd, a.Client, a.JoinedAt, a.DuplicateAt = "", "", "", "", ""
+	a.Host, a.Cwd, a.Client, a.JoinedAt = "", "", "", ""
 	a.Left = nil
 	a.dState, a.dSince, a.dNote, a.dWaiting = "unknown", "", "", nil
 	for _, ev := range a.evts {
@@ -516,7 +511,6 @@ func (a *Agent) derive() {
 			a.Host, a.Cwd, a.JoinedAt = x.Host, x.Cwd, x.At
 			a.Client = x.Client.Name + " " + x.Client.Version
 			a.Left = nil
-			a.DuplicateAt = ""
 			if a.dState == "left" || a.dState == "unknown" {
 				a.dState, a.dSince = "idle", x.At
 			}
@@ -529,8 +523,6 @@ func (a *Agent) derive() {
 			a.dWaiting = &Waiting{On: x.From, ReplyTo: x.ReplyTo, Since: x.At}
 		case "wait_end":
 			a.dWaiting = nil
-		case "refused":
-			a.DuplicateAt = x.At
 		}
 	}
 	a.refresh()
