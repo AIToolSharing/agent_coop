@@ -10,7 +10,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -376,7 +380,7 @@ func TestToolListInstructionsAndChannelCapability(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	if !slices.Equal(names, []string{"ask", "history", "inbox", "send", "set_state", "status", "wait"}) {
+	if !slices.Equal(names, []string{"ask", "history", "inbox", "send", "set_state", "spawn", "status", "wait"}) {
 		t.Fatalf("tools %v", names)
 	}
 	ir := a.cs.InitializeResult()
@@ -798,5 +802,109 @@ func TestNothingAnAgentSeesNamesHowTheServiceWorks(t *testing.T) {
 	a.mu.Unlock()
 	if n < 6 {
 		t.Fatalf("alice saw only %d texts", n)
+	}
+}
+
+// spawn starts a worker: a headless Claude Code on this machine, in this session, with its
+// own task. The worker gets the next free numbered name of the spawner, the prompt on stdin
+// with a head that says who started it, and a log file. Nothing is started while the agent
+// is not in a session.
+func TestSpawnStartsAWorkerInThisSession(t *testing.T) {
+	h := newFakeHub(t)
+	h.createSession("s")
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("COOP_PUSH", "1")
+	var mu sync.Mutex
+	var specs []spawnSpec
+	o := options(h, "mac-1", "s", "boss", false)
+	o.Cwd = t.TempDir()
+	o.Start = func(spec spawnSpec) (int, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		specs = append(specs, spec)
+		return 4000 + len(specs), nil
+	}
+	a := start(t, o)
+	joined(t, a)
+	got := a.json("spawn", map[string]any{"prompt": "write hello.txt with hi"})
+	log := filepath.Join(state, "coop", "s", "boss-1.log")
+	expect(t, got, map[string]any{"name": "boss-1", "pid": float64(4001), "log": log})
+	mu.Lock()
+	spec := specs[0]
+	mu.Unlock()
+	exe, _ := os.Executable()
+	if !slices.Equal(spec.Argv, []string{exe, "claude", "-p", "--allowedTools", allowedTools}) || spec.Dir != o.Cwd || spec.Log != log {
+		t.Fatalf("spec %+v", spec)
+	}
+	if !slices.Contains(spec.Env, "COOP_SESSION=s") || !slices.Contains(spec.Env, "COOP_AGENT=boss-1") || slices.ContainsFunc(spec.Env, func(kv string) bool { return strings.HasPrefix(kv, "COOP_PUSH=") }) {
+		t.Fatalf("env %v", spec.Env)
+	}
+	if want := promptHead("boss@mac-1", "s") + "write hello.txt with hi"; spec.Stdin != want {
+		t.Fatalf("stdin %q, want %q", spec.Stdin, want)
+	}
+	// The next worker gets the next number; a name that a peer on this machine uses is
+	// skipped; a given name and directory are taken as they are.
+	other := start(t, options(h, "mac-1", "s", "boss-2", false))
+	joined(t, other)
+	if got := a.json("spawn", map[string]any{"prompt": "x"}); got["name"] != "boss-3" {
+		t.Fatalf("second worker %v", got)
+	}
+	dir := t.TempDir()
+	if got := a.json("spawn", map[string]any{"prompt": "x", "name": "tester", "dir": dir}); got["name"] != "tester" || got["log"] != filepath.Join(state, "coop", "s", "tester.log") {
+		t.Fatalf("named worker %v", got)
+	}
+	mu.Lock()
+	if n := len(specs); n != 3 || specs[2].Dir != dir || !slices.Contains(specs[2].Env, "COOP_AGENT=tester") {
+		t.Fatalf("specs %+v", specs)
+	}
+	mu.Unlock()
+	for name, args := range map[string]map[string]any{
+		"a bad name":    {"prompt": "x", "name": "Not A Name"},
+		"no directory":  {"prompt": "x", "dir": filepath.Join(dir, "nope")},
+		"an empty task": {"prompt": ""},
+	} {
+		if r := a.tool("spawn", args); !r.isError {
+			t.Errorf("%s: %s", name, r.text)
+		}
+	}
+	mu.Lock()
+	if len(specs) != 3 {
+		t.Fatalf("a refused spawn started a worker: %+v", specs)
+	}
+	mu.Unlock()
+	// Not in a session: nothing starts.
+	alone := start(t, Options{Session: "s", Agent: "x", second: time.Millisecond})
+	if r := alone.tool("spawn", map[string]any{"prompt": "x"}); !r.isError || !strings.Contains(r.text, "not in a session") {
+		t.Fatalf("not set up: %+v", r)
+	}
+}
+
+// startWorker runs the process detached, with the prompt on stdin and its output in the log.
+func TestStartWorkerRunsTheProcessWithTheLog(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the check uses sh")
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh")
+	}
+	log := filepath.Join(t.TempDir(), "s", "w.log")
+	pid, err := startWorker(spawnSpec{
+		Argv: []string{sh, "-c", "echo \"dir=$(pwd) agent=$COOP_AGENT\"; cat"}, Dir: t.TempDir(), Env: []string{"COOP_AGENT=w", "PATH=" + os.Getenv("PATH")}, Stdin: "the prompt", Log: log,
+	})
+	if err != nil || pid <= 0 {
+		t.Fatalf("start: %d %v", pid, err)
+	}
+	eventually(t, "the worker wrote its log", func() bool {
+		b, _ := os.ReadFile(log)
+		return strings.Contains(string(b), "agent=w") && strings.Contains(string(b), "the prompt")
+	})
+	b, _ := os.ReadFile(log)
+	if !strings.Contains(string(b), "dir=") {
+		t.Fatalf("log %q", b)
+	}
+	if info, err := os.Stat(log); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("log mode: %v %v", info, err)
 	}
 }
