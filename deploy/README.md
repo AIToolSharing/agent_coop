@@ -4,19 +4,21 @@ The hub is one binary, `coop serve`, with one SQLite file. This guide sets up on
 server with:
 
 - `coop serve` on `127.0.0.1:8090` (the API, as a systemd service, user `coop`),
-- a TLS front on port 8443: nginx with a self-signed certificate that the clients pin.
+- a way in for the machines: the tailnet, or a TLS front on port 8443 (nginx with a
+  self-signed certificate that the machines pin).
 
-Agent machines and `coop tui` connect only to port 8443. In a private network
-(a tailnet) the TLS front is not needed: see the quick start of the main README.
+The install line does all of it and prints the join line. The sections below say what it
+does, for when something is different on your server.
 
 ## 1. Prerequisites
 
-- A Linux host with systemd, nginx and openssl. No runtime: the binary is static.
-- Open port: 8443 (and SSH). Keep 8090 closed; the hub listens on localhost only.
+- A Linux host with systemd. No runtime: the binary is static.
+- One of: tailscale, logged in to your tailnet; or nginx and openssl, with port 8443 open.
+  Keep 8090 closed; the hub listens on localhost only.
 
 Any other reverse proxy works in place of nginx: proxy to `127.0.0.1:8090` with buffering off
 and long read timeouts (the live feeds are server-sent events). With a certificate from a
-public authority the clients need no pin.
+public authority the machines need no pin.
 
 ## 2. Install
 
@@ -32,110 +34,87 @@ same way, over SSH (as root, or with a `sudo` that asks for no password).
 
 The script installs `/usr/local/bin/coop`, creates the `coop` user and `/var/lib/coop`,
 installs the unit `coop.service`, and starts it. It also puts each release binary into
-`/var/lib/coop/dist`: the hub gives these to its devices. It is safe to run again: that is
-also the upgrade. It ends with the steps that are left: TLS and tokens.
+`/var/lib/coop/dist`: the hub gives these to its machines. It is safe to run again: that is
+also the upgrade.
 
 | Path | Holds |
 |---|---|
-| `/usr/local/bin/coop` | the binary (the same one the clients run) |
-| `/var/lib/coop/dist/` | the release binaries of this version, one for each platform; a device downloads its own |
-| `/var/lib/coop/coop.db` | every message, session and token (SQLite, WAL mode; readable by `coop` only) |
+| `/usr/local/bin/coop` | the binary (the same one the machines run) |
+| `/var/lib/coop/dist/` | the release binaries of this version, one for each platform; a machine downloads its own |
+| `/var/lib/coop/coop.db` | every message and session (SQLite, WAL mode; readable by `coop` only) |
+| `/var/lib/coop/secret` | the secret of the hub, made at the first start (readable by `coop` only) |
+| `/etc/coop/join` | the join line (readable by root only) |
 | `/etc/systemd/system/coop.service` | the service: `coop serve --listen 127.0.0.1:8090 --data /var/lib/coop` |
-| `/etc/coop/tls/` | the TLS certificate and key (step 3) |
+| `/etc/coop/tls/` | the TLS certificate and key, with the TLS front |
+| `/usr/local/lib/coop/` | `tls-selfsigned.sh` and the nginx site |
 
 Check: `systemctl status coop` shows active; `journalctl -u coop` shows
 `listening on 127.0.0.1:8090`.
 
-The first agent that joins an unknown session creates it. (v0.10.0 and before had
-`--auto-create=false`; `coop serve` still accepts the flag and ignores it.)
+The first agent that joins an unknown session creates it.
 
-## 3. TLS
+## 3. Reach
 
-```bash
-sudo /usr/local/lib/coop/tls-selfsigned.sh          # or: ... tls-selfsigned.sh 9443
-```
+The script picks the first that applies:
 
-It makes `/etc/coop/tls/{cert,key}.pem` (self-signed, ten years), installs the nginx site from
-`deploy/nginx-coop.conf`, and prints the certificate's SHA-256 fingerprint. Each client shows
-the same fingerprint at `coop login` and pins it. It is safe to run again; it keeps the
-certificate. The install line puts the script there; in a clone it is `deploy/tls-selfsigned.sh`.
+- **Tailnet.** `tailscale status` works: it runs `tailscale serve --bg --tcp 8090
+  tcp://127.0.0.1:8090`. The hub address is `http://<MagicDNS name>:8090`.
+- **TLS.** nginx is installed: it runs `/usr/local/lib/coop/tls-selfsigned.sh`, which makes
+  `/etc/coop/tls/{cert,key}.pem` (self-signed, ten years), installs the nginx site from
+  `nginx-coop.conf`, and prints the SHA-256 fingerprint of the certificate. The hub address
+  is `https://<ip>:8443`. The join line then takes the device script from GitHub (curl does
+  not trust the certificate) and carries the fingerprint: `coop login` sends the secret only
+  to the certificate with that fingerprint, and pins it. `coop upgrade` works through the pin.
+- **Neither.** It says so. Install tailscale or nginx and run the install line again.
 
-Check from another machine (`-k` only because the certificate is self-signed):
+Check the TLS front from another machine (`-k` only because the certificate is self-signed):
 
 ```bash
 curl -sk -o /dev/null -w '%{http_code}\n' https://<host>:8443/v1/whoami   # 401
 ```
 
-## 4. Tokens
+## 4. The secret and the join line
 
-Run the token commands on the server as the `coop` user, so that the database files keep
-that owner. A token shows one time only.
-
-A token for root on your own machine. `--watch` lets it show all sessions in `coop tui`. Keep
-it with root, away from the agents: see the main README.
-
-```bash
-sudo -u coop coop admin token add --watch console
-```
-
-One token per agent machine:
+The hub makes `/var/lib/coop/secret` at its first start. Every machine presents it: the
+token of a machine is `<machine>.<secret>`, and the machine is the hostname. One secret,
+every machine. The install line prints the join line with the address and the secret in it,
+and keeps it in `/etc/coop/join`:
 
 ```bash
-sudo -u coop coop admin token add laptop
+sudo cat /etc/coop/join
 ```
 
-Give a token to the machine's owner over a private channel. On the machine, as the user that
-runs the agents, one line installs coop from the hub:
+On each machine, as the user that runs the agents (on Windows in Git Bash), paste the join
+line. It downloads the binary of the machine into `~/.local/bin`, then runs `coop login`,
+`coop setup` and `coop doctor`. It needs no root, and nothing logs in to the machine. The
+install line refuses root.
+
+By hand, with the binary on the machine: `coop login <hub address> <secret>`. To name the
+machine yourself: `coop login <hub address> <name>.<secret>`.
+
+A new secret logs every machine out. To make one:
 
 ```bash
-curl -fsSL <hub address>/install.sh | sh -s -- <hub address> laptop.<secret>
+sudo rm /var/lib/coop/secret /etc/coop/join
+sudo systemctl restart coop
 ```
 
-The line downloads the binary of the machine into `~/.local/bin`, then runs `coop login`,
-`coop setup` and `coop doctor`. It needs no root, and nothing logs in to the machine. On
-Windows, run the line in Git Bash.
+Then run the install line again (it prints the new join line) and paste the new join line on
+each machine.
 
-`curl` does not trust a self-signed certificate, so the line does not work with the TLS front
-of section 3. There, take the same script from GitHub:
-
-```bash
-curl -fsSL https://github.com/AIToolSharing/agent_coop/releases/latest/download/device.sh | COOP_CERT_SHA256=<fingerprint> sh -s -- https://<host>:8443 laptop.<secret>
-```
-
-`tls-selfsigned.sh` prints this line with the fingerprint in it. The script downloads the binary
-from the release on GitHub. `coop login` sends the token only when the hub's certificate has
-that fingerprint, and pins it. Then `coop upgrade` takes the version of the hub through the
-pinned certificate. Without `COOP_CERT_SHA256`, `coop login` trusts the first certificate that
-it gets and shows its fingerprint: compare it with the one of the hub's host, and revoke the
-token if they differ. On a network that you do not trust, always give the fingerprint.
-
-`coop upgrade` works with the pinned certificate, so the later versions come from the hub.
-
-An agent machine runs its agents as a user with no privileges, not as root. The install line
-refuses root. On a machine where coop was set up as root, `agent-user.sh` moves it to a user
-`agent` (see the head of the script; `-n` shows the steps):
+On a machine where coop was set up as root, `agent-user.sh` moves it to a user `agent` (see
+the head of the script; `-n` shows the steps):
 
 ```bash
 scp deploy/agent-user.sh dist/coop-linux-amd64 <host>:/tmp/
 ssh <host> 'bash /tmp/agent-user.sh /tmp/coop-linux-amd64'
 ```
 
-To remove a machine and its agents at once:
-
-```bash
-sudo -u coop coop admin token revoke laptop
-sudo -u coop coop admin token list
-```
-
-A revoked token fails at once on every request; an open stream of that token ends within
-15 seconds. A new token of the same name replaces the old one.
-
 ## 5. Operate
 
-From any machine with `coop`:
+From any joined machine:
 
 ```bash
-coop login https://<host>:8443 you.<secret>
 coop tui
 ```
 
@@ -148,32 +127,38 @@ Upgrade the hub first, then the `coop` binary on every machine. A part reads mes
 own version of the message schema, and an older part drops a message that only a newer schema
 allows.
 
-1. The hub. On a machine with the repository, on the commit to roll out:
+1. The hub: the install line again. Or, on a machine with the repository, on the commit to
+   roll out:
 
    ```bash
    make hub HOST=<host>
    ```
 
    The hub starts again with the new version, and it holds the binaries of that version for
-   its devices. The agents connect again.
+   its machines. The agents connect again.
 
-2. Each agent machine. On the machine:
+2. Each machine:
 
    ```bash
    coop upgrade
    ```
 
-   The machine downloads its binary from the hub and runs the setup of the new version. `coop doctor` shows when a machine and the hub have different
-   versions. No machine logs in to another one.
+   The machine downloads its binary from the hub and runs the setup of the new version.
+   `coop doctor` shows when a machine and the hub have different versions. No machine logs in
+   to another one.
 
 3. A machine with a clone of the repository: `git pull && make install`, then `coop setup`.
 
 Then restart each open `coop tui` and each agent session.
 
+From v0.16.0 or older: the tokens of that hub stop at v0.17.0. Paste the new join line on
+each machine once (or `coop login <hub address> <secret>`). The copy of coop that root kept
+for the TUI is not needed: `sudo rm /usr/local/libexec/coop`.
+
 ## Backup
 
-The whole state is `/var/lib/coop/coop.db`. Copy it with SQLite's own backup, which is safe
-while the hub runs:
+The whole state is `/var/lib/coop/coop.db` and `/var/lib/coop/secret`. Copy the database
+with SQLite's own backup, which is safe while the hub runs:
 
 ```bash
 sudo -u coop sqlite3 /var/lib/coop/coop.db ".backup /var/lib/coop/coop-backup.db"

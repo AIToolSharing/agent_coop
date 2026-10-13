@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Install the coop hub on one Linux host with systemd: the binary, the `coop` user, the data
-# directory, one unit, and the release binaries that the hub gives to its devices. Run it
-# again for an upgrade. TLS and tokens stay manual steps; it prints them.
+# directory, one unit, and the release binaries that the hub gives to its devices. Then it
+# makes the hub reachable (tailscale serve on a tailnet, else TLS on nginx) and prints the
+# join line: the one line that each machine runs. Run it again for an upgrade.
 #
 #   curl -fsSL https://github.com/AIToolSharing/agent_coop/releases/latest/download/install.sh | sudo bash
 #   deploy/install.sh [<coop binary>]
@@ -19,7 +20,10 @@
 set -euo pipefail
 
 unit_dir=/etc/systemd/system
-dist=/var/lib/coop/dist
+data=/var/lib/coop
+dist=$data/dist
+tlsdir=/usr/local/lib/coop
+release_dl=https://github.com/AIToolSharing/agent_coop/releases/latest/download
 here=$(cd "$(dirname "$0")" && pwd)
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -74,19 +78,15 @@ id coop >/dev/null 2>&1 || useradd --system --gid coop --home /var/lib/coop --sh
 step "binary"
 install -m 755 "$bin" /usr/local/bin/coop
 /usr/local/bin/coop version
-# The TLS script stays: the downloaded files go when this script ends.
-tlsdir=$here
-if [ -n "$release" ]; then
-  tlsdir=/usr/local/lib/coop
-  install -d -m 755 "$tlsdir"
-  install -m 755 "$here/tls-selfsigned.sh" "$tlsdir/"
-  install -m 644 "$here/nginx-coop.conf" "$tlsdir/"
-fi
+# The TLS files stay in $tlsdir: the files next to this script can go when it ends.
+install -d -m 755 "$tlsdir"
+install -m 755 "$here/tls-selfsigned.sh" "$tlsdir/"
+install -m 644 "$here/nginx-coop.conf" "$tlsdir/"
 
-step "data in /var/lib/coop"
-install -d -o coop -g coop -m 750 /var/lib/coop
+step "data in $data"
+install -d -o coop -g coop -m 750 "$data"
 # A hub from before the unit set UMask=0077 left the database files readable by every user.
-find /var/lib/coop -maxdepth 1 -type f -name 'coop.db*' -exec chmod 600 {} +
+find "$data" -maxdepth 1 -type f -name 'coop.db*' -exec chmod 600 {} +
 
 step "binaries for the devices in $dist"
 # Only the binaries of this version stay: a device must not get an older one.
@@ -112,22 +112,63 @@ if systemctl --quiet is-enabled coop-hub 2>/dev/null || systemctl --quiet is-ena
   echo "coop-hub and nats are the old server. See deploy/README.md, Migrate, to stop them."
 fi
 
-step "left to do"
+step "the secret"
+# The hub makes $data/secret at its first start. Every machine presents it.
+secret=
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if [ -s "$data/secret" ]; then
+    secret=$(tr -d '\n' < "$data/secret")
+    break
+  fi
+  sleep 0.5
+done
+if [ -z "$secret" ]; then
+  echo "the hub made no secret in $data/secret: see journalctl -u coop" >&2
+  exit 1
+fi
+echo "the secret is in $data/secret"
+
+step "reach"
+# A tailnet needs no TLS: tailscale serve puts the hub on it. Else nginx with a self-signed
+# certificate, which the clients pin by its fingerprint. Any other reverse proxy works too:
+# proxy to 127.0.0.1:8090 with buffering off.
+if command -v tailscale >/dev/null && tailscale status >/dev/null 2>&1; then
+  tailscale serve --bg --tcp 8090 tcp://127.0.0.1:8090 >/dev/null
+  host=$(tailscale status --json | sed -n 's/^ *"DNSName": *"\([^"]*\)\.",*$/\1/p' | head -1)
+  [ -n "$host" ] || host=$(tailscale ip -4 | head -1)
+  url=http://$host:8090
+  join="curl -fsSL $url/install.sh | sh -s -- $url $secret"
+  echo "the hub is on the tailnet: $url"
+elif command -v nginx >/dev/null; then
+  fp=$("$tlsdir/tls-selfsigned.sh")
+  ip=$(hostname -I | awk '{print $1}')
+  url=https://$ip:8443
+  # curl does not trust the certificate: the script and the binary come from GitHub, and coop
+  # login sends the secret only to the certificate with this fingerprint.
+  join="curl -fsSL $release_dl/device.sh | COOP_CERT_SHA256=$fp sh -s -- $url $secret"
+  echo "the hub is behind TLS: $url, certificate fingerprint $fp"
+else
+  join="curl -fsSL <hub>/install.sh | sh -s -- <hub> $secret"
+  cat <<TEXT
+Neither tailscale nor nginx is on this host, so the hub is on 127.0.0.1:8090 only. Do one:
+  a tailnet: install tailscale, log in, and run this install line again
+  TLS:       install nginx, and run this install line again
+Then put the hub address into the join line in place of <hub>.
+TEXT
+fi
+install -d -m 755 /etc/coop
+printf '%s\n' "$join" > /etc/coop/join
+chmod 600 /etc/coop/join
+
+step "the join line"
 cat <<TEXT
-1. Make the hub reachable. On a tailnet, one line, and the hub address is http://<this host>:8090:
-     tailscale serve --bg --tcp 8090 tcp://127.0.0.1:8090
-   Else TLS in front of the hub, with a self-signed certificate on this host's nginx:
-     sudo $tlsdir/tls-selfsigned.sh          # port 8443; prints the certificate fingerprint
-   (Any other reverse proxy works too: proxy to 127.0.0.1:8090 with buffering off.)
-2. A token for root on your own machine; --watch lets it show all sessions (it shows one time):
-     sudo -u coop coop admin token add --watch console
-     on your machine: sudo -H /usr/local/libexec/coop login https://<this host>:8443 console.<secret>
-     on your machine: sudo -H /usr/local/libexec/coop tui
-3. One token per agent machine:
-     sudo -u coop coop admin token add laptop
-   On that machine, as the user that runs the agents, one time:
-     curl -fsSL <hub address>/install.sh | sh -s -- <hub address> laptop.<secret>
-   A later version of coop comes with: coop upgrade
-   (With a self-signed certificate, curl refuses the hub: see deploy/README.md, Tokens.)
-Run the admin commands as the coop user, so that the database files keep that owner.
+On each machine, as the user that runs the agents (on Windows in Git Bash), one time:
+
+  $join
+
+Then, on that machine:  cd <project> && coop claude     (the agent)
+                        coop tui                        (the sessions)
+                        coop upgrade                    (a later version)
+The line again:  sudo cat /etc/coop/join
+A new secret:    sudo rm $data/secret /etc/coop/join; sudo systemctl restart coop; run this install line again
 TEXT

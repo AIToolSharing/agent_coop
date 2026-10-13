@@ -57,13 +57,14 @@ endif
 	GOOS=linux  GOARCH=arm64 CGO_ENABLED=0 $(GOBUILD) -o dist/coop-linux-arm64  $(PKG)
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GOBUILD) -o dist/coop-windows-amd64.exe $(PKG)
 
-# hub puts this version on the host of the hub: the binary of the hub, and the release binaries
-# that the hub gives to its devices. HOST is an SSH host or alias with a root login, or with a
-# sudo that asks for no password. After it, each device runs `coop upgrade`.
+# hub puts this version on the host of the hub: the binary of the hub, the release binaries
+# that the hub gives to its devices, and the TLS files. HOST is an SSH host or alias with a
+# root login, or with a sudo that asks for no password. After it, each device runs `coop
+# upgrade`.
 hub: release
 	@test -n "$(HOST)" || { echo "usage: make hub HOST=<ssh host>"; exit 2; }
 	ssh $(HOST) 'install -d -m 700 .cache/coop-hub && rm -f .cache/coop-hub/*'
-	scp -C dist/coop-*-* deploy/install.sh deploy/coop.service $(HOST):.cache/coop-hub/
+	scp -C dist/coop-*-* deploy/install.sh deploy/coop.service deploy/tls-selfsigned.sh deploy/nginx-coop.conf $(HOST):.cache/coop-hub/
 	ssh $(HOST) .cache/coop-hub/install.sh
 
 # publish puts the release of the tag at HEAD on GitHub: the release binaries, the unit, the

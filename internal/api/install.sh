@@ -1,21 +1,22 @@
 #!/bin/sh
-# Install coop on this device, from its hub. Run it one time, as the user that runs the agents:
+# Install coop on this device, from its hub: the join line. Run it one time, as the user that
+# runs the agents. The hub's install prints it with the address and the secret filled in:
 #
-#   curl -fsSL <hub>/install.sh | sh -s -- <hub> <machine token>
-#   curl -fsSL https://github.com/AIToolSharing/agent_coop/releases/latest/download/device.sh | sh -s -- <hub> <machine token>
+#   curl -fsSL <hub>/install.sh | sh -s -- <hub> <secret>
+#   curl -fsSL https://github.com/AIToolSharing/agent_coop/releases/latest/download/device.sh | sh -s -- <hub> <secret>
 #
 # The second line also works for a hub with a self-signed certificate, which curl does not
 # trust: the script then takes the binary from the release on GitHub (COOP_RELEASE_URL names
 # another place), coop login pins the certificate of the hub, and coop upgrade takes the version
 # of the hub through it. With COOP_CERT_SHA256=<fingerprint> in front of sh (tls-selfsigned.sh
-# prints the line), coop login sends the token only to the certificate with that fingerprint.
+# prints the line), coop login sends the secret only to the certificate with that fingerprint.
 #
-#   <hub>            the address of the hub, for example http://hub.example:8090
-#   <machine token>  from the host of the hub: coop admin token add <machine>
+#   <hub>     the address of the hub, for example http://hub.example:8090
+#   <secret>  the secret of the hub: /var/lib/coop/secret on its host
 #
 # The script puts coop into ~/.local/bin (COOP_BIN_DIR names another directory), stores the
-# address and the token (coop login), removes what an older coop put into Claude Code (coop
-# setup) and checks the result (coop doctor). It needs no root and it is safe to run again. A
+# address and the secret behind the hostname of this device (coop login), removes what an
+# older coop put into Claude Code (coop setup) and checks the result (coop doctor). It needs no root and it is safe to run again. A
 # later version comes with `coop upgrade`. It runs on Linux, on macOS, and on Windows in Git
 # Bash.
 #
@@ -24,9 +25,9 @@
 set -eu
 
 main() {
-  usage='usage: curl -fsSL <hub>/install.sh | sh -s -- <hub> <machine token>'
+  usage='usage: curl -fsSL <hub>/install.sh | sh -s -- <hub> <secret>'
   hub=${1:?$usage}
-  token=${2:?$usage}
+  secret=${2:?$usage}
   hub=${hub%/}
 
   if [ "$(id -u)" = 0 ]; then
@@ -66,7 +67,8 @@ main() {
   trap 'rm -f "$new"' EXIT
   echo "download $hub/dl/$file"
   rc=0
-  curl -fsSL -H "Authorization: Bearer $token" -o "$new" "$hub/dl/$file" || rc=$?
+  # The binary needs the secret; the name in front of it does not matter here.
+  curl -fsSL -H "Authorization: Bearer install.$secret" -o "$new" "$hub/dl/$file" || rc=$?
   pin=
   if [ "$rc" = 60 ]; then
     # 60: curl cannot check the certificate of the hub. coop can: coop login pins it below.
@@ -79,7 +81,7 @@ main() {
     pin=1
   elif [ "$rc" != 0 ]; then
     echo "No download of $file from $hub. The line of curl above gives the cause:" >&2
-    echo "401 is a wrong token, 404 is a hub that has no binary for this device." >&2
+    echo "401 is a wrong secret, 404 is a hub that has no binary for this device." >&2
     exit 1
   fi
   chmod 755 "$new"
@@ -95,7 +97,7 @@ main() {
   echo "installed $version as $coop"
 
   # The commands read nothing from the terminal: stdin is this script.
-  "$coop" login "$hub" "$token" </dev/null
+  "$coop" login "$hub" "$secret" </dev/null
   if [ -n "$pin" ]; then
     # The release on GitHub can be newer or older than the hub: take the version of the hub.
     "$coop" upgrade </dev/null

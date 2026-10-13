@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Put TLS in front of the hub with a self-signed certificate, on the nginx of this host
-# (Debian layout: sites-available, sites-enabled). Run as root on the hub host:
-#   sudo deploy/tls-selfsigned.sh [port]      (default port 8443)
+# (Debian layout: sites-available, sites-enabled). install.sh runs it; by hand, as root:
+#   sudo /usr/local/lib/coop/tls-selfsigned.sh [port]      (default port 8443)
 # The hub listens on 127.0.0.1:8090 (deploy/coop.service); every client comes through TLS.
-# Clients trust the certificate by its fingerprint: `coop login https://<host>:<port> <token>`
-# shows the fingerprint and pins it. Compare it with the one this script prints.
-# Safe to run again: it keeps an existing certificate.
+# Clients trust the certificate by its fingerprint: `coop login https://<host>:<port> <secret>`
+# shows the fingerprint and pins it. Safe to run again: it keeps an existing certificate.
+# Stdout is the fingerprint, and nothing else: install.sh puts it into the join line.
 set -euo pipefail
 port=${1:-8443}
 tls=/etc/coop/tls
@@ -19,14 +19,11 @@ if [ ! -f "$tls/cert.pem" ]; then
     -subj "/CN=coop hub" -addext "subjectAltName=IP:$ip,DNS:$(hostname)" \
     -keyout "$tls/key.pem" -out "$tls/cert.pem" 2>/dev/null
   chmod 600 "$tls/key.pem"
-  echo "made $tls/cert.pem (valid 10 years)"
+  echo "made $tls/cert.pem (valid 10 years)" >&2
 fi
 sed "s/__PORT__/$port/g" "$here/nginx-coop.conf" > /etc/nginx/sites-available/coop
 ln -sf /etc/nginx/sites-available/coop /etc/nginx/sites-enabled/coop
-nginx -t
+nginx -t >&2
 systemctl reload nginx
-fp=$(openssl x509 -in "$tls/cert.pem" -noout -fingerprint -sha256 | cut -d= -f2)
-echo "hub: https://$ip:$port"
-echo "certificate fingerprint (coop login shows the same one on each client): $fp"
-echo "on each machine, as the user that runs the agents, with the token of the machine:"
-echo "  curl -fsSL https://github.com/AIToolSharing/agent_coop/releases/latest/download/device.sh | COOP_CERT_SHA256=$fp sh -s -- https://$ip:$port <token>"
+echo "TLS in front of the hub: https://$ip:$port" >&2
+openssl x509 -in "$tls/cert.pem" -noout -fingerprint -sha256 | cut -d= -f2

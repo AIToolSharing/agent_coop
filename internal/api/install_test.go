@@ -34,7 +34,7 @@ func get(t *testing.T, url, token string) (int, http.Header, []byte) {
 	return res.StatusCode, res.Header, body
 }
 
-// A device gets the install script before it has a token: the script holds no secret.
+// A device gets the install script before it has the secret: the script holds none.
 func TestTheHubServesTheInstallScriptWithoutAToken(t *testing.T) {
 	h := startHub(t, limits{}, options{})
 	status, header, body := get(t, h.base+"/install.sh", "")
@@ -44,8 +44,8 @@ func TestTheHubServesTheInstallScriptWithoutAToken(t *testing.T) {
 	if ct := header.Get("Content-Type"); !strings.HasPrefix(ct, "text/") {
 		t.Errorf("content type %q", ct)
 	}
-	// The script asks the hub for the binary of the device, with the token.
-	for _, want := range []string{"file=coop-$os-$arch", "$hub/dl/$file", "Authorization: Bearer $token", "login", "setup", "doctor"} {
+	// The script asks the hub for the binary of the device, with the secret.
+	for _, want := range []string{"file=coop-$os-$arch", "$hub/dl/$file", "Authorization: Bearer install.$secret", "login", "setup", "doctor"} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("the script has no %q", want)
 		}
