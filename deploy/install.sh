@@ -16,6 +16,9 @@
 # GitHub: the latest one, or the version in COOP_VERSION (for example v0.15.0).
 # COOP_RELEASE_URL names another place that has the same files.
 #
+# On a LAN with neither tailscale nor nginx, COOP_HOST=<LAN address of this host> makes the
+# hub listen on that address with plain http: `curl ... | sudo COOP_HOST=192.168.1.31 bash`.
+#
 # `make hub HOST=<ssh host>` copies the files of a build to a host and runs this script there.
 set -euo pipefail
 
@@ -25,6 +28,8 @@ dist=$data/dist
 tlsdir=/usr/local/lib/coop
 release_dl=https://github.com/AIToolSharing/agent_coop/releases/latest/download
 here=$(cd "$(dirname "$0")" && pwd)
+listen=${COOP_HOST:+$COOP_HOST:8090}
+listen=${listen:-127.0.0.1:8090}
 
 if [ "$(id -u)" -ne 0 ]; then
   # From a pipe there is no file to run again with sudo.
@@ -100,12 +105,13 @@ for f in "$(dirname "$bin")"/coop-*-*; do
 done
 
 step "service"
-install -m 644 "$here/coop.service" "$unit_dir/coop.service"
+sed "s|--listen 127.0.0.1:8090|--listen $listen|" "$here/coop.service" > "$unit_dir/coop.service"
+chmod 644 "$unit_dir/coop.service"
 systemctl daemon-reload
 systemctl enable --now coop
 systemctl restart coop
 sleep 1
-systemctl --no-pager --quiet is-active coop && echo "coop is active on 127.0.0.1:8090"
+systemctl --no-pager --quiet is-active coop && echo "coop is active on $listen"
 
 if systemctl --quiet is-enabled coop-hub 2>/dev/null || systemctl --quiet is-enabled nats 2>/dev/null; then
   step "the Node hub is still installed"
@@ -132,7 +138,11 @@ step "reach"
 # A tailnet needs no TLS: tailscale serve puts the hub on it. Else nginx with a self-signed
 # certificate, which the clients pin by its fingerprint. Any other reverse proxy works too:
 # proxy to 127.0.0.1:8090 with buffering off.
-if command -v tailscale >/dev/null && tailscale status >/dev/null 2>&1; then
+if [ -n "${COOP_HOST:-}" ]; then
+  url=http://$listen
+  join="curl -fsSL $url/install.sh | sh -s -- $url $secret"
+  echo "the hub is on the LAN: $url"
+elif command -v tailscale >/dev/null && tailscale status >/dev/null 2>&1; then
   tailscale serve --bg --tcp 8090 tcp://127.0.0.1:8090 >/dev/null
   host=$(tailscale status --json | sed -n 's/^ *"DNSName": *"\([^"]*\)\.",*$/\1/p' | head -1)
   [ -n "$host" ] || host=$(tailscale ip -4 | head -1)
@@ -153,6 +163,7 @@ else
 Neither tailscale nor nginx is on this host, so the hub is on 127.0.0.1:8090 only. Do one:
   a tailnet: install tailscale, log in, and run this install line again
   TLS:       install nginx, and run this install line again
+  a LAN:     run this install line again with COOP_HOST=<the LAN address of this host>
 Then put the hub address into the join line in place of <hub>.
 TEXT
 fi

@@ -11,7 +11,7 @@ agents on its machine.
 
 You need:
 
-- a Linux server with systemd, on your tailnet, or with nginx and port 8443 open,
+- a Linux server with systemd: on your tailnet, with nginx and port 8443 open, or on your LAN,
 - Claude Code on each machine,
 - a user that is not root on each machine, for the agents.
 
@@ -22,7 +22,9 @@ curl -fsSL https://github.com/AIToolSharing/agent_coop/releases/latest/download/
 ```
 
 The line installs the hub and makes it reachable. It ends with the join line. To see the
-join line again, run `sudo cat /etc/coop/join`.
+join line again, run `sudo cat /etc/coop/join`. A server with neither tailscale nor nginx
+serves the hub on its LAN address with plain http: `sudo COOP_HOST=<address> bash` in place
+of `sudo bash`.
 
 ### Each machine (one time)
 

@@ -13,8 +13,9 @@ does, for when something is different on your server.
 ## 1. Prerequisites
 
 - A Linux host with systemd. No runtime: the binary is static.
-- One of: tailscale, logged in to your tailnet; or nginx and openssl, with port 8443 open.
-  Keep 8090 closed; the hub listens on localhost only.
+- One of: tailscale, logged in to your tailnet; or nginx and openssl, with port 8443 open;
+  or a LAN that holds every machine. With tailscale or nginx, keep 8090 closed: the hub
+  listens on localhost only.
 
 Any other reverse proxy works in place of nginx: proxy to `127.0.0.1:8090` with buffering off
 and long read timeouts (the live feeds are server-sent events). With a certificate from a
@@ -57,6 +58,9 @@ The first agent that joins an unknown session creates it.
 
 The script picks the first that applies:
 
+- **LAN.** `COOP_HOST=<address>` is set (`sudo COOP_HOST=192.168.1.31 bash`): the hub
+  listens on `<address>:8090` with plain http. The hub address is `http://<address>:8090`.
+  Only the machines on that network reach it. Do not forward the port to the internet.
 - **Tailnet.** `tailscale status` works: it runs `tailscale serve --bg --tcp 8090
   tcp://127.0.0.1:8090`. The hub address is `http://<MagicDNS name>:8090`.
 - **TLS.** nginx is installed: it runs `/usr/local/lib/coop/tls-selfsigned.sh`, which makes
@@ -65,7 +69,8 @@ The script picks the first that applies:
   is `https://<ip>:8443`. The join line then takes the device script from GitHub (curl does
   not trust the certificate) and carries the fingerprint: `coop login` sends the secret only
   to the certificate with that fingerprint, and pins it. `coop upgrade` works through the pin.
-- **Neither.** It says so. Install tailscale or nginx and run the install line again.
+- **Neither.** It says so. Install tailscale or nginx, or set `COOP_HOST`, and run the
+  install line again.
 
 Check the TLS front from another machine (`-k` only because the certificate is self-signed):
 
