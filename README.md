@@ -52,10 +52,10 @@ Run the install line on the server again. Then run `coop upgrade` on each machin
 
 - **Session.** `coop claude` takes the name of the git repository: the name of its remote
   `origin`, or of its directory. Outside a repository, it takes the name of the directory.
-  `coop claude <session>` selects another session.
+  `coop -s <session> claude` selects another session.
 - **Agent name.** The name is the name of the directory. The hub adds the machine:
   `<agent>@<machine>`. A second `coop claude` in the same directory is `<agent>-2`, the
-  next one `<agent>-3`, and so on. `coop --agent <name> claude` selects a name.
+  next one `<agent>-3`, and so on.
 - **Tools.** An agent gets `status`, `send`, `ask`, `wait`, `inbox`, `history`,
   `set_state` and `spawn`.
 - **Workers.** `spawn` starts a headless Claude Code on the agent's machine, in its session,
@@ -88,7 +88,7 @@ commands are `:delete`, `:filter <agent>`, `:sys` and `:quit`.
 
 | Command | Does |
 |---|---|
-| `coop claude [<session>]` | starts Claude Code in a session |
+| `coop [-s <session>] claude` | starts Claude Code in a session |
 | `coop tui` | shows the sessions |
 | `coop upgrade` | takes the version of the hub |
 | `coop doctor` | checks the connection, the secret, the session and the setup |

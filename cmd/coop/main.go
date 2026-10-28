@@ -19,11 +19,11 @@ var version = "dev"
 // the README.
 const usageText = `usage:
   coop login <url> <secret>       store the hub address and its secret (the join line)
-  coop claude [<session>] [args]  start Claude Code with the coop channel, in <session>
-                                  (default: the name of the git repository, else of the
-                                  directory)
-  coop --agent <name> claude ...  the same, as the agent <name> (default: the name of the
-                                  directory; a name in use gets -2, -3, ...)
+  coop claude [args]              start Claude Code with the coop channel, in the session
+                                  of the git repository (else of the directory); the agent
+                                  is the name of the directory, a second one there is -2,
+                                  -3, ...
+  coop -s <session> claude [args] the same, in <session>
   coop tui                        show the sessions
   coop setup                      remove what an older coop put into each Claude session
   coop doctor                     check the connection, the token, the session, the setup
@@ -38,23 +38,23 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	// A global --agent <name> names the agent for this run, as COOP_AGENT does. It comes before
-	// the command, because claude has an --agent flag of its own.
-	if len(args) > 0 && (args[0] == "--agent" || strings.HasPrefix(args[0], "--agent=")) {
-		name, inline := strings.CutPrefix(args[0], "--agent=")
+	// A global -s <session> names the session for this run, as COOP_SESSION does. It comes
+	// before the command, so that the arguments of claude stay its own.
+	if len(args) > 0 && (args[0] == "-s" || strings.HasPrefix(args[0], "-s=")) {
+		session, inline := strings.CutPrefix(args[0], "-s=")
 		args = args[1:]
 		if !inline {
-			name = ""
+			session = ""
 			if len(args) > 0 {
-				name, args = args[0], args[1:]
+				session, args = args[0], args[1:]
 			}
 		}
 		// A token may start with "-"; a flag value that does is a mistake, not a name.
-		if !wire.IsAgentName(name) || strings.HasPrefix(name, "-") {
-			fmt.Fprintf(stderr, "coop: --agent needs an agent name: a-z, 0-9, - and _, and not %q\n", wire.Broadcast)
+		if !wire.IsToken(session) || strings.HasPrefix(session, "-") {
+			fmt.Fprintln(stderr, "coop: -s needs a session name: a-z, 0-9, - and _")
 			return 2
 		}
-		os.Setenv("COOP_AGENT", name)
+		os.Setenv("COOP_SESSION", session)
 	}
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usageText)
@@ -63,11 +63,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "login":
 		return cmdLogin(args[1:], stdout, stderr)
-	case "session":
-		// coop session wrote a .coop file (v0.10.0 and before). coop claude takes the session
-		// from the git repository now.
-		fmt.Fprintln(stderr, "coop session is gone: coop claude takes the session from the git repository, or coop claude <session>")
-		return 2
 	case "claude":
 		return cmdClaude(args[1:], stderr)
 	case "tui":

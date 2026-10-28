@@ -153,7 +153,7 @@ cat <<TEXT
 2. Put the projects of the agents below $home (root's directories are closed to $user).
 3. Start an agent as $user, not as root:
      ssh $user@$(hostname)        # or: sudo -iu $user
-     cd <project> && coop claude <session>
+     cd <project> && coop claude            # or: coop -s <session> claude
 An agent that starts in the home directory has the name "agent"; in a project it has the
-name of the project directory; coop --agent <name> claude names it.
+name of the project directory.
 TEXT

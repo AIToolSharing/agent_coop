@@ -16,16 +16,12 @@ import (
 	"syscall"
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
-	"github.com/AIToolSharing/agent_coop/internal/wire"
 )
 
 // claudeCommand builds the Claude Code command line: the MCP server `coop` (exe mcp) for this
 // Claude process only, the channel flag, then the user's arguments. No other Claude session
-// loads coop. A first argument that is a session name selects the session for this run.
-func claudeCommand(args []string, exe string) (session string, argv []string) {
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") && wire.IsToken(args[0]) {
-		session, args = args[0], args[1:]
-	}
+// loads coop.
+func claudeCommand(args []string, exe string) (argv []string) {
 	type server struct {
 		Command string   `json:"command"`
 		Args    []string `json:"args"`
@@ -34,7 +30,7 @@ func claudeCommand(args []string, exe string) (session string, argv []string) {
 	servers, _ := json.Marshal(map[string]map[string]server{"mcpServers": {"coop": {exe, []string{"mcp"}}}})
 	// --mcp-config takes each argument up to the next flag: the channel flag must follow it.
 	argv = []string{"claude", "--mcp-config", string(servers), "--dangerously-load-development-channels", "server:coop"}
-	return session, append(argv, args...)
+	return append(argv, args...)
 }
 
 // launchEnv gives the environment of the Claude Code process. It names the session and the
@@ -89,12 +85,13 @@ func repoSession(dir string) (session string, repo bool) {
 }
 
 // cmdClaude starts Claude Code with the coop channel. Pushes reach the session only through
-// the channel flag during the research preview of channels. The session is the first
-// argument, else COOP_SESSION, else the name of the git repository or of the directory
+// the channel flag during the research preview of channels. The session is COOP_SESSION
+// (coop -s <session> claude sets it), else the name of the git repository or of the directory
 // (repoSession).
 func cmdClaude(args []string, stderr io.Writer) int {
-	session, argv := claudeCommand(args, executable())
-	if session == "" && os.Getenv("COOP_SESSION") == "" {
+	argv := claudeCommand(args, executable())
+	var session string
+	if os.Getenv("COOP_SESSION") == "" {
 		session, _ = repoSession(cwd())
 	}
 	path, err := exec.LookPath("claude")

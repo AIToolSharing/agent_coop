@@ -180,7 +180,7 @@ func reason(notSetUp bool, l link) string {
 	case linkRefused:
 		return "not in a session: this machine is not allowed to join"
 	case linkTaken:
-		return fmt.Sprintf("not in a session: %d sessions on this machine use the name %q and its numbers. This session joins when one of them ends. To join now, the user starts it with its own name: coop --agent <name> claude", maxNumbered, l.me)
+		return fmt.Sprintf("not in a session: %d sessions on this machine use the name %q and its numbers. This session joins when one of them ends.", maxNumbered, l.me)
 	}
 	return unreachable
 }

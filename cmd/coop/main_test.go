@@ -223,16 +223,16 @@ func TestTheSessionCommandIsGone(t *testing.T) {
 
 func TestClaudeCommandLine(t *testing.T) {
 	const server = `--mcp-config {"mcpServers":{"coop":{"command":"/opt/coop/coop","args":["mcp"]}}}`
-	session, argv := claudeCommand([]string{"build-42", "--model", "opus"}, "/opt/coop/coop")
-	if session != "build-42" || strings.Join(argv, " ") != "claude "+server+" --dangerously-load-development-channels server:coop --model opus" {
-		t.Fatalf("%q %v", session, argv)
+	// Every argument goes to Claude Code as it is: a word is its prompt, not a session.
+	argv := claudeCommand([]string{"build-42", "--model", "opus"}, "/opt/coop/coop")
+	if strings.Join(argv, " ") != "claude "+server+" --dangerously-load-development-channels server:coop build-42 --model opus" {
+		t.Fatalf("%v", argv)
 	}
-	session, argv = claudeCommand([]string{"-p", "hi"}, "/opt/coop/coop")
-	if session != "" || strings.Join(argv, " ") != "claude "+server+" --dangerously-load-development-channels server:coop -p hi" {
-		t.Fatalf("%q %v", session, argv)
+	argv = claudeCommand([]string{"-p", "hi"}, "/opt/coop/coop")
+	if strings.Join(argv, " ") != "claude "+server+" --dangerously-load-development-channels server:coop -p hi" {
+		t.Fatalf("%v", argv)
 	}
-	// The user's own --settings goes to Claude Code as it is.
-	if _, argv := claudeCommand([]string{"--settings", "x.json"}, "/opt/coop/coop"); strings.Join(argv, " ") != "claude "+server+" --dangerously-load-development-channels server:coop --settings x.json" {
+	if argv := claudeCommand([]string{"--settings", "x.json"}, "/opt/coop/coop"); strings.Join(argv, " ") != "claude "+server+" --dangerously-load-development-channels server:coop --settings x.json" {
 		t.Fatalf("%v", argv)
 	}
 }
@@ -244,7 +244,7 @@ func TestClaudeCommandLine(t *testing.T) {
 func TestClaudeCommandGivesTheServerToThisProcessOnly(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		exe := rapid.String().Draw(t, "exe")
-		_, argv := claudeCommand(nil, exe)
+		argv := claudeCommand(nil, exe)
 		if len(argv) < 5 || argv[1] != "--mcp-config" || !strings.HasPrefix(argv[3], "-") {
 			t.Fatalf("argv %q", argv)
 		}
@@ -525,21 +525,22 @@ func TestLoginPinsASelfSignedHubAndDoctorUsesThePin(t *testing.T) {
 	}
 }
 
-// `coop --agent <name> <command>` names the agent for the run, as COOP_AGENT does. The flag
-// comes before the command, because claude has an --agent flag of its own.
-func TestGlobalAgentFlagSetsTheAgentName(t *testing.T) {
-	for _, args := range [][]string{{"--agent", "reviewer", "version"}, {"--agent=reviewer", "version"}} {
-		t.Setenv("COOP_AGENT", "")
+// `coop -s <session> <command>` names the session for the run, as COOP_SESSION does. The flag
+// comes before the command, so that the arguments of claude stay its own. The --agent flag of
+// v0.17.0 is gone: the agent is the name of the directory.
+func TestGlobalSessionFlagSetsTheSession(t *testing.T) {
+	for _, args := range [][]string{{"-s", "build-42", "version"}, {"-s=build-42", "version"}} {
+		t.Setenv("COOP_SESSION", "")
 		var out, errOut bytes.Buffer
 		if code := run(args, &out, &errOut); code != 0 || !strings.HasPrefix(out.String(), "coop ") {
 			t.Fatalf("%v: code %d, stdout %q, stderr %q", args, code, out.String(), errOut.String())
 		}
-		if got := os.Getenv("COOP_AGENT"); got != "reviewer" {
-			t.Fatalf("%v: COOP_AGENT %q", args, got)
+		if got := os.Getenv("COOP_SESSION"); got != "build-42" {
+			t.Fatalf("%v: COOP_SESSION %q", args, got)
 		}
 	}
-	for _, args := range [][]string{{"--agent"}, {"--agent", "Not A Name", "version"}, {"--agent=all", "version"}, {"--agent", "reviewer"}} {
-		t.Setenv("COOP_AGENT", "")
+	for _, args := range [][]string{{"-s"}, {"-s", "Not A Name", "version"}, {"-s", "-p", "version"}, {"-s", "build-42"}, {"--agent", "reviewer", "version"}} {
+		t.Setenv("COOP_SESSION", "")
 		var out, errOut bytes.Buffer
 		if code := run(args, &out, &errOut); code != 2 || errOut.Len() == 0 {
 			t.Fatalf("%v: code %d, stderr %q", args, code, errOut.String())
