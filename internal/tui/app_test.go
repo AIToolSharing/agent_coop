@@ -12,6 +12,7 @@ import (
 
 	"github.com/AIToolSharing/agent_coop/internal/model"
 	"github.com/AIToolSharing/agent_coop/internal/model/modeltest"
+	"github.com/AIToolSharing/agent_coop/internal/tui/view"
 )
 
 type fakeOp struct{ calls []string }
@@ -124,7 +125,7 @@ func contains(t *testing.T, frame string, wants ...string) {
 func TestShowsTheSidebarTheTranscriptAndTheHints(t *testing.T) {
 	h := start(t, nil)
 	f := h.frame()
-	contains(t, f, "coop · all sessions · transcript  follow ●  [connecting]", "SESSIONS", "all traffic", "● build-42 3 1 ask", "○ docs", "Please run the tests before you say done", "/ search · : command")
+	contains(t, f, "coop · all sessions · transcript  follow ●  [connecting]", "SESSIONS", "all traffic", "● build-42 3 1 ask", "○ docs", "Please run the tests before you say done", "/ search · n N · : command")
 	if n := len(strings.Split(f, "\n")); n != 30 {
 		t.Errorf("%d rows, want 30", n)
 	}
@@ -139,9 +140,16 @@ func TestTheSidebarMovesAndOpens(t *testing.T) {
 	h := start(t, nil)
 	h.openSession()
 	contains(t, h.frame(), "AGENTS · build-42")
+	// Enter on an agent opens the preview under the transcript; the transcript stays.
 	h.keys("tab", "down", "down", "enter")
-	contains(t, h.frame(), "agent alice@mac-1 · esc back", "state        working")
+	contains(t, h.frame(), "coop · build-42 · transcript", "alice@mac-1  ● online", "state        working", "Please run the tests")
+	// j in the sidebar moves the preview to the next agent.
+	h.keys("j")
+	contains(t, h.frame(), "bob@vps-2  ● online", "state        blocked")
 	h.keys("esc")
+	if strings.Contains(h.frame(), "state        blocked") {
+		t.Error("esc did not close the preview")
+	}
 	contains(t, h.frame(), "coop · build-42 · transcript")
 }
 
@@ -245,8 +253,36 @@ func TestHelpAndFiltersAndSidebarToggle(t *testing.T) {
 	}
 	h.keys("esc")
 	contains(t, h.frame(), "What is the shape of GET /users?")
+}
+
+// / jumps to the next message whose text has the search, n and N repeat, and the search
+// goes around the end. Nothing is hidden.
+func TestSearchJumpsAndWraps(t *testing.T) {
+	h := start(t, nil)
+	h.openSession()
 	h.keys("/", "+users", "enter")
-	contains(t, h.frame(), "[/users]")
+	contains(t, h.frame(), "[/users]", "I take src/users.ts and the tests", "Please run the tests")
+	// The cursor was on the newest message (#14, which matches); the next match from there
+	// is the first one, around the end.
+	if h.app.msgID != "4" || h.status() != "search hit BOTTOM, continuing at TOP" {
+		t.Fatalf("after /users: cursor %q, status %q", h.app.msgID, h.status())
+	}
+	h.keys("n")
+	if h.app.msgID != "5" || h.status() != "/users" {
+		t.Fatalf("after n: cursor %q, status %q", h.app.msgID, h.status())
+	}
+	h.keys("N", "N")
+	if h.app.msgID != "14" || h.status() != "search hit TOP, continuing at BOTTOM" {
+		t.Fatalf("after N N: cursor %q, status %q", h.app.msgID, h.status())
+	}
+	h.keys("/", "+nothing here", "enter")
+	if h.status() != "no match: nothing here" || h.app.msgID != "14" {
+		t.Fatalf("a miss: cursor %q, status %q", h.app.msgID, h.status())
+	}
+	h.keys("esc")
+	if strings.Contains(h.frame(), "[/nothing") {
+		t.Error("esc did not clear the search")
+	}
 }
 
 func TestScrollingAndFollowing(t *testing.T) {
@@ -260,6 +296,44 @@ func TestScrollingAndFollowing(t *testing.T) {
 	}
 	h.keys("end")
 	contains(t, h.frame(), "follow ●")
+	// gg: the top, the cursor on the first message; G: the bottom, following again.
+	h.keys("g", "g")
+	if strings.Contains(h.frame(), "follow ●") || h.app.msgID != "4" || h.app.top != (view.Anchor{}) {
+		t.Fatalf("after gg: cursor %q, top %+v:\n%s", h.app.msgID, h.app.top, h.frame())
+	}
+	contains(t, h.frame(), "── 2026-09-30 ──")
+	h.keys("G")
+	contains(t, h.frame(), "follow ●")
+	// ctrl-u moves half a page up and puts the cursor on the first message in the window;
+	// ctrl-d brings it back down; ctrl-e scrolls one line and leaves the cursor.
+	h.send(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	up := h.app.top
+	if strings.Contains(h.frame(), "follow ●") || up == (view.Anchor{}) {
+		t.Fatalf("after ctrl-u: top %+v:\n%s", up, h.frame())
+	}
+	cursor := h.app.msgID
+	h.send(tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
+	if h.app.msgID != cursor || !view.Before(up, h.app.top) {
+		t.Fatalf("after ctrl-e: cursor %q (was %q), top %+v (was %+v)", h.app.msgID, cursor, h.app.top, up)
+	}
+	h.send(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	if h.app.top != up {
+		t.Fatalf("after ctrl-y: top %+v, want %+v", h.app.top, up)
+	}
+	h.send(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+	if !view.Before(up, h.app.top) {
+		t.Fatalf("after ctrl-d: top %+v, want after %+v", h.app.top, up)
+	}
+	// j from the newest message does nothing; k goes up one message and reveals it.
+	h.keys("G", "j")
+	if h.app.msgID != "14" {
+		t.Fatalf("j past the end: cursor %q", h.app.msgID)
+	}
+	h.keys("k")
+	if h.app.msgID != "13" || strings.Contains(h.frame(), "follow ●") {
+		t.Fatalf("k: cursor %q", h.app.msgID)
+	}
+	h.keys("end")
 	h.send(tea.MouseWheelMsg{X: 50, Y: 5, Button: tea.MouseWheelUp})
 	if strings.Contains(h.frame(), "follow ●") {
 		t.Error("the wheel should stop following")
@@ -286,26 +360,44 @@ func TestClicksSelectAndOpen(t *testing.T) {
 	if line < 0 {
 		t.Fatal("no header for #12")
 	}
-	y := line - h.app.viewOffset(s) + 1
+	y := line + 1
 	h.send(tea.MouseClickMsg{X: s.sidebarW + 5, Y: y, Button: tea.MouseLeft})
 	if h.app.msgID != "12" {
 		t.Fatalf("selected %q", h.app.msgID)
 	}
 	h.send(tea.MouseClickMsg{X: s.sidebarW + 5, Y: y, Button: tea.MouseLeft})
-	contains(t, h.frame(), "message #12 · esc back", "REPLIES (1)")
+	contains(t, h.frame(), "coop · build-42 · transcript", "from         alice@mac-1", "REPLIES (1)")
 }
 
-func TestEnterOpensTheMessageDetails(t *testing.T) {
+// Enter opens the preview of the message under the cursor under the transcript. The
+// transcript keeps every key: j k move the cursor and the preview follows. Enter again or esc
+// closes it.
+func TestEnterOpensThePreview(t *testing.T) {
 	h := start(t, nil)
 	h.openSession()
 	h.keys("up", "up", "enter")
-	contains(t, h.frame(), "message #12 · esc back", "Please run the tests before you say done")
-	h.keys("esc")
-	contains(t, h.frame(), "coop · build-42 · transcript")
+	f := h.frame()
+	contains(t, f, "coop · build-42 · transcript", "#12", "from         alice@mac-1", "REPLIES (1)", "12:00:10  carol@mac-3 → all")
+	rule := strings.Index(f, "│────────────")
+	if rule < 0 || strings.Index(f, "from         alice@mac-1") < rule || strings.Index(f, "12:00:55  bob@vps-2 → alice@mac-1") > rule {
+		t.Fatalf("the preview is not under the transcript:\n%s", f)
+	}
+	h.keys("k")
+	contains(t, h.frame(), "#10", "from         carol@mac-3")
+	h.keys("2")
+	contains(t, h.frame(), "coop · build-42 · threads", "from         carol@mac-3")
+	h.keys("1", "enter")
+	if strings.Contains(h.frame(), "from         carol@mac-3") {
+		t.Error("enter did not close the preview")
+	}
+	h.keys("enter", "esc")
+	if strings.Contains(h.frame(), "from         carol@mac-3") {
+		t.Error("esc did not close the preview")
+	}
 }
 
 func TestKeysThatArriveTogetherActOnTheLatestState(t *testing.T) {
 	h := start(t, nil)
 	h.keys("tab", "down", "enter", "tab", "down", "down", "enter")
-	contains(t, h.frame(), "agent alice@mac-1 · esc back")
+	contains(t, h.frame(), "alice@mac-1  ● online")
 }

@@ -48,12 +48,12 @@ func (a *App) render() string {
 	rows := make([]string, 0, a.height)
 	rows = append(rows, paint(view.Fit(view.Line{view.Bold(a.title(s))}, a.width), false))
 	sideOffset := listOffset(a.cursorOf(s), len(s.sidebar.Lines), s.bodyH)
-	offset := a.viewOffset(s)
 	border := styleOf(view.Style{Color: "gray"})
 	if a.focus == "sidebar" {
 		border = styleOf(view.Style{Color: "cyan"})
 	}
 	blank := strings.Repeat(" ", s.mainW)
+	rule := paint(view.Line{view.Dim(strings.Repeat("─", s.mainW))}, false)
 	for i := 0; i < s.bodyH; i++ {
 		var b strings.Builder
 		if a.sidebar {
@@ -64,9 +64,16 @@ func (a *App) render() string {
 			}
 			b.WriteString(border.Render("│"))
 		}
-		if j := offset + i; j < len(s.main.Lines) {
-			b.WriteString(paint(s.main.Lines[j], s.main.IDs[j] != "" && s.main.IDs[j] == a.msgID))
-		} else {
+		switch {
+		case i < s.mainH && i < len(s.main.Lines):
+			b.WriteString(paint(s.main.Lines[i], s.main.IDs[i] != "" && s.main.IDs[i] == s.current))
+		case i < s.mainH || s.previewH == 0:
+			b.WriteString(blank)
+		case i == s.mainH:
+			b.WriteString(rule)
+		case i-s.mainH-1 < len(s.preview.Lines):
+			b.WriteString(paint(s.preview.Lines[i-s.mainH-1], false))
+		default:
 			b.WriteString(blank)
 		}
 		rows = append(rows, b.String())
@@ -82,16 +89,22 @@ func (a *App) render() string {
 
 var help = [][2]string{
 	{"MOVE", ""},
-	{"tab", "focus the sidebar or the main pane"},
-	{"↑ ↓  j k", "move: in the sidebar over sessions and agents, in the main pane over messages"},
-	{"enter", "open what the cursor is on: a session, an agent, a message"},
-	{"esc", "close the details or the help; clear the search and the agent filter"},
-	{"pgup pgdn home end", "scroll the main pane; end follows the newest message again"},
+	{"j k  ↑ ↓", "the next, the previous message; in the sidebar the next row"},
+	{"h l  ← →  tab", "focus the sidebar, the main pane"},
+	{"G  end", "the newest message, and follow it"},
+	{"gg  home", "the first message"},
+	{"ctrl-d ctrl-u", "half a page down, up"},
+	{"ctrl-f ctrl-b  pgdn pgup", "a page down, up"},
+	{"ctrl-e ctrl-y", "one line down, up; the cursor stays"},
+	{"enter", "open: a session; the preview of the message or the agent under the cursor"},
+	{"esc", "close the preview or the help; clear the search and the agent filter"},
 	{"space", "follow the newest message on or off"},
 	{"[", "hide or show the sidebar"},
 	{"1 2", "views: transcript, threads"},
-	{"mouse", "click selects, a second click opens, the wheel scrolls"},
-	{"/", "search in the message text; an empty search clears"},
+	{"mouse", "click selects, a second click opens the preview, the wheel scrolls"},
+	{"SEARCH", ""},
+	{"/", "search: enter jumps to the next message whose text contains it"},
+	{"n N", "the next, the previous match; the search goes around the end"},
 	{"COMMANDS  (: then tab completes)", ""},
 	{":delete", "delete the shown session and its messages; only with no agent in it"},
 	{":filter [agent]", "only the messages of one agent; without a name: off"},
@@ -99,20 +112,22 @@ var help = [][2]string{
 	{":help  :quit", "this help; quit"},
 }
 
-func helpLines(width int) view.Rendered {
-	var r view.Rendered
-	for _, h := range help {
-		key, text := h[0], h[1]
-		var l view.Line
-		if text == "" {
-			l = view.Line{view.Bold(key)}
-		} else {
-			l = view.Line{view.Color("  "+key+strings.Repeat(" ", max(0, 30-view.Width(key))), "cyan"), view.S(text)}
+// helpBuffer is the help as one block.
+func helpBuffer() view.Buffer {
+	return view.Buffer{Blocks: []view.Block{{Render: func(o view.Options) []view.Line {
+		var lines []view.Line
+		for _, h := range help {
+			key, text := h[0], h[1]
+			var l view.Line
+			if text == "" {
+				l = view.Line{view.Bold(key)}
+			} else {
+				l = view.Line{view.Color("  "+key+strings.Repeat(" ", max(0, 30-view.Width(key))), "cyan"), view.S(text)}
+			}
+			lines = append(lines, view.Fit(l, o.Width))
 		}
-		r.Lines = append(r.Lines, view.Fit(l, width))
-		r.IDs = append(r.IDs, "")
-	}
-	return r
+		return lines
+	}}}}
 }
 
 var commands = []string{"delete", "filter", "sys", "help", "quit"}
@@ -234,8 +249,7 @@ func (a *App) command(line string, s screen) tea.Cmd {
 		}
 		return a.setStatus("system lines off")
 	case "help":
-		a.overlay = &overlay{kind: "help"}
-		a.scroll = 0
+		a.help, a.helpTop = true, view.Anchor{}
 		return nil
 	case "quit", "q":
 		a.quitting = true

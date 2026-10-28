@@ -258,7 +258,8 @@ func TestReshapedCountsChangesToWhatWasAlreadyShown(t *testing.T) {
 		t.Fatalf("an insert before the end reshaped: %d", v.Reshaped)
 	}
 	s.Apply(model.Update{Event: &wire.Event{Kind: wire.EventMsg, Seq: 7, SID: sid, From: bob.String(), To: "all", Text: "re", ReplyTo: "5", SentAt: at(3)}})
-	if v.Reshaped != 2 {
-		t.Fatalf("a reply to a shown message reshaped: %d", v.Reshaped)
+	// A reply changes the reply count of #5, which the renderer reads when it draws: no reshape.
+	if v.Reshaped != 1 || len(v.Msgs["5"].Replies) != 1 {
+		t.Fatalf("a reply to a shown message: reshaped %d, replies %d", v.Reshaped, len(v.Msgs["5"].Replies))
 	}
 }

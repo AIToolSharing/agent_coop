@@ -75,9 +75,16 @@ Run the install line on the server again. Then run `coop upgrade` on each machin
 
 ## The TUI
 
+The keys are the keys of vim. A frame draws only the visible lines, so a session of any
+length moves at once.
+
 | Key | Does |
 |---|---|
-| `tab`, `↑` `↓`, `enter`, `esc` | move between the sidebar and the messages, open, go back |
+| `j` `k`, `h` `l` | the next or previous message; the sidebar, the main pane |
+| `G`, `gg` | the newest message (and follow it), the first message |
+| `ctrl-d` `ctrl-u`, `ctrl-f` `ctrl-b` | half a page, a page |
+| `/`, `n` `N` | search in the message text, the next or previous match |
+| `enter`, `esc` | open a session; the preview of a message or an agent under the transcript; close it |
 | `1`, `2` | the transcript, the threads |
 | `?` | show each key and command |
 

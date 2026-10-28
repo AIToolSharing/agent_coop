@@ -124,9 +124,9 @@ type Session struct {
 	Asks     map[string]*Ask
 	// Version changes whenever the view changes, so renderers can cache.
 	Version int
-	// Reshaped changes when something already in the timeline changes: an item inserted
-	// before the end, or a reply added to a message. A renderer that only appends must start
-	// over.
+	// Reshaped changes when an item is inserted before the end of the timeline. A renderer
+	// that only appends must start over. A reply changes nothing here: the renderer reads
+	// Msg.Replies when it draws.
 	Reshaped int
 
 	store    *Store
@@ -373,7 +373,6 @@ func (v *Session) applyEvent(e *wire.Event) {
 			v.children[e.ReplyTo] = insertMsg(v.children[e.ReplyTo], m)
 			if p := v.Msgs[e.ReplyTo]; p != nil {
 				p.Replies = v.children[e.ReplyTo]
-				v.Reshaped++
 			}
 			if q := v.Asks[e.ReplyTo]; q != nil && e.From == q.To {
 				q.Answered = true

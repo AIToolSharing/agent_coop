@@ -11,86 +11,116 @@ func kv(key, value string, st Style) Line {
 	return Line{Dim(key + strings.Repeat(" ", max(0, 12-Width(key))) + " "), Styled(value, st)}
 }
 
-// RenderAgent shows one agent: its state, where it runs, and its own timeline.
-func RenderAgent(v *model.Session, address string, o Options) Rendered {
-	a := v.Agents[address]
-	if a == nil {
-		for _, x := range v.AgentList() {
-			if x.Address == address {
-				a = x
+// AgentView shows one agent: its state, where it runs, and its own timeline. A new item of
+// the timeline adds a block; the head reads the agent when it is drawn.
+type AgentView struct {
+	sid      string
+	address  string
+	version  int
+	reshaped int
+	n        int
+	blocks   []Block
+}
+
+// Render gives the buffer of the agent `address` of v.
+func (av *AgentView) Render(v *model.Session, address string, o Options) Buffer {
+	if av.sid != v.SID || av.address != address || av.reshaped != v.Reshaped || av.n > len(v.Timeline) || av.blocks == nil {
+		a := v.Agents[address]
+		if a == nil {
+			for _, x := range v.AgentList() {
+				if x.Address == address {
+					a = x
+				}
 			}
 		}
-	}
-	if a == nil {
-		return Note("select an agent (tab to the sidebar, then enter)", o.Width)
-	}
-	var r Rendered
-	add := func(l Line, id string) {
-		r.Lines = append(r.Lines, Fit(l, o.Width))
-		r.IDs = append(r.IDs, id)
-	}
-	presence := Color("  ○ offline", "gray")
-	if a.Online {
-		presence = Color("  ● online", "green")
-	}
-	add(Line{Bold(a.Address), presence}, "")
-	state := a.State
-	if a.StateSince != "" {
-		state += " for " + Age(a.StateSince, o.Now)
-	}
-	add(kv("state", state, Style{Color: StateColor(a.State)}), "")
-	if a.Note != "" {
-		add(kv("note", a.Note, Style{}), "")
-	}
-	if w := a.Waiting; w != nil {
-		text := "for any message"
-		if w.On != "" {
-			text = "on " + w.On
+		if a == nil {
+			return Note("select an agent (h to the sidebar, then enter)")
 		}
-		if w.ReplyTo != "" {
-			text += " (ask #" + w.ReplyTo + ")"
-		}
-		add(kv("waiting", text+" for "+Age(w.Since, o.Now), Style{Color: "yellow"}), "")
+		*av = AgentView{sid: v.SID, address: address, reshaped: v.Reshaped, blocks: []Block{agentHead(a), Blank(), Heading("TIMELINE")}}
+	} else if av.version == v.Version {
+		return Buffer{Blocks: av.blocks}
 	}
-	add(kv("host", or(a.Host, "?"), Style{}), "")
-	add(kv("directory", or(a.Cwd, "?"), Style{}), "")
-	add(kv("client", or(a.Client, "?"), Style{}), "")
-	joined := "?"
-	if a.JoinedAt != "" {
-		joined = Clock(a.JoinedAt, o.loc()) + " (" + Age(a.JoinedAt, o.Now) + " ago)"
-	}
-	add(kv("joined", joined, Style{}), "")
-	if a.Left != nil {
-		add(kv("left", Clock(a.Left.At, o.loc())+" ("+a.Left.Reason+")", Style{}), "")
-	}
-	add(kv("messages", "sent "+strconv.Itoa(a.Sent), Style{}), "")
-	add(Line{S("")}, "")
-	add(Line{Bold("TIMELINE")}, "")
-	for _, it := range v.Timeline {
+	av.version = v.Version
+	a := v.Agents[address]
+	for ; av.n < len(v.Timeline); av.n++ {
+		it := v.Timeline[av.n]
 		if it.Sys != nil {
 			if it.Sys.Who == a.Address {
-				add(Line{Dim(Clock(it.At, o.loc()) + "  "), Dim(it.Sys.Text)}, "")
+				av.blocks = append(av.blocks, sysBlock(it))
 			}
 			continue
 		}
 		m := it.Msg
-		var lead Line
 		switch {
 		case m.From == a.Address:
-			lead = Line{Dim(Clock(it.At, o.loc()) + "  "), Color("sent ", "cyan"), S("#" + m.ID + " → " + m.To + ": ")}
+			av.blocks = append(av.blocks, agentMsgBlock(m, Color("sent ", "cyan"), "#"+m.ID+" → "+m.To+": "))
 		case m.To == a.Address || m.To == "all":
-			lead = Line{Dim(Clock(it.At, o.loc()) + "  "), Color("got ", "green"), S("#" + m.ID + " ← " + m.From + ": ")}
-		default:
-			continue
-		}
-		body := Wrap(m.Text, max(10, o.Width-Width(Plain(lead))))
-		add(append(lead, S(body[0])), m.ID)
-		pad := strings.Repeat(" ", Width(Plain(lead)))
-		for _, line := range body[1:] {
-			add(Line{S(pad), S(line)}, "")
+			av.blocks = append(av.blocks, agentMsgBlock(m, Color("got ", "green"), "#"+m.ID+" ← "+m.From+": "))
 		}
 	}
-	return r
+	return Buffer{Blocks: av.blocks}
+}
+
+func agentHead(a *model.Agent) Block {
+	return Block{Render: func(o Options) []Line {
+		var lines []Line
+		add := func(l Line) { lines = append(lines, Fit(l, o.Width)) }
+		presence := Color("  ○ offline", "gray")
+		if a.Online {
+			presence = Color("  ● online", "green")
+		}
+		add(Line{Bold(a.Address), presence})
+		state := a.State
+		if a.StateSince != "" {
+			state += " for " + Age(a.StateSince, o.Now)
+		}
+		add(kv("state", state, Style{Color: StateColor(a.State)}))
+		if a.Note != "" {
+			add(kv("note", a.Note, Style{}))
+		}
+		if w := a.Waiting; w != nil {
+			text := "for any message"
+			if w.On != "" {
+				text = "on " + w.On
+			}
+			if w.ReplyTo != "" {
+				text += " (ask #" + w.ReplyTo + ")"
+			}
+			add(kv("waiting", text+" for "+Age(w.Since, o.Now), Style{Color: "yellow"}))
+		}
+		add(kv("host", or(a.Host, "?"), Style{}))
+		add(kv("directory", or(a.Cwd, "?"), Style{}))
+		add(kv("client", or(a.Client, "?"), Style{}))
+		joined := "?"
+		if a.JoinedAt != "" {
+			joined = Clock(a.JoinedAt, o.loc()) + " (" + Age(a.JoinedAt, o.Now) + " ago)"
+		}
+		add(kv("joined", joined, Style{}))
+		if a.Left != nil {
+			add(kv("left", Clock(a.Left.At, o.loc())+" ("+a.Left.Reason+")", Style{}))
+		}
+		add(kv("messages", "sent "+strconv.Itoa(a.Sent), Style{}))
+		return lines
+	}}
+}
+
+func sysBlock(it model.Item) Block {
+	return Block{Render: func(o Options) []Line {
+		return []Line{Fit(Line{Dim(Clock(it.At, o.loc()) + "  "), Dim(it.Sys.Text)}, o.Width)}
+	}}
+}
+
+func agentMsgBlock(m *model.Msg, verb Seg, head string) Block {
+	return Block{ID: m.ID, Text: strings.ToLower(m.Text), Render: func(o Options) []Line {
+		lead := Line{Dim(Clock(m.SentAt, o.loc()) + "  "), verb, S(head)}
+		body := Wrap(m.Text, max(10, o.Width-Width(Plain(lead))))
+		lines := []Line{Fit(append(lead, S(body[0])), o.Width)}
+		pad := strings.Repeat(" ", Width(Plain(lead)))
+		for _, line := range body[1:] {
+			lines = append(lines, Fit(Line{S(pad), S(line)}, o.Width))
+		}
+		return lines
+	}}
 }
 
 func or(s, fallback string) string {
@@ -101,40 +131,46 @@ func or(s, fallback string) string {
 }
 
 // RenderMessage shows one message whole, what it answers, and its replies.
-func RenderMessage(v *model.Session, id string, o Options) Rendered {
+func RenderMessage(v *model.Session, id string, o Options) Buffer {
 	m := v.Msgs[id]
 	if m == nil {
-		return Note("select a message (↑↓ in the transcript, then enter)", o.Width)
+		return Note("select a message (j k in the transcript, then enter)")
 	}
-	var r Rendered
-	add := func(l Line, lid string) {
-		r.Lines = append(r.Lines, Fit(l, o.Width))
-		r.IDs = append(r.IDs, lid)
+	var blocks []Block
+	one := func(id string, render func(o Options) Line) {
+		blocks = append(blocks, Block{ID: id, Render: func(o Options) []Line { return []Line{Fit(render(o), o.Width)} }})
 	}
-	add(Line{Bold("#" + m.ID)}, "")
-	add(kv("from", m.From, Style{Bold: true}), "")
-	add(kv("to", m.To, Style{}), "")
-	add(kv("sent", Stamp(m.SentAt, o.loc())+" ("+Age(m.SentAt, o.Now)+" ago)", Style{}), "")
+	one("", func(Options) Line { return Line{Bold("#" + m.ID)} })
+	one("", func(Options) Line { return kv("from", m.From, Style{Bold: true}) })
+	one("", func(Options) Line { return kv("to", m.To, Style{}) })
+	one("", func(o Options) Line {
+		return kv("sent", Stamp(m.SentAt, o.loc())+" ("+Age(m.SentAt, o.Now)+" ago)", Style{})
+	})
 	if m.ReplyTo != "" {
 		text := "#" + m.ReplyTo
 		if p := v.Msgs[m.ReplyTo]; p != nil {
 			text += " from " + p.From + ": " + p.Text
 		}
-		add(kv("answers", text, Style{}), m.ReplyTo)
+		one(m.ReplyTo, func(Options) Line { return kv("answers", text, Style{}) })
 	}
-	add(Line{S("")}, "")
-	for _, line := range Wrap(m.Text, max(10, o.Width-2)) {
-		add(Line{S("  " + line)}, "")
-	}
+	blocks = append(blocks, Blank(), Block{Text: strings.ToLower(m.Text), Render: func(o Options) []Line {
+		var lines []Line
+		for _, line := range Wrap(m.Text, max(10, o.Width-2)) {
+			lines = append(lines, Fit(Line{S("  " + line)}, o.Width))
+		}
+		return lines
+	}})
 	if len(m.Replies) > 0 {
-		add(Line{S("")}, "")
-		add(Line{Bold("REPLIES (" + strconv.Itoa(len(m.Replies)) + ")")}, "")
+		blocks = append(blocks, Blank(), Heading("REPLIES ("+strconv.Itoa(len(m.Replies))+")"))
 		for _, c := range m.Replies {
-			add(Line{Dim("  #" + c.ID + " "), Bold(c.From)}, c.ID)
-			for _, line := range Wrap(c.Text, max(10, o.Width-4)) {
-				add(Line{S("    " + line)}, "")
-			}
+			blocks = append(blocks, Block{ID: c.ID, Text: strings.ToLower(c.Text), Render: func(o Options) []Line {
+				lines := []Line{Fit(Line{Dim("  #" + c.ID + " "), Bold(c.From)}, o.Width)}
+				for _, line := range Wrap(c.Text, max(10, o.Width-4)) {
+					lines = append(lines, Fit(Line{S("    " + line)}, o.Width))
+				}
+				return lines
+			}})
 		}
 	}
-	return r
+	return Buffer{Blocks: blocks}
 }

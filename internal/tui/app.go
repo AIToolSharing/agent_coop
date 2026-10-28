@@ -1,7 +1,10 @@
 // Package tui is the terminal program that shows the sessions: a sidebar (sessions, then the
-// agents of the shown session), a main pane (transcript or threads, or the details of a message
-// or an agent), and a `:` command line. It only shows: it sends nothing to the agents. It
-// paints what the view package returns.
+// agents of the shown session), a main pane (transcript or threads) with a preview pane under
+// it for the details of a message or an agent, and a `:` command line. It only shows: it sends
+// nothing to the agents. It paints what the view package returns.
+//
+// The main pane is a window over a buffer of blocks (view.Pane): a frame renders the visible
+// blocks only, so the keys answer at once however long the session is.
 package tui
 
 import (
@@ -37,11 +40,6 @@ const (
 	actionTimeout  = 10 * time.Second
 )
 
-type overlay struct {
-	kind string // message, agent, help
-	id   string
-}
-
 type mode struct {
 	kind  string // normal command search confirm
 	value string // command and search
@@ -65,16 +63,21 @@ type App struct {
 	cursor        int // sidebar row under the cursor; -1 follows the shown session
 	msgID         string
 	agentAddr     string
-	overlay       *overlay
+	help          bool
+	preview       bool
 	follow        bool
 	system        bool
 	agentFilter   string
-	search        string
-	scroll        int // first visible main line when scrolled; -1 follows the cursor
+	search        string      // the last search
+	pending       string      // a first g, for gg
+	top           view.Anchor // the first visible line of the main pane when not following
+	helpTop       view.Anchor
 	mode          mode
 	status        string
 
 	transcripts map[string]*view.Transcript
+	threads     view.Threads
+	agentView   view.AgentView
 	last        screen
 	quitting    bool
 	err         error
@@ -104,7 +107,7 @@ func New(o Options) *App {
 
 		width: 80, height: 24,
 		sid: model.AllSessions, view: viewTranscript, focus: "main", sidebar: true,
-		cursor: -1, follow: true, system: true, scroll: -1,
+		cursor: -1, follow: true, system: true,
 		mode:        mode{kind: "normal"},
 		transcripts: map[string]*view.Transcript{},
 	}
@@ -154,15 +157,21 @@ type screen struct {
 	sidebar   view.Sidebar
 	sidebarW  int // columns of the sidebar, border included; 0 when hidden
 	mainW     int
-	main      view.Rendered
+	pane      *view.Pane    // the main buffer, rendered on demand for this frame
+	main      view.Rendered // the visible lines of the main pane
+	top       view.Anchor   // the anchor the window used
+	end       view.Anchor   // the anchor of the window at the bottom
+	mainH     int           // rows of the main window
+	preview   view.Rendered // the preview pane; empty when off
+	previewH  int
 	current   string // the message under the cursor: the newest one while following
-	lastID    string // the newest message with a line in the main pane
+	lastID    string // the last message of the buffer
 	following bool
 	bodyH     int
 }
 
 func (a *App) options(width int) view.Options {
-	return view.Options{Width: width, Now: a.now(), Loc: a.loc, Agent: a.agentFilter, Search: a.search, System: a.system, Selected: a.msgID}
+	return view.Options{Width: width, Now: a.now(), Loc: a.loc, Agent: a.agentFilter, System: a.system, Selected: a.msgID}
 }
 
 func (a *App) screen() screen {
@@ -180,35 +189,63 @@ func (a *App) screen() screen {
 	s.sidebar = view.RenderSidebar(s.sums, agents, view.Selection{SID: a.sid, Cursor: cursor}, max(1, s.sidebarW-1), now)
 	s.mainW = max(20, a.width-s.sidebarW)
 	o := a.options(s.mainW)
+	// The rows that are not the body: the title, the prompt line and the hint line.
+	s.bodyH = max(4, a.height-3)
+	s.mainH = s.bodyH
+	if a.preview && !a.help {
+		s.previewH = min(max(3, s.bodyH/3), s.bodyH-2)
+		s.mainH = s.bodyH - s.previewH - 1
+	}
+	var buf view.Buffer
+	top := a.top
 	switch {
-	case a.overlay != nil && a.overlay.kind == "help":
-		s.main = helpLines(s.mainW)
-	case a.overlay != nil && a.overlay.kind == "message":
-		s.main = view.RenderMessage(s.v, a.overlay.id, o)
-	case a.overlay != nil && a.overlay.kind == "agent":
-		s.main = view.RenderAgent(s.v, a.overlay.id, o)
+	case a.help:
+		buf = helpBuffer()
+		top = a.helpTop
 	case a.view == viewThreads:
-		s.main = view.RenderThreads(s.v, o)
+		buf = a.threads.Render(s.v, o)
 	default:
 		t := a.transcripts[a.sid]
 		if t == nil {
 			t = &view.Transcript{}
 			a.transcripts[a.sid] = t
 		}
-		s.main = t.Render(s.v, o)
+		buf = t.Render(s.v, o)
 	}
-	if a.overlay == nil {
-		s.lastID = nextID(s.main.IDs, len(s.main.IDs), -1)
+	s.pane = &view.Pane{Buf: buf, O: o}
+	s.end = s.pane.End(s.mainH)
+	s.following = a.follow && !a.help && a.view != viewThreads
+	if s.following {
+		top = s.end
 	}
-	s.following = a.follow && a.view != viewThreads && a.overlay == nil
+	s.main, s.top = s.pane.Window(top, s.mainH)
+	if i := buf.Next(len(buf.Blocks), -1); i >= 0 {
+		s.lastID = buf.Blocks[i].ID
+	}
+	s.current = a.msgID
 	if s.following {
 		s.current = s.lastID
-	} else {
-		s.current = a.msgID
 	}
-	// The rows that are not the body: the title, the prompt line and the hint line.
-	s.bodyH = max(4, a.height-3)
+	if a.preview && !a.help {
+		var content view.Buffer
+		if row := a.sidebarRow(s); a.focus == "sidebar" && row != nil && row.Address != "" {
+			content = a.agentView.Render(s.v, row.Address, o)
+		} else {
+			content = view.RenderMessage(s.v, s.current, o)
+		}
+		p := &view.Pane{Buf: content, O: o}
+		s.preview, _ = p.Window(view.Anchor{}, s.previewH)
+	}
 	return s
+}
+
+// sidebarRow is the row under the sidebar cursor, or nil.
+func (a *App) sidebarRow(s screen) *view.Row {
+	i := a.cursorOf(s)
+	if i < 0 || i >= len(s.sidebar.Rows) {
+		return nil
+	}
+	return s.sidebar.Rows[i]
 }
 
 // cursorOf is the sidebar row the cursor is on: where it was put, else the shown session.
@@ -224,22 +261,6 @@ func (a *App) cursorOf(s screen) int {
 	return -1
 }
 
-// viewOffset is the first visible line of the main pane.
-func (a *App) viewOffset(s screen) int {
-	maxOff := max(0, len(s.main.Lines)-s.bodyH)
-	if s.following {
-		return maxOff
-	}
-	if a.scroll >= 0 {
-		return min(maxOff, a.scroll)
-	}
-	line := indexOf(s.main.IDs, s.current)
-	if line < 0 {
-		return 0
-	}
-	return min(maxOff, max(0, line-s.bodyH+1))
-}
-
 func listOffset(index, length, height int) int {
 	if index < 0 || length <= height {
 		return 0
@@ -247,36 +268,12 @@ func listOffset(index, length, height int) int {
 	return min(length-height, max(0, index-height+1))
 }
 
-func reveal(line, offset, bodyH int) int {
-	if line < offset {
-		return line
+// anchor is the anchor of the shown buffer: the help's own while the help is open.
+func (a *App) anchor() *view.Anchor {
+	if a.help {
+		return &a.helpTop
 	}
-	if line >= offset+bodyH {
-		return line - bodyH + 1
-	}
-	return offset
-}
-
-// nextID is the first message id in ids after (dir 1) or before (dir -1) line `from`, or "".
-func nextID(ids []string, from, dir int) string {
-	for i := from + dir; i >= 0 && i < len(ids); i += dir {
-		if ids[i] != "" {
-			return ids[i]
-		}
-	}
-	return ""
-}
-
-func indexOf(xs []string, x string) int {
-	if x == "" {
-		return -1
-	}
-	for i, y := range xs {
-		if y == x {
-			return i
-		}
-	}
-	return -1
+	return &a.top
 }
 
 // --- Update ------------------------------------------------------------------------------------
@@ -326,6 +323,8 @@ func (a *App) setStatus(s string) tea.Cmd {
 
 func isKey(k tea.KeyPressMsg, code rune) bool { return k.Code == code && k.Mod == 0 }
 
+func isCtrl(k tea.KeyPressMsg, code rune) bool { return k.Code == code && k.Mod == tea.ModCtrl }
+
 func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 	s := a.screen()
 	a.last = s
@@ -341,33 +340,44 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 	if a.mode.kind != "normal" {
 		return a.inputKey(k, s)
 	}
+	if a.pending == "g" {
+		a.pending = ""
+		if k.Text == "g" {
+			a.goTop(s)
+			return nil
+		}
+	}
+	inMain := a.focus == "main" || a.help
 	switch {
-	case k.Text == "q" || (k.Code == 'c' && k.Mod == tea.ModCtrl):
+	case k.Text == "q" || isCtrl(k, 'c'):
 		a.quitting = true
 		return tea.Quit
 	case k.Text == "?":
-		if a.overlay != nil && a.overlay.kind == "help" {
-			a.overlay = nil
-		} else {
-			a.overlay = &overlay{kind: "help"}
-		}
-		a.scroll = 0
+		a.help, a.helpTop = !a.help, view.Anchor{}
 		return nil
 	case isKey(k, tea.KeyEscape):
-		if a.overlay != nil {
-			a.overlay = nil
-			a.scroll = -1
-			return nil
+		switch {
+		case a.help:
+			a.help = false
+		case a.preview:
+			a.preview = false
+		default:
+			a.search, a.agentFilter = "", ""
+			return a.setStatus("filters cleared")
 		}
-		a.search, a.agentFilter = "", ""
-		return a.setStatus("filters cleared")
+		return nil
 	case isKey(k, tea.KeyTab):
 		if a.focus == "main" {
-			a.cursor = a.cursorOf(s)
-			a.focus = "sidebar"
+			a.focusSidebar(s)
 		} else {
 			a.focus = "main"
 		}
+		return nil
+	case k.Text == "h" || isKey(k, tea.KeyLeft):
+		a.focusSidebar(s)
+		return nil
+	case k.Text == "l" || isKey(k, tea.KeyRight):
+		a.focus = "main"
 		return nil
 	case k.Text == "[":
 		a.sidebar = !a.sidebar
@@ -375,82 +385,79 @@ func (a *App) key(k tea.KeyPressMsg) tea.Cmd {
 			a.focus = "main"
 		}
 		return nil
-	case isKey(k, tea.KeyDown) || k.Text == "j" || isKey(k, tea.KeyUp) || k.Text == "k":
-		delta := 1
-		if isKey(k, tea.KeyUp) || k.Text == "k" {
-			delta = -1
+	case k.Text == "j" || isKey(k, tea.KeyDown) || k.Text == "k" || isKey(k, tea.KeyUp):
+		dir := 1
+		if k.Text == "k" || isKey(k, tea.KeyUp) {
+			dir = -1
 		}
-		if a.overlay != nil {
-			return a.scrollBy(s, delta, false)
-		}
-		if a.focus == "sidebar" {
-			return a.moveSidebar(s, delta)
-		}
-		if s.lastID == "" {
-			return a.scrollBy(s, delta, false)
-		}
-		from := len(s.main.IDs)
-		if s.current != "" {
-			from = indexOf(s.main.IDs, s.current)
-		}
-		if id := nextID(s.main.IDs, from, delta); id != "" {
-			a.selectMessage(s, id)
-		} else if s.current == "" {
-			a.selectMessage(s, s.lastID)
+		switch {
+		case a.help:
+			a.scrollLines(s, dir)
+		case a.focus == "sidebar":
+			return a.moveSidebar(s, dir)
+		default:
+			a.moveCursor(s, dir)
 		}
 		return nil
-	case isKey(k, tea.KeyPgDown) || isKey(k, tea.KeyPgUp):
-		delta := s.bodyH - 1
-		if isKey(k, tea.KeyPgUp) {
-			delta = -delta
-		}
-		a.scrollBy(s, delta, false)
-		off := a.viewOffset(s)
-		var inWindow []string
-		for _, id := range s.main.IDs[min(off, len(s.main.IDs)):min(off+s.bodyH, len(s.main.IDs))] {
-			if id != "" {
-				inWindow = append(inWindow, id)
-			}
-		}
-		if len(inWindow) > 0 && a.overlay == nil {
-			if isKey(k, tea.KeyPgDown) {
-				a.msgID = inWindow[len(inWindow)-1]
-			} else {
-				a.msgID = inWindow[0]
-			}
-		}
+	case k.Text == "g":
+		a.pending = "g"
+		return nil
+	case k.Text == "G" || isKey(k, tea.KeyEnd):
+		a.goBottom(s)
 		return nil
 	case isKey(k, tea.KeyHome):
-		a.scroll, a.follow = 0, false
-		if first := nextID(s.main.IDs, -1, 1); first != "" && a.overlay == nil {
-			a.msgID = first
-		}
+		a.goTop(s)
 		return nil
-	case isKey(k, tea.KeyEnd):
-		if a.overlay == nil && a.view != viewThreads {
-			a.follow, a.scroll = true, -1
-			return nil
+	case isCtrl(k, 'd') || isCtrl(k, 'u'):
+		n := max(1, s.mainH/2)
+		if isCtrl(k, 'u') {
+			n = -n
 		}
-		return a.scrollBy(s, len(s.main.Lines), false)
+		a.scrollLines(s, n)
+		return nil
+	case isCtrl(k, 'f') || isKey(k, tea.KeyPgDown) || isCtrl(k, 'b') || isKey(k, tea.KeyPgUp):
+		n := max(1, s.mainH-1)
+		if isCtrl(k, 'b') || isKey(k, tea.KeyPgUp) {
+			n = -n
+		}
+		a.scrollLines(s, n)
+		return nil
+	case isCtrl(k, 'e') || isCtrl(k, 'y'):
+		n := 1
+		if isCtrl(k, 'y') {
+			n = -1
+		}
+		a.scrollLine(s, n)
+		return nil
 	case isKey(k, tea.KeyEnter):
 		return a.openCurrent(s)
 	}
-	if a.overlay != nil {
+	if a.help {
 		return nil
 	}
 	switch k.Text {
 	case "1":
-		a.view, a.scroll = viewTranscript, -1
+		a.view, a.top = viewTranscript, view.Anchor{}
 	case "2":
-		a.view, a.scroll = viewThreads, -1
+		a.view, a.top = viewThreads, view.Anchor{}
 	case " ":
-		a.follow, a.scroll = !a.follow, -1
+		a.follow = !a.follow
 		if a.follow {
 			return a.setStatus("follow on")
 		}
+		a.top = s.top
 		return a.setStatus("follow off")
 	case "/":
-		a.mode = mode{kind: "search", value: a.search}
+		a.mode = mode{kind: "search"}
+	case "n", "N":
+		if !inMain {
+			return nil
+		}
+		dir := 1
+		if k.Text == "N" {
+			dir = -1
+		}
+		return a.find(s, dir)
 	case ":":
 		a.mode = mode{kind: "command"}
 	}
@@ -474,7 +481,7 @@ func (a *App) inputKey(k tea.KeyPressMsg, s screen) tea.Cmd {
 		if a.search == "" {
 			return a.setStatus("search cleared")
 		}
-		return a.setStatus("search: " + a.search)
+		return a.find(s, 1)
 	case isKey(k, tea.KeyTab):
 		if m.kind == "command" {
 			m.value = Complete(m.value, s.v.AgentList())
@@ -494,30 +501,129 @@ func (a *App) inputKey(k tea.KeyPressMsg, s screen) tea.Cmd {
 	return nil
 }
 
-func (a *App) scrollTo(line int) {
-	a.scroll, a.follow = max(0, line), false
+func (a *App) focusSidebar(s screen) {
+	if !a.sidebar {
+		return
+	}
+	a.cursor = a.cursorOf(s)
+	a.focus = "sidebar"
 }
 
-// scrollBy moves the main pane; at the bottom of a live view it follows again.
-func (a *App) scrollBy(s screen, delta int, live bool) tea.Cmd {
-	maxOff := max(0, len(s.main.Lines)-s.bodyH)
-	next := min(maxOff, max(0, a.viewOffset(s)+delta))
-	canFollow := a.overlay == nil && a.view != viewThreads
-	if live && canFollow && next >= maxOff && delta > 0 {
-		a.follow, a.scroll = true, -1
+// scrollLine moves the window by n lines; the cursor stays where it is.
+func (a *App) scrollLine(s screen, n int) {
+	a.follow = false
+	*a.anchor() = s.pane.Advance(s.top, n)
+}
+
+// scrollLines moves the window by n lines and puts the cursor on the last message of the new
+// window (n > 0) or its first one.
+func (a *App) scrollLines(s screen, n int) {
+	a.scrollLine(s, n)
+	if a.help {
+		return
+	}
+	r, _ := s.pane.Window(*a.anchor(), s.mainH)
+	for i := range r.IDs {
+		j := i
+		if n > 0 {
+			j = len(r.IDs) - 1 - i
+		}
+		if r.IDs[j] != "" {
+			a.msgID = r.IDs[j]
+			return
+		}
+	}
+}
+
+// goTop shows the first line and puts the cursor on the first message.
+func (a *App) goTop(s screen) {
+	a.follow = false
+	*a.anchor() = view.Anchor{}
+	if i := s.pane.Buf.Next(-1, 1); i >= 0 && !a.help {
+		a.msgID = s.pane.Buf.Blocks[i].ID
+	}
+}
+
+// goBottom follows the newest message in a live view; elsewhere it shows the last line.
+func (a *App) goBottom(s screen) {
+	if !a.help && a.view != viewThreads {
+		a.follow = true
+		return
+	}
+	*a.anchor() = s.end
+	if !a.help {
+		a.msgID = s.lastID
+	}
+}
+
+// moveCursor puts the cursor on the next (dir 1) or previous (dir -1) message and reveals it.
+func (a *App) moveCursor(s screen, dir int) {
+	buf := s.pane.Buf
+	from := buf.Find(s.current)
+	if from < 0 {
+		from = -1
+		if dir < 0 {
+			from = len(buf.Blocks)
+		}
+	}
+	i := buf.Next(from, dir)
+	if i < 0 {
+		if s.current != "" {
+			return
+		}
+		i = buf.Next(len(buf.Blocks), -1)
+		if i < 0 {
+			return
+		}
+	}
+	a.selectBlock(s, i)
+}
+
+// selectBlock puts the cursor on block i and moves the window the least to show it.
+func (a *App) selectBlock(s screen, i int) {
+	a.msgID, a.follow = s.pane.Buf.Blocks[i].ID, false
+	a.top = s.pane.Reveal(s.top, i, s.mainH)
+}
+
+// find moves the cursor to the next (dir 1) or previous (dir -1) message whose text contains
+// the last search, around the end if it must.
+func (a *App) find(s screen, dir int) tea.Cmd {
+	if a.search == "" {
+		return a.setStatus("no search: / first")
+	}
+	if a.help {
 		return nil
 	}
-	a.scrollTo(next)
-	return nil
-}
-
-func (a *App) selectMessage(s screen, id string) {
-	line := indexOf(s.main.IDs, id)
-	off := a.viewOffset(s)
-	a.msgID, a.follow = id, false
-	if line >= 0 {
-		a.scroll = reveal(line, off, s.bodyH)
+	buf := s.pane.Buf
+	n := len(buf.Blocks)
+	from := buf.Find(s.current)
+	if from < 0 {
+		from = -1
+		if dir < 0 {
+			from = n
+		}
 	}
+	want := strings.ToLower(a.search)
+	wrapped := false
+	for step, i := 1, from+dir; step <= n; step, i = step+1, i+dir {
+		if i < 0 || i >= n {
+			i = (i + n) % n
+			wrapped = true
+		}
+		b := buf.Blocks[i]
+		if b.ID == "" || !strings.Contains(b.Text, want) {
+			continue
+		}
+		a.selectBlock(s, i)
+		switch {
+		case wrapped && dir > 0:
+			return a.setStatus("search hit BOTTOM, continuing at TOP")
+		case wrapped:
+			return a.setStatus("search hit TOP, continuing at BOTTOM")
+		}
+		return a.setStatus("/" + a.search)
+	}
+	return a.setStatus("no match: " + a.search)
 }
 
 // chooseSession shows sid; the cursor and the selection start over.
@@ -528,8 +634,7 @@ func (a *App) chooseSession(sid string, cursor int) {
 	}
 	a.sid, a.cursor = sid, cursor
 	a.msgID, a.agentAddr, a.agentFilter = "", "", ""
-	a.overlay = nil
-	a.follow, a.scroll = true, -1
+	a.follow, a.top = true, view.Anchor{}
 }
 
 // moveSidebar moves the cursor to the next row with content. The cursor only points; enter
@@ -567,23 +672,23 @@ func (a *App) openSidebarRow(s screen, index int) tea.Cmd {
 		return nil
 	}
 	a.cursor, a.agentAddr = index, row.Address
-	a.overlay = &overlay{kind: "agent", id: row.Address}
-	a.scroll = -1
+	a.preview = !a.preview
 	return nil
 }
 
+// openCurrent opens what the cursor is on: a session, or the preview of an agent or a message.
 func (a *App) openCurrent(s screen) tea.Cmd {
-	if a.overlay != nil {
+	if a.help {
 		return nil
 	}
 	if a.focus == "sidebar" {
 		return a.openSidebarRow(s, a.cursorOf(s))
 	}
-	if s.current != "" {
-		a.msgID, a.follow = s.current, false
-		a.overlay = &overlay{kind: "message", id: s.current}
-		a.scroll = -1
+	if s.current == "" {
+		return nil
 	}
+	a.msgID = s.current
+	a.preview = !a.preview
 	return nil
 }
 
@@ -619,22 +724,20 @@ func (a *App) click(m tea.Mouse) tea.Cmd {
 		}
 		return nil
 	}
-	line := y + a.viewOffset(s)
-	id := ""
-	if line >= 0 && line < len(s.main.IDs) {
-		id = s.main.IDs[line]
-	}
 	wasMain := a.focus == "main"
 	a.focus = "main"
-	if id == "" || a.overlay != nil {
+	if a.help || y >= len(s.main.IDs) {
+		return nil
+	}
+	id := s.main.IDs[y]
+	if id == "" {
 		return nil
 	}
 	if id == a.msgID && !s.following && wasMain {
-		a.overlay = &overlay{kind: "message", id: id}
-		a.scroll = -1
+		a.preview = true
 		return nil
 	}
-	a.selectMessage(s, id)
+	a.msgID, a.follow, a.top = id, false, s.top
 	return nil
 }
 
@@ -652,7 +755,15 @@ func (a *App) wheel(m tea.Mouse) tea.Cmd {
 		}
 		return a.moveSidebar(s, -1)
 	}
-	return a.scrollBy(s, delta, true)
+	next := s.pane.Advance(s.top, delta)
+	// At the bottom of a live view the wheel follows again.
+	if delta > 0 && !a.help && a.view != viewThreads && !view.Before(next, s.end) {
+		a.follow = true
+		return nil
+	}
+	a.follow = false
+	*a.anchor() = next
+	return nil
 }
 
 // --- View --------------------------------------------------------------------------------------
@@ -673,15 +784,8 @@ func (a *App) title(s screen) string {
 	if a.store.Link != model.LinkLive {
 		link = "  [" + string(a.store.Link) + "]"
 	}
-	if o := a.overlay; o != nil {
-		switch o.kind {
-		case "help":
-			return "coop · help · esc back" + link
-		case "message":
-			return "coop · " + where + " · message #" + o.id + " · esc back" + link
-		case "agent":
-			return "coop · " + where + " · agent " + o.id + " · esc back" + link
-		}
+	if a.help {
+		return "coop · help · esc back" + link
 	}
 	t := "coop · " + where + " · " + a.view
 	if a.agentFilter != "" {
@@ -705,13 +809,16 @@ func (a *App) hint() string {
 	case "confirm":
 		return "y yes · n no"
 	}
-	if a.overlay != nil {
-		return "esc back · ↑↓ scroll · ? help · q quit"
+	if a.help {
+		return "esc back · j k scroll · q quit"
 	}
 	if a.focus == "sidebar" {
-		return "↑↓ move · enter open · tab main · ? help"
+		return "j k move · enter open · l main · ? help"
 	}
-	return "↑↓ enter esc · / search · : command · tab sidebar · ? help · q quit"
+	if a.preview {
+		return "j k move · enter esc close the preview · / search · ? help"
+	}
+	return "j k move · G gg · enter preview · / search · n N · : command · h sidebar · ? help · q quit"
 }
 
 // prompt is the line under the body: the command line, the search line, a question, or the
@@ -721,7 +828,7 @@ func (a *App) prompt() string {
 	case "command":
 		return ":" + a.mode.value + "▏"
 	case "search":
-		return "search › " + a.mode.value + "▏"
+		return "/" + a.mode.value + "▏"
 	case "confirm":
 		return a.mode.text
 	}

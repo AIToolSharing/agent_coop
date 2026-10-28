@@ -9,16 +9,10 @@ import (
 
 const indent = "  "
 
-// MsgVisible applies the agent and search filters to a message. A broadcast involves every
-// agent of the session.
+// MsgVisible applies the agent filter to a message. A broadcast involves every agent of the
+// session.
 func MsgVisible(m *model.Msg, o Options) bool {
-	if o.Agent != "" && m.From != o.Agent && m.To != o.Agent && m.To != "all" {
-		return false
-	}
-	if o.Search != "" && !strings.Contains(strings.ToLower(m.Text), strings.ToLower(o.Search)) {
-		return false
-	}
-	return true
+	return o.Agent == "" || m.From == o.Agent || m.To == o.Agent || m.To == "all"
 }
 
 func itemVisible(it model.Item, o Options) bool {
@@ -30,45 +24,35 @@ func itemVisible(it model.Item, o Options) bool {
 
 type transcriptKey struct {
 	sid    string
-	width  int
 	agent  string
-	search string
 	system bool
 }
 
-// Transcript renders a session as a conversation and keeps its output between repaints. A
-// new item extends the output; a change to what was already shown (model.Session.Reshaped)
-// starts it over. So a repaint costs the new items, not the whole session.
+// Transcript turns a session into blocks and keeps them between repaints. A new item adds a
+// block; a change to the order of what was already shown (model.Session.Reshaped) starts
+// over. The blocks render on demand, so a repaint costs the visible lines only, and a reply
+// count or a relative time reads the model when the block is drawn.
 type Transcript struct {
 	key      transcriptKey
 	version  int
 	reshaped int
 	all      bool
-	loc      string
 	n        int
-	lines    []Line
-	ids      []string
+	blocks   []Block
 	day      string
-	burst    []model.Item
-	burstAt  int
+	burst    []model.Item // the open run of system items
+	burstAt  int          // the block of the open run, or -1
 }
 
-// Render gives the lines of v. The result is shared with the cache: do not change it.
-func (t *Transcript) Render(v *model.Session, o Options) Rendered {
-	key := transcriptKey{v.SID, o.Width, o.Agent, o.Search, o.System}
-	loc := o.loc().String()
-	if t.key != key || t.reshaped != v.Reshaped || t.n > len(v.Timeline) || t.loc != loc {
-		*t = Transcript{key: key, reshaped: v.Reshaped, all: v.SID == model.AllSessions, loc: loc, burstAt: -1}
+// Render gives the buffer of v. The blocks are shared with the cache: do not change them.
+func (t *Transcript) Render(v *model.Session, o Options) Buffer {
+	key := transcriptKey{v.SID, o.Agent, o.System}
+	if t.key != key || t.reshaped != v.Reshaped || t.n > len(v.Timeline) {
+		*t = Transcript{key: key, reshaped: v.Reshaped, all: v.SID == model.AllSessions, burstAt: -1}
 	} else if t.version == v.Version {
-		return Rendered{Lines: t.lines, IDs: t.ids}
+		return t.buffer()
 	}
 	t.version = v.Version
-	// Reopen the trailing burst: its line is drawn again once it is complete.
-	if t.burstAt >= 0 {
-		t.lines = t.lines[:t.burstAt]
-		t.ids = t.ids[:t.burstAt]
-		t.burstAt = -1
-	}
 	for ; t.n < len(v.Timeline); t.n++ {
 		it := v.Timeline[t.n]
 		if !itemVisible(it, o) {
@@ -76,69 +60,76 @@ func (t *Transcript) Render(v *model.Session, o Options) Rendered {
 		}
 		day := Day(it.At, o.loc())
 		if day != t.day {
-			t.flush(o)
+			t.closeBurst()
 			t.day = day
-			rule := strings.Repeat("─", max(0, o.Width-Width(day)-4))
-			t.add(Line{Dim("── " + day + " " + rule)}, "", o)
+			t.blocks = append(t.blocks, dayBlock(day))
 		}
 		if it.Sys != nil {
+			if t.burstAt < 0 {
+				t.burstAt = len(t.blocks)
+				t.blocks = append(t.blocks, Block{})
+			}
 			t.burst = append(t.burst, it)
+			t.blocks[t.burstAt] = burstBlock(t.burst, t.all)
 			continue
 		}
-		t.flush(o)
-		t.message(v, it.Msg, o)
+		t.closeBurst()
+		t.blocks = append(t.blocks, MessageBlock(v, it.Msg, t.all))
 	}
-	if len(t.burst) > 0 {
-		// Draw the open burst now; keep it, so that the next system item extends it.
-		t.burstAt = len(t.lines)
-		t.add(t.burstLine(o), "", o)
-	}
-	if len(t.lines) == 0 {
-		return Note("no messages yet", o.Width)
-	}
-	return Rendered{Lines: t.lines, IDs: t.ids}
+	return t.buffer()
 }
 
-func (t *Transcript) add(l Line, id string, o Options) {
-	t.lines = append(t.lines, Fit(l, o.Width))
-	t.ids = append(t.ids, id)
-}
-
-// flush writes the pending system items as one dim line and forgets them.
-func (t *Transcript) flush(o Options) {
-	if len(t.burst) == 0 {
-		return
+func (t *Transcript) buffer() Buffer {
+	if len(t.blocks) == 0 {
+		return Note("no messages yet")
 	}
-	t.add(t.burstLine(o), "", o)
-	t.burst = t.burst[:0]
+	return Buffer{Blocks: t.blocks}
 }
 
-// burstLine folds the pending system items into one line.
-func (t *Transcript) burstLine(o Options) Line {
-	parts := make([]string, 0, len(t.burst))
-	for _, it := range t.burst {
-		who := it.Sys.Who
-		if t.all {
-			who = it.SID + "/" + who
+// closeBurst ends the open run of system items. The block keeps the items it has.
+func (t *Transcript) closeBurst() {
+	t.burst, t.burstAt = nil, -1
+}
+
+func dayBlock(day string) Block {
+	return Block{Render: func(o Options) []Line {
+		rule := strings.Repeat("─", max(0, o.Width-Width(day)-4))
+		return []Line{Fit(Line{Dim("── " + day + " " + rule)}, o.Width)}
+	}}
+}
+
+// burstBlock folds a run of system items into one dim line.
+func burstBlock(items []model.Item, all bool) Block {
+	return Block{Render: func(o Options) []Line {
+		parts := make([]string, 0, len(items))
+		for _, it := range items {
+			who := it.Sys.Who
+			if all {
+				who = it.SID + "/" + who
+			}
+			parts = append(parts, who+" "+it.Sys.Text)
 		}
-		parts = append(parts, who+" "+it.Sys.Text)
-	}
-	return Line{Dim(Clock(t.burst[0].At, o.loc()) + "  · "), Dim(strings.Join(parts, " · "))}
+		return []Line{Fit(Line{Dim(Clock(items[0].At, o.loc()) + "  · "), Dim(strings.Join(parts, " · "))}, o.Width)}
+	}}
 }
 
-// message writes the header, the quote of the message it answers, and the whole body.
-func (t *Transcript) message(v *model.Session, m *model.Msg, o Options) {
-	t.add(Header(m, o, t.all), m.ID, o)
-	if m.ReplyTo != "" {
-		quote := "↩ #" + m.ReplyTo
-		if p := v.Msgs[m.ReplyTo]; p != nil {
-			quote += " " + p.From + ": " + p.Text
+// MessageBlock is a message: the header, the quote of the message it answers, and the whole
+// body.
+func MessageBlock(v *model.Session, m *model.Msg, all bool) Block {
+	return Block{ID: m.ID, Text: strings.ToLower(m.Text), Render: func(o Options) []Line {
+		lines := []Line{Fit(Header(m, o, all), o.Width)}
+		if m.ReplyTo != "" {
+			quote := "↩ #" + m.ReplyTo
+			if p := v.Msgs[m.ReplyTo]; p != nil {
+				quote += " " + p.From + ": " + p.Text
+			}
+			lines = append(lines, Fit(Line{S(indent), Styled(quote, Style{Color: "cyan", Dim: true})}, o.Width))
 		}
-		t.add(Line{S(indent), Styled(quote, Style{Color: "cyan", Dim: true})}, "", o)
-	}
-	for _, line := range Wrap(m.Text, o.Width-len(indent)) {
-		t.add(Line{S(indent), S(line)}, "", o)
-	}
+		for _, line := range Wrap(m.Text, o.Width-len(indent)) {
+			lines = append(lines, Fit(Line{S(indent), S(line)}, o.Width))
+		}
+		return lines
+	}}
 }
 
 // Header is the first line of a message: time, sender and target; the id and the reply count

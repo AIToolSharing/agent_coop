@@ -26,6 +26,13 @@ func opts(width int) view.Options {
 	return view.Options{Width: width, Now: modeltest.Now, Loc: time.UTC, System: true}
 }
 
+// render gives every line of a buffer, as a window of any height would.
+func render(b view.Buffer, o view.Options) view.Rendered {
+	p := &view.Pane{Buf: b, O: o}
+	r, _ := p.Window(view.Anchor{}, 1<<20)
+	return r
+}
+
 func texts(r view.Rendered) []string {
 	out := make([]string, len(r.Lines))
 	for i, l := range r.Lines {
@@ -54,7 +61,8 @@ func TestTranscriptShowsWholeMessagesAndFoldsSystemLines(t *testing.T) {
 	v := store().View(modeltest.SID)
 	for _, width := range []int{110, 60, 24} {
 		var tr view.Transcript
-		r := tr.Render(v, opts(width))
+		o := opts(width)
+		r := render(tr.Render(v, o), o)
 		checkShape(t, r, width)
 		all := normalize(texts(r))
 		// Every message body is there whole, however narrow the pane.
@@ -76,7 +84,7 @@ func TestTranscriptShowsWholeMessagesAndFoldsSystemLines(t *testing.T) {
 		}
 	}
 	var tr view.Transcript
-	lines := texts(tr.Render(v, opts(110)))
+	lines := texts(render(tr.Render(v, opts(110)), opts(110)))
 	if !strings.HasPrefix(lines[0], "── 2026-09-30 ──") {
 		t.Errorf("no day separator: %q", lines[0])
 	}
@@ -103,20 +111,14 @@ func TestTranscriptFilters(t *testing.T) {
 	o := opts(100)
 	o.Agent = "carol@mac-3"
 	var tr view.Transcript
-	ids := strings.Join(nonEmpty(tr.Render(v, o).IDs), " ")
+	ids := strings.Join(nonEmpty(render(tr.Render(v, o), o).IDs), " ")
 	if ids != "4 10 12 14" {
 		t.Errorf("carol's messages: %s", ids)
 	}
 	o = opts(100)
-	o.Search = "users"
-	var tr2 view.Transcript
-	if ids := strings.Join(nonEmpty(tr2.Render(v, o).IDs), " "); ids != "4 5 10 14" {
-		t.Errorf("search: %s", ids)
-	}
-	o = opts(100)
 	o.System = false
 	var tr3 view.Transcript
-	for _, line := range texts(tr3.Render(v, o)) {
+	for _, line := range texts(render(tr3.Render(v, o), o)) {
 		if strings.Contains(line, " · ") {
 			t.Errorf("system line shown with System off: %q", line)
 		}
@@ -142,7 +144,7 @@ func nonEmpty(ids []string) []string {
 	return out
 }
 
-// The cache extends its output per new item; the result must equal a render from scratch.
+// The cache extends its blocks per new item; the result must equal a build from scratch.
 func TestTranscriptCacheEqualsAFreshRender(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		updates := modeltest.Fixture()
@@ -163,9 +165,9 @@ func TestTranscriptCacheEqualsAFreshRender(t *testing.T) {
 				cached.Render(v, o)
 			}
 		}
-		got := texts(cached.Render(v, o))
+		got := texts(render(cached.Render(v, o), o))
 		var fresh view.Transcript
-		want := texts(fresh.Render(v, o))
+		want := texts(render(fresh.Render(v, o), o))
 		if strings.Join(got, "\n") != strings.Join(want, "\n") {
 			rt.Fatalf("cached render differs\n got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 		}
@@ -275,7 +277,8 @@ func TestSidebarListsSessionsThenAgents(t *testing.T) {
 
 func TestThreadsShowWholeMessagesByDepth(t *testing.T) {
 	v := store().View("build-42")
-	r := view.RenderThreads(v, opts(50))
+	var th view.Threads
+	r := render(th.Render(v, opts(50)), opts(50))
 	checkShape(t, r, 50)
 	lines := texts(r)
 	joined := strings.Join(lines, "\n")
@@ -291,7 +294,8 @@ func TestThreadsShowWholeMessagesByDepth(t *testing.T) {
 
 func TestAgentAndMessageDetails(t *testing.T) {
 	v := store().View("build-42")
-	a := view.RenderAgent(v, "bob@vps-2", opts(70))
+	var av view.AgentView
+	a := render(av.Render(v, "bob@vps-2", opts(70)), opts(70))
 	checkShape(t, a, 70)
 	joined := strings.Join(texts(a), "\n")
 	for _, want := range []string{"bob@vps-2  ● online", "state        blocked", "note         waiting for CI", "host         vps-2", "client       codex 0.9", "sent 2", "TIMELINE", "sent #8 → alice@mac-1", "got #4 ← carol@mac-3", "is blocked: waiting for CI"} {
@@ -302,7 +306,7 @@ func TestAgentAndMessageDetails(t *testing.T) {
 	if strings.Contains(joined, "REACHED") || strings.Contains(joined, "reach time") {
 		t.Error("delivery data was dropped from the design")
 	}
-	m := view.RenderMessage(v, "12", opts(70))
+	m := render(view.RenderMessage(v, "12", opts(70)), opts(70))
 	checkShape(t, m, 70)
 	joined = strings.Join(texts(m), "\n")
 	for _, want := range []string{"#12", "from         alice@mac-1", "to           all", "sent         2026-09-30 12:00:50 (4m ago)", "Please run the tests before you say done", "REPLIES (1)", "#13 bob@vps-2", "Will do; CI is running"} {
@@ -310,7 +314,7 @@ func TestAgentAndMessageDetails(t *testing.T) {
 			t.Errorf("missing %q in\n%s", want, joined)
 		}
 	}
-	if texts(view.RenderMessage(v, "nope", opts(40)))[0] == "" {
+	if texts(render(view.RenderMessage(v, "nope", opts(40)), opts(40)))[0] == "" {
 		t.Error("an unknown id needs a note")
 	}
 }

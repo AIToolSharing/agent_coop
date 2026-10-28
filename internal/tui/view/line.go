@@ -28,8 +28,8 @@ type Seg struct {
 // Line is a list of segments. A rendered line is fitted to the width.
 type Line []Seg
 
-// Rendered is a renderer's output: the lines, and per line the message id it stands for, or
-// an empty string. Only one line per message carries the id (the header line).
+// Rendered is the output of a window: the lines, and per line the message id it stands for,
+// or an empty string. Only one line per message carries the id (the header line).
 type Rendered struct {
 	Lines []Line
 	IDs   []string
@@ -43,8 +43,6 @@ type Options struct {
 	Loc *time.Location
 	// Agent, when set, keeps only messages from or to this agent, and its system lines.
 	Agent string
-	// Search, when set, keeps only messages whose text contains it (any case).
-	Search string
 	// System shows joins, leaves, states and waits.
 	System bool
 	// Selected is the message under the cursor.
@@ -211,9 +209,4 @@ func StateColor(state string) string {
 		return "blue"
 	}
 	return "gray"
-}
-
-// Note is a one-line placeholder, fitted like every other line.
-func Note(text string, width int) Rendered {
-	return Rendered{Lines: []Line{Fit(Line{Dim(text)}, width)}, IDs: []string{""}}
 }
