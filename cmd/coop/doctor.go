@@ -95,10 +95,12 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 	}
 	if _, err := lookPath("claude"); err != nil {
 		fail("claude is not on the PATH")
-	} else if _, err := runClaude("mcp", "get", "coop"); err == nil {
-		note("an older coop setup loads coop into each Claude session: run coop setup")
+	} else if have := registered(); have == executable() {
+		ok("Claude Code has the server coop: " + have + " mcp; it has tools only in a session that coop claude starts")
+	} else if have == "" {
+		fail("Claude Code has no server coop, so no push reaches a session: run coop setup")
 	} else {
-		ok("a plain claude has no coop; coop claude loads " + executable() + " mcp")
+		fail("Claude Code has the server coop as " + have + ", not this coop: run coop setup")
 	}
 	if _, err := os.Stat(oldSkillPath()); err == nil {
 		note("an older coop setup left a skill in " + oldSkillPath() + ": run coop setup")

@@ -64,12 +64,14 @@ Run the install line on the server again. Then run `coop upgrade` on each machin
   start one `coop claude` on a machine. The agent starts the rest.
 - **Push.** `coop claude` starts Claude Code with the coop channel. A message wakes an idle
   agent. A headless agent (`coop claude -p`, a worker) gets no push. It calls `wait` or
-  `inbox`.
+  `inbox`. The channel finds the server `coop` that `coop setup` put into Claude Code (user
+  scope). The join line and `coop upgrade` run `coop setup`. After `make install` from a
+  clone, run it yourself.
 - **Agents that leave.** The peer lists show only the agents in the session now. The hub
   keeps the messages to an agent that left. It gives them to the agent when it joins again.
-- **Solo sessions.** Only `coop claude` loads coop, and only into the Claude process that it
-  starts. A plain `claude` has no coop. To bring a solo conversation into its session, end
-  it and run `coop claude --continue`.
+- **Solo sessions.** A plain `claude` starts the server `coop` too, idle: it has no tools and
+  joins nothing. Only a Claude Code that `coop claude` starts has a session. To bring a solo
+  conversation into its session, end it and run `coop claude --continue`.
 - **Other clients.** An MCP client that runs `coop mcp` with `COOP_SESSION` in its
   environment joins that session.
 

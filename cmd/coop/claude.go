@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,19 +17,12 @@ import (
 	"github.com/AIToolSharing/agent_coop/internal/config"
 )
 
-// claudeCommand builds the Claude Code command line: the MCP server `coop` (exe mcp) for this
-// Claude process only, the channel flag, then the user's arguments. No other Claude session
-// loads coop.
-func claudeCommand(args []string, exe string) (argv []string) {
-	type server struct {
-		Command string   `json:"command"`
-		Args    []string `json:"args"`
-	}
-	// A map of strings to a struct of strings always marshals.
-	servers, _ := json.Marshal(map[string]map[string]server{"mcpServers": {"coop": {exe, []string{"mcp"}}}})
-	// --mcp-config takes each argument up to the next flag: the channel flag must follow it.
-	argv = []string{"claude", "--mcp-config", string(servers), "--dangerously-load-development-channels", "server:coop"}
-	return append(argv, args...)
+// claudeCommand builds the Claude Code command line: the channel flag for the server `coop`
+// (coop setup put it into Claude Code), then the user's arguments. The channel finds a server
+// only in the user, local or project scope: a server that --mcp-config gives to one process
+// gets no push (Claude Code 2.1.285 to 2.1.314, at least).
+func claudeCommand(args []string) []string {
+	return append([]string{"claude", "--dangerously-load-development-channels", "server:coop"}, args...)
 }
 
 // launchEnv gives the environment of the Claude Code process. It names the session and the
@@ -89,7 +81,7 @@ func repoSession(dir string) (session string, repo bool) {
 // (coop -s <session> claude sets it), else the name of the git repository or of the directory
 // (repoSession).
 func cmdClaude(args []string, stderr io.Writer) int {
-	argv := claudeCommand(args, executable())
+	argv := claudeCommand(args)
 	var session string
 	if os.Getenv("COOP_SESSION") == "" {
 		session, _ = repoSession(cwd())

@@ -25,7 +25,8 @@ const usageText = `usage:
                                   -3, ...
   coop -s <session> claude [args] the same, in <session>
   coop tui                        show the sessions
-  coop setup                      remove what an older coop put into each Claude session
+  coop setup                      put the server coop into Claude Code (the join line
+                                  and coop upgrade run it)
   coop doctor                     check the connection, the token, the session, the setup
   coop upgrade                    take the version of the hub: download the binary of this
                                   device from the hub, then run its setup

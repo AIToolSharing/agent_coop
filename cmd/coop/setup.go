@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/AIToolSharing/agent_coop/internal/config"
 )
@@ -40,9 +41,45 @@ func oldSkillPath() string {
 	return filepath.Join(home, ".claude", "skills", "coop", "SKILL.md")
 }
 
-// cmdSetup removes what an older coop put into each Claude session: the MCP server `coop` of
-// user scope, the skill, and the hooks. It adds nothing: coop claude gives the server to the
-// Claude process that it starts, so a plain claude has no coop. It is safe to run again.
+// registered gives the command of the MCP server `coop` that Claude Code has in user scope,
+// or "" when it has none.
+func registered() string {
+	out, err := runClaude("mcp", "get", "coop")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if cmd, ok := strings.CutPrefix(strings.TrimSpace(line), "Command:"); ok {
+			return strings.TrimSpace(cmd)
+		}
+	}
+	return "?"
+}
+
+// register puts `exe mcp` into Claude Code as the MCP server `coop` of user scope. The
+// channel (the push) finds a server only in the user, local or project scope, not one that
+// --mcp-config gives to one process. A plain claude starts the server too; with no
+// COOP_SESSION it offers no tools and joins nothing.
+func register(exe string, stdout, stderr io.Writer) error {
+	have := registered()
+	if have == exe {
+		fmt.Fprintln(stdout, "Claude Code has the server coop: "+exe+" mcp")
+		return nil
+	}
+	if have != "" {
+		if out, err := runClaude("mcp", "remove", "coop", "-s", "user"); err != nil {
+			return fmt.Errorf("cannot remove the server coop (%s): %v\n%s", have, err, out)
+		}
+	}
+	if out, err := runClaude("mcp", "add", "--scope", "user", "coop", "--", exe, "mcp"); err != nil {
+		return fmt.Errorf("cannot add the server coop: %v\n%s", err, out)
+	}
+	fmt.Fprintln(stdout, "added the server coop to Claude Code: "+exe+" mcp (idle in a plain claude)")
+	return nil
+}
+
+// cmdSetup puts coop into Claude Code: the MCP server `coop` of user scope, which runs this
+// binary. It also removes the skill and the hooks of an older coop. It is safe to run again.
 func cmdSetup(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 0 {
 		fmt.Fprintln(stderr, "usage: coop setup")
@@ -52,12 +89,9 @@ func cmdSetup(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "claude is not on the PATH: install Claude Code first")
 		return 1
 	}
-	if _, err := runClaude("mcp", "get", "coop"); err == nil {
-		if out, err := runClaude("mcp", "remove", "coop", "-s", "user"); err != nil {
-			fmt.Fprintf(stderr, "cannot remove the coop server of every Claude session: %v\n%s", err, out)
-			return 1
-		}
-		fmt.Fprintln(stdout, "removed the coop server of every Claude session: coop claude loads it")
+	if err := register(executable(), stdout, stderr); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 	if path := oldSkillPath(); path != "" {
 		switch err := os.Remove(path); {
