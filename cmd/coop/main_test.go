@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -264,7 +265,7 @@ func TestLaunchEnvNamesTheSessionAndTheAgent(t *testing.T) {
 		}
 		return c
 	}
-	env := launchEnv(map[string]string{"PATH": "/bin", "COOP_SESSION": "old"}, "build-42", load)
+	env := launchEnv(map[string]string{"PATH": "/bin", "COOP_SESSION": "old"}, "build-42", 0, load)
 	for _, kv := range []string{"PATH=/bin", "COOP_PUSH=1", "COOP_SESSION=build-42", "COOP_AGENT=from-dir"} {
 		if !slices.Contains(env, kv) {
 			t.Errorf("missing %s in %v", kv, env)
@@ -282,10 +283,60 @@ func TestLaunchEnvNamesTheSessionAndTheAgent(t *testing.T) {
 		}
 	}
 	// No session: nothing is named, and the agent gets no tools.
-	env = launchEnv(map[string]string{"PATH": "/bin"}, "", load)
+	env = launchEnv(map[string]string{"PATH": "/bin"}, "", 0, load)
 	if slices.ContainsFunc(env, func(e string) bool { return strings.HasPrefix(e, "COOP_SESSION=") || e == "COOP_AGENT=from-dir" }) {
 		t.Errorf("no session, but %v", env)
 	}
+}
+
+// coop claude names its own process (Claude Code, after exec) as the owner. The owner of a
+// coop session that started this coop claude does not stay.
+func TestLaunchEnvNamesTheOwner(t *testing.T) {
+	load := func(map[string]string) config.Config { return config.Config{} }
+	env := launchEnv(map[string]string{"COOP_OWNER": "7"}, "s", 4242, load)
+	if !slices.Contains(env, "COOP_OWNER=4242") || slices.Contains(env, "COOP_OWNER=7") {
+		t.Errorf("owner 4242: %v", env)
+	}
+	env = launchEnv(map[string]string{"COOP_OWNER": "7"}, "s", 0, load)
+	if slices.ContainsFunc(env, func(e string) bool { return strings.HasPrefix(e, "COOP_OWNER=") }) {
+		t.Errorf("no owner known, but %v", env)
+	}
+}
+
+// The bug of 2026-10-29: a session system-config opened the agents view; three more Claude
+// Code processes got its COOP_SESSION and COOP_AGENT and joined as system-config-2, -3, -4.
+// The shim of such a process is not the agent.
+func TestChildOfACoopSessionStaysOut(t *testing.T) {
+	env := map[string]string{"COOP_SESSION": "cix-hardware-acceleration", "COOP_AGENT": "system-config", "COOP_OWNER": "100"}
+	if realAgent(env, 200, filepath.Join(t.TempDir(), "conversation")) {
+		t.Error("the shim of a child Claude (parent 200, owner 100) is taken as the agent")
+	}
+	if !realAgent(env, 100, "") {
+		t.Error("the shim of the Claude that coop claude started is not the agent")
+	}
+}
+
+// realAgent is true exactly when no owner is named, the parent is the owner, or the
+// conversation has a name file.
+func TestRealAgentRule(t *testing.T) {
+	dir := t.TempDir()
+	there := filepath.Join(dir, "there")
+	if err := os.WriteFile(there, []byte("s\na\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rapid.Check(t, func(t *rapid.T) {
+		owner := rapid.SampledFrom([]string{"", "1", "2", "3"}).Draw(t, "owner")
+		ppid := rapid.IntRange(1, 3).Draw(t, "ppid")
+		file := rapid.SampledFrom([]string{"", there, filepath.Join(dir, "absent")}).Draw(t, "file")
+		env := map[string]string{}
+		if owner != "" {
+			env["COOP_OWNER"] = owner
+		}
+		want := owner == "" || owner == strconv.Itoa(ppid) || file == there
+		if got := realAgent(env, ppid, file); got != want {
+			t.Fatalf("owner %q ppid %d file %q: %v, want %v", owner, ppid, file, got, want)
+		}
+	})
 }
 
 // fakeClaude stands in for the claude command: it records calls and answers `mcp get coop`.

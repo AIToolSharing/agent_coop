@@ -42,9 +42,9 @@ func promptHead(spawner, session string) string {
 	return fmt.Sprintf("You are a worker that %s started in the session %s. When you are done, send your result to %s and call set_state with done.\nTask:\n", spawner, session, spawner)
 }
 
-// logDir is where the output of the workers goes: $XDG_STATE_HOME/coop, else
-// ~/.local/state/coop, and on Windows %LOCALAPPDATA%\coop.
-func logDir() (string, error) {
+// StateDir is where the output of the workers and the names of the conversations go:
+// $XDG_STATE_HOME/coop, else ~/.local/state/coop, and on Windows %LOCALAPPDATA%\coop.
+func StateDir() (string, error) {
 	if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
 		return filepath.Join(dir, "coop"), nil
 	}
@@ -142,7 +142,7 @@ func (s *shim) spawn(ctx context.Context, in spawnIn) (any, error) {
 		}
 		s.mu.Unlock()
 	}
-	logs, err := logDir()
+	logs, err := StateDir()
 	if err != nil {
 		return nil, err
 	}

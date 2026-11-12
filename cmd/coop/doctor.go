@@ -93,6 +93,14 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) int {
 	} else {
 		ok("agent name " + cfg.Agent)
 	}
+	// CLAUDE_PID is the Claude Code process that runs this command, when one does.
+	if owner, claude := env["COOP_OWNER"], env["CLAUDE_PID"]; owner != "" && claude != "" {
+		if owner == claude {
+			ok("this Claude Code is the agent that coop claude started")
+		} else {
+			note("an agent of a coop session started this Claude Code: it stays out of the session")
+		}
+	}
 	if _, err := lookPath("claude"); err != nil {
 		fail("claude is not on the PATH")
 	} else if have := registered(); have == executable() {

@@ -14,7 +14,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,6 +50,10 @@ type Options struct {
 	HTTPClient *http.Client
 	// Log, when set, gets diagnostics for stderr.
 	Log func(format string, args ...any)
+	// Conversation is the id of the Claude Code conversation, and Names the directory that
+	// keeps the agent name of each conversation. With both, a conversation that starts again
+	// asks for the name it had. Empty means no stored name.
+	Conversation, Names string
 	// Start starts the process of a worker (the spawn tool) and gives its process id. Nil
 	// means startWorker. Tests replace it.
 	Start func(spawnSpec) (int, error)
@@ -226,8 +232,10 @@ type shim struct {
 	link     link
 	// spawned counts the workers that spawn named here.
 	spawned int
-	client  *hubClient
-	inbox   *inbox
+	// stored is the agent name in the name file of the conversation.
+	stored string
+	client *hubClient
+	inbox  *inbox
 }
 
 // Serve runs the MCP server until the MCP client goes away or ctx ends.
@@ -348,7 +356,9 @@ func (s *shim) start(client *mcp.Implementation) {
 	if join.clientVersion == "" {
 		join.clientVersion = client.Version
 	}
-	s.client = newHubClient(s.o.URL, s.o.Token, s.o.Session, join)
+	nameFile := NameFile(s.o.Names, s.o.Conversation)
+	s.stored = storedName(nameFile, s.o.Session)
+	s.client = newHubClient(s.o.URL, s.o.Token, s.o.Session, join, s.stored)
 	s.client.httpc = s.o.HTTPClient
 	s.inbox = newInbox(inboxOptions{push: s.o.Push, onPush: s.pushItem})
 	c, b := s.client, s.inbox
@@ -366,6 +376,50 @@ func (s *shim) setLink(l link) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.link = l
+	if l.kind != linkJoined {
+		return
+	}
+	me, ok := wire.ParseAddress(l.me)
+	file := NameFile(s.o.Names, s.o.Conversation)
+	if !ok || file == "" || me.Agent == s.stored {
+		return
+	}
+	// ponytail: one small file for each conversation, never removed; remove the old ones
+	// when the directory gets large.
+	err := os.MkdirAll(filepath.Dir(file), 0o700)
+	if err == nil {
+		err = os.WriteFile(file, []byte(s.o.Session+"\n"+me.Agent+"\n"), 0o600)
+	}
+	if err != nil {
+		s.logf("coop: name file: %v", err)
+		return
+	}
+	s.stored = me.Agent
+}
+
+// NameFile gives the file that keeps the agent name of a conversation, or "" when there is
+// no directory or the id is not a plain file name.
+func NameFile(dir, conversation string) string {
+	if dir == "" || conversation == "" || !filepath.IsLocal(conversation) || strings.ContainsAny(conversation, `/\`) {
+		return ""
+	}
+	return filepath.Join(dir, conversation)
+}
+
+// storedName gives the agent name that the file keeps for session, or "".
+func storedName(file, session string) string {
+	if file == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(raw), "\n")
+	if len(lines) < 2 || lines[0] != session || !wire.IsAgentName(lines[1]) {
+		return ""
+	}
+	return lines[1]
 }
 
 // newInstance gives a random UUID (version 4) for the join.

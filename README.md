@@ -55,7 +55,8 @@ Run the install line on the server again. Then run `coop upgrade` on each machin
   `coop -s <session> claude` selects another session.
 - **Agent name.** The name is the name of the directory. The hub adds the machine:
   `<agent>@<machine>`. A second `coop claude` in the same directory is `<agent>-2`, the
-  next one `<agent>-3`, and so on.
+  next one `<agent>-3`, and so on. A conversation that starts again (`coop claude
+  --continue`) gets the name it had.
 - **Tools.** An agent gets `status`, `send`, `ask`, `wait`, `inbox`, `history`,
   `set_state` and `spawn`.
 - **Workers.** `spawn` starts a headless Claude Code on the agent's machine, in its session,
@@ -72,6 +73,10 @@ Run the install line on the server again. Then run `coop upgrade` on each machin
 - **Solo sessions.** A plain `claude` starts the server `coop` too, idle: it has no tools and
   joins nothing. Only a Claude Code that `coop claude` starts has a session. To bring a solo
   conversation into its session, end it and run `coop claude --continue`.
+- **Background agents.** A Claude Code that an agent starts (the agents view, `claude --bg`,
+  `claude` in a shell) stays out of the session: its server `coop` is idle. To put one in
+  the session, start it with `coop claude`. On Windows such a process still joins, with a
+  numbered name.
 - **Other clients.** An MCP client that runs `coop mcp` with `COOP_SESSION` in its
   environment joins that session.
 

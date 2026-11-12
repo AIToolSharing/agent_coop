@@ -86,7 +86,7 @@ func testClient(t *testing.T, base string, rec *recorder) *hubClient {
 
 func testClientAs(t *testing.T, base string, rec *recorder, agent string) *hubClient {
 	t.Helper()
-	c := newHubClient(base, "m.secret", "s", testJoin(agent))
+	c := newHubClient(base, "m.secret", "s", testJoin(agent), "")
 	c.idle = 2 * time.Second
 	c.sleep = rec.sleep
 	return c

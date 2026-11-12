@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -27,10 +28,16 @@ func claudeCommand(args []string) []string {
 
 // launchEnv gives the environment of the Claude Code process. It names the session and the
 // agent, so that the shim of this process reads the same two values in whatever directory the
-// agent works later.
-func launchEnv(env map[string]string, session string, cfg func(map[string]string) config.Config) []string {
+// agent works later. owner is the process id of that Claude Code process, or 0 when coop does
+// not know it: COOP_OWNER lets the shim of a Claude process that this one starts (the agents
+// view, claude --bg) see that it is not the agent, and stay out of the session.
+func launchEnv(env map[string]string, session string, owner int, cfg func(map[string]string) config.Config) []string {
 	env = maps.Clone(env)
 	env["COOP_PUSH"] = "1"
+	delete(env, "COOP_OWNER")
+	if owner > 0 {
+		env["COOP_OWNER"] = strconv.Itoa(owner)
+	}
 	if session != "" {
 		env["COOP_SESSION"] = session
 	}
@@ -91,7 +98,15 @@ func cmdClaude(args []string, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "claude is not on the PATH: install Claude Code first")
 		return 1
 	}
-	env := launchEnv(environ(), session, func(env map[string]string) config.Config {
+	// exec keeps the process id, so Claude Code gets the id of this process.
+	// ponytail: Windows has no exec, so Claude Code is a child with an id not known here: no
+	// owner there, and a child Claude still joins with a number. Check the parent of the
+	// parent in the shim when a Windows machine needs this.
+	owner := os.Getpid()
+	if runtime.GOOS == "windows" {
+		owner = 0
+	}
+	env := launchEnv(environ(), session, owner, func(env map[string]string) config.Config {
 		return config.Load(env, config.DefaultEnvFile(), func(string) {}, cwd())
 	})
 	return replaceProcess(path, argv, env, stderr)

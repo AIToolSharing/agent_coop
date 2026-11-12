@@ -297,6 +297,65 @@ func expect(t *testing.T, got map[string]any, want map[string]any) {
 	}
 }
 
+// A conversation that starts again gets the name it had, whatever joins first. Without this,
+// the name is join order: the second session of a directory becomes the first after a
+// restart and reads the held messages of the other.
+func TestRestartedConversationKeepsItsName(t *testing.T) {
+	h := newFakeHub(t)
+	h.createSession("s")
+	names := t.TempDir()
+	as := func(conversation string) Options {
+		o := options(h, "mac-1", "s", "dev", false)
+		o.Names, o.Conversation = names, conversation
+		return o
+	}
+	a := start(t, as("conv-a"))
+	b := start(t, as("conv-b"))
+	if me := fmt.Sprint(joined(t, b)["me"]); fmt.Sprint(joined(t, a)["me"]) != "dev@mac-1" || me != "dev-2@mac-1" {
+		t.Fatalf("the second session is %s", me)
+	}
+	a.stop()
+	b.stop()
+	b = start(t, as("conv-b"))
+	if me := fmt.Sprint(joined(t, b)["me"]); me != "dev-2@mac-1" {
+		t.Fatalf("conv-b came back as %s, want dev-2@mac-1", me)
+	}
+	a = start(t, as("conv-a"))
+	if me := fmt.Sprint(joined(t, a)["me"]); me != "dev@mac-1" {
+		t.Fatalf("conv-a came back as %s, want dev@mac-1", me)
+	}
+	// Another session has no stored name here: the directory name.
+	o := as("conv-b")
+	o.Session = "t"
+	h.createSession("t")
+	if me := fmt.Sprint(joined(t, start(t, o))["me"]); me != "dev@mac-1" {
+		t.Fatalf("conv-b in another session is %s, want dev@mac-1", me)
+	}
+}
+
+// The stored name is in use (a copy of the conversation runs): the usual sequence follows.
+func TestStoredNameInUseFallsToTheSequence(t *testing.T) {
+	h := newFakeHub(t)
+	h.createSession("s")
+	names := t.TempDir()
+	if err := os.WriteFile(filepath.Join(names, "conv"), []byte("s\ndev-2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := start(t, options(h, "mac-1", "s", "dev", false))
+	b := start(t, options(h, "mac-1", "s", "dev", false))
+	if fmt.Sprint(joined(t, a)["me"]) != "dev@mac-1" || fmt.Sprint(joined(t, b)["me"]) != "dev-2@mac-1" {
+		t.Fatal("setup")
+	}
+	o := options(h, "mac-1", "s", "dev", false)
+	o.Names, o.Conversation = names, "conv"
+	if me := fmt.Sprint(joined(t, start(t, o))["me"]); me != "dev-3@mac-1" {
+		t.Fatalf("got %s, want dev-3@mac-1", me)
+	}
+	if NameFile(names, "../x") != "" || NameFile(names, "") != "" || NameFile("", "conv") != "" {
+		t.Error("NameFile took an id that is not a plain file name")
+	}
+}
+
 // --- outside a session -----------------------------------------------------------------------
 
 func TestNoSessionOffersNoToolsButStatusAnswers(t *testing.T) {

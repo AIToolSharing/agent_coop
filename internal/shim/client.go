@@ -76,7 +76,8 @@ type hubClient struct {
 	base, token, session string
 	join                 joinInfo
 	// name is the agent name as given. numbered is the number of the name that the client
-	// tries: 1 for name, 2 for <name>-2, and so on.
+	// tries: 1 for name, 2 for <name>-2, and so on; 0 for the name that the conversation had
+	// before (newHubClient), which comes first.
 	name     string
 	numbered int
 	// httpc nil means http.DefaultClient.
@@ -87,8 +88,14 @@ type hubClient struct {
 	sleep func(ctx context.Context, d time.Duration) bool
 }
 
-func newHubClient(base, token, session string, join joinInfo) *hubClient {
-	return &hubClient{base: base, token: token, session: session, join: join, name: join.agent, numbered: 1, idle: defaultIdle, sleep: sleep}
+// newHubClient makes the client. first is the name that this conversation had before, or "":
+// the client asks for it before the name and its numbers.
+func newHubClient(base, token, session string, join joinInfo, first string) *hubClient {
+	c := &hubClient{base: base, token: token, session: session, join: join, name: join.agent, numbered: 1, idle: defaultIdle, sleep: sleep}
+	if first != "" && first != c.name {
+		c.join.agent, c.numbered = first, 0
+	}
+	return c
 }
 
 func sleep(ctx context.Context, d time.Duration) bool {
@@ -149,7 +156,10 @@ func (c *hubClient) run(ctx context.Context, h streamHandlers) {
 				// one takes the next numbered name at once. After a resume (lastID set) a
 				// 409 is not a taken name, and the name stays.
 				c.numbered++
-				c.join.agent = fmt.Sprintf("%s-%d", c.name, c.numbered)
+				c.join.agent = c.name
+				if c.numbered > 1 {
+					c.join.agent = fmt.Sprintf("%s-%d", c.name, c.numbered)
+				}
 			case res.StatusCode == 409:
 				// Every numbered name is in use. This one says why it is out and joins when
 				// a name is free.
