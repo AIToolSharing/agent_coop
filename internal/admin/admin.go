@@ -243,6 +243,21 @@ func (c *Client) Check(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/sessions")
 }
 
+// DropAgent closes the connection of an agent (name@machine) in a session.
+func (c *Client) DropAgent(ctx context.Context, sid, agent string) error {
+	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(sid)+"/drop?agent="+url.QueryEscape(agent))
+}
+
+// OnlyAgent keeps one agent of its name family and takes the others out of the session.
+func (c *Client) OnlyAgent(ctx context.Context, sid, agent string) error {
+	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(sid)+"/only?agent="+url.QueryEscape(agent))
+}
+
+// Allow lets the agents that OnlyAgent took out of a session join again.
+func (c *Client) Allow(ctx context.Context, sid string) error {
+	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(sid)+"/allow")
+}
+
 func (c *Client) DeleteSession(ctx context.Context, sid string) error {
 	return c.do(ctx, http.MethodDelete, "/sessions/"+url.PathEscape(sid))
 }

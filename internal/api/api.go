@@ -59,6 +59,9 @@ func New(h *hub.Hub, log func(format string, args ...any)) *Server {
 	s.add("GET", "/v1/sessions/{sid}", s.view)
 	s.add("GET", "/v1/admin/sessions", s.adminSessions)
 	s.add("DELETE", "/v1/admin/sessions/{sid}", s.adminDelete)
+	s.add("POST", "/v1/admin/sessions/{sid}/drop", s.adminDrop)
+	s.add("POST", "/v1/admin/sessions/{sid}/only", s.adminOnly)
+	s.add("POST", "/v1/admin/sessions/{sid}/allow", s.adminAllow)
 	s.add("GET", "/v1/admin/stream", s.adminStream)
 	return s
 }
@@ -382,6 +385,36 @@ func (s *Server) done(w http.ResponseWriter, err error) {
 
 func (s *Server) adminDelete(w http.ResponseWriter, _ *http.Request, _ hub.Owner, sid string) {
 	s.done(w, s.hub.DeleteSession(sid))
+}
+
+func (s *Server) adminDrop(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
+	agent, err := parseAddressQuery(r.URL.Query())
+	if err == nil {
+		err = s.hub.Drop(sid, agent)
+	}
+	s.done(w, err)
+}
+
+func (s *Server) adminOnly(w http.ResponseWriter, r *http.Request, _ hub.Owner, sid string) {
+	agent, err := parseAddressQuery(r.URL.Query())
+	if err != nil {
+		writeHubError(w, err)
+		return
+	}
+	gone, err := s.hub.Only(sid, agent)
+	if err != nil {
+		writeHubError(w, err)
+		return
+	}
+	if gone == nil {
+		gone = []string{}
+	}
+	writeJSON(w, 200, map[string]any{"out": gone})
+}
+
+func (s *Server) adminAllow(w http.ResponseWriter, _ *http.Request, _ hub.Owner, sid string) {
+	s.hub.Allow(sid)
+	w.WriteHeader(204)
 }
 
 func (s *Server) adminStream(w http.ResponseWriter, r *http.Request, owner hub.Owner, _ string) {

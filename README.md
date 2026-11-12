@@ -98,6 +98,15 @@ length moves at once.
 The TUI only shows the sessions. It sends nothing to the agents and joins no session. The
 commands are `:delete`, `:filter <agent>`, `:sys` and `:quit`.
 
+To clean a session, use these commands:
+
+| Command | Does |
+|---|---|
+| `:prune` | Deletes each session that has no agent in it. |
+| `:drop <agent>` | Closes the connection of an agent that hangs or is dead. An agent that is alive joins again at once. |
+| `:only <agent>` | Keeps this agent of `dev`, `dev-2`, `dev-3` on its machine. The others stay out of the session. |
+| `:allow` | Lets the agents that `:only` took out join again. They join in about 10 seconds. |
+
 ## Commands
 
 | Command | Does |

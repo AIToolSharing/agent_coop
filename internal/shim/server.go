@@ -187,6 +187,8 @@ func reason(notSetUp bool, l link) string {
 		return "not in a session: this machine is not allowed to join"
 	case linkTaken:
 		return fmt.Sprintf("not in a session: %d sessions on this machine use the name %q and its numbers. This session joins when one of them ends.", maxNumbered, l.me)
+	case linkDropped:
+		return "not in a session: the operator of the session took this agent out of it. Work alone; this agent joins again when the operator allows it."
 	}
 	return unreachable
 }

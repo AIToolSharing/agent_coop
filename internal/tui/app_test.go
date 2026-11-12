@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,48 @@ type fakeOp struct{ calls []string }
 func (f *fakeOp) DeleteSession(_ context.Context, s string) error {
 	f.calls = append(f.calls, "delete "+s)
 	return nil
+}
+
+func (f *fakeOp) DropAgent(_ context.Context, s, a string) error {
+	f.calls = append(f.calls, "drop "+s+" "+a)
+	return nil
+}
+
+func (f *fakeOp) OnlyAgent(_ context.Context, s, a string) error {
+	f.calls = append(f.calls, "only "+s+" "+a)
+	return nil
+}
+
+func (f *fakeOp) Allow(_ context.Context, s string) error {
+	f.calls = append(f.calls, "allow "+s)
+	return nil
+}
+
+// The operator commands go to the hub with the session and the address of the agent.
+func TestDropOnlyAllowAndPruneCallTheHub(t *testing.T) {
+	h := start(t, nil)
+	h.openSession()
+	ag := h.app.store.View("build-42").AgentList()[0].Address
+	name, _, _ := strings.Cut(ag, "@")
+	h.keys(":", "+drop "+name, "enter")
+	h.keys(":", "+only "+ag, "enter", "y")
+	h.keys(":", "+allow", "enter")
+	want := []string{"drop build-42 " + ag, "only build-42 " + ag, "allow build-42"}
+	if !slices.Equal(h.op.calls, want) {
+		t.Fatalf("calls %v, want %v", h.op.calls, want)
+	}
+	h.keys(":", "+drop nobody", "enter")
+	contains(t, h.frame(), "no agent nobody")
+	h.op.calls = nil
+	h.keys(":", "+prune", "enter")
+	if strings.Contains(h.frame(), "sessions with no agent") {
+		h.keys("y")
+		for _, c := range h.op.calls {
+			if !strings.HasPrefix(c, "delete ") || c == "delete build-42" {
+				t.Fatalf("prune called %q", c)
+			}
+		}
+	}
 }
 
 type harness struct {
@@ -191,7 +234,7 @@ func TestCommandsCompleteAndTheRemovedOnesAreUnknown(t *testing.T) {
 	if h.status() != "only carol@mac-3" {
 		t.Fatalf("status %q", h.status())
 	}
-	for _, cmd := range []string{"kick bob", "allow bob", "forget bob", "pause", "resume", "close", "reopen", "withdraw #10", "brief", "new team-2"} {
+	for _, cmd := range []string{"kick bob", "forget bob", "pause", "resume", "close", "reopen", "withdraw #10", "brief", "new team-2"} {
 		h.keys(":", "+"+cmd, "enter")
 		if word, _, _ := strings.Cut(cmd, " "); h.status() != "unknown command :"+word+" (tab lists them)" {
 			t.Fatalf(":%s: status %q", cmd, h.status())

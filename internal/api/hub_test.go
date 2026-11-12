@@ -5,6 +5,7 @@ package api_test
 // file, one at a time, against one hub.
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
@@ -655,6 +656,65 @@ func (x *hubSuite) adminAPI(t *testing.T) {
 			t.Fatalf("sessions %v have %s", ids, sid)
 		}
 		wantStatus(t, 404)(adm.delete("nosuch"))
+	})
+
+	t.Run("drop closes one agent; a live agent joins again", func(t *testing.T) {
+		sid := x.session(t)
+		a := x.mac1.stream(sid, "dev")
+		defer a.close()
+		a.wait(t, nil)
+		wantStatus(t, 204)(adm.req(http.MethodPost, "/sessions/"+sid+"/drop?agent=dev%40mac-1", nil))
+		if err := a.ended(0); err != nil {
+			t.Fatal(err)
+		}
+		waitGone(t, x.h, sid+".mac-1.dev")
+		again := x.mac1.stream(sid, "dev", withInstance(a.instance))
+		defer again.close()
+		wantStatus(t, 200)(again.status(), again.body)
+		wantStatus(t, 404)(adm.req(http.MethodPost, "/sessions/"+sid+"/drop?agent=nobody%40mac-1", nil))
+		wantStatus(t, 422)(adm.req(http.MethodPost, "/sessions/"+sid+"/drop?agent=dev", nil))
+	})
+
+	// The case of the user: dev, dev-2 and dev-3 of one directory are in the session, and
+	// the operator says which one is the agent.
+	t.Run("only keeps one of a name family; the others stay out until allow", func(t *testing.T) {
+		sid := x.session(t)
+		dev := x.mac1.stream(sid, "dev")
+		dev2 := x.mac1.stream(sid, "dev-2")
+		dev3 := x.mac1.stream(sid, "dev-3")
+		other := x.mac1.stream(sid, "docs")
+		far := x.vps2.stream(sid, "dev")
+		for _, s := range []*stream{dev, dev2, dev3, other, far} {
+			defer s.close()
+			s.wait(t, nil)
+		}
+		body := wantStatus(t, 200)(adm.req(http.MethodPost, "/sessions/"+sid+"/only?agent=dev-2%40mac-1", nil))
+		var got struct{ Out []string }
+		if err := json.Unmarshal(body, &got); err != nil || !slices.Equal(got.Out, []string{"dev-3@mac-1", "dev@mac-1"}) {
+			t.Fatalf("out %v %v", got.Out, err)
+		}
+		for _, s := range []*stream{dev, dev3} {
+			if err := s.ended(0); err != nil {
+				t.Fatal(err)
+			}
+		}
+		waitGone(t, x.h, sid+".mac-1.dev")
+		for _, key := range []string{".mac-1.dev-2", ".mac-1.docs", ".vps-2.dev"} {
+			if _, ok := x.h.presence(sid + key); !ok {
+				t.Fatalf("%s is gone", key)
+			}
+		}
+		// The process that was taken out gets 410 under each name; a new process joins.
+		wantStatus(t, 410)(x.mac1.stream(sid, "dev", withInstance(dev.instance)).result())
+		wantStatus(t, 410)(x.mac1.stream(sid, "dev-4", withInstance(dev.instance)).result())
+		fresh := x.mac1.stream(sid, "dev")
+		wantStatus(t, 200)(fresh.status(), fresh.body)
+		fresh.close()
+		waitGone(t, x.h, sid+".mac-1.dev")
+		wantStatus(t, 204)(adm.req(http.MethodPost, "/sessions/"+sid+"/allow", nil))
+		back := x.mac1.stream(sid, "dev", withInstance(dev.instance))
+		defer back.close()
+		wantStatus(t, 200)(back.status(), back.body)
 	})
 
 }

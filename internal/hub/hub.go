@@ -46,6 +46,8 @@ func (e *Error) Status() int {
 		return 404
 	case "conflict", "ambiguous":
 		return 409
+	case "dropped":
+		return 410
 	case "too_large":
 		return 413
 	case "invalid":
@@ -198,8 +200,13 @@ type Hub struct {
 	mu             sync.Mutex
 	conns          map[string]*Conn // live connections, by presence key
 	feeds          map[*feed]struct{}
-	closed         bool
-	wg             sync.WaitGroup
+	// out holds the processes that the operator took out of a session (Only): session, then
+	// the instance of the join. Allow lets them in again.
+	// ponytail: in memory only, so a restart of the hub also lets them in; put it in the
+	// store when that matters.
+	out    map[string]map[string]bool
+	closed bool
+	wg     sync.WaitGroup
 }
 
 // New makes a hub over st.
@@ -358,6 +365,9 @@ func (h *Hub) Join(machine, sid string, q StreamQuery, lastEventID string) (*Joi
 		return nil, err
 	}
 	me := wire.Address{Agent: q.Agent, Machine: machine}
+	if h.out[sid][q.Instance] {
+		return nil, errf("dropped", "the operator took this agent out of session %s", sid)
+	}
 	end, err := h.st.LastSeq()
 	if err != nil {
 		return nil, storeErr(err)
@@ -734,8 +744,75 @@ func (h *Hub) DeleteSession(sid string) error {
 	if err != nil {
 		return storeErr(err)
 	}
+	delete(h.out, sid)
 	h.feedAll("session", sessionOut{Kind: "session", Session: sid, Revision: rev}, "")
 	return nil
+}
+
+// liveLocked gives the connection of an agent in a session, or an error.
+func (h *Hub) liveLocked(sid string, agent wire.Address) (*Conn, error) {
+	c := h.conns[wire.BuildPresenceKey(wire.PresenceKey{SID: sid, Agent: agent})]
+	if c == nil {
+		return nil, errf("not_found", "%s is not in session %s", agent, sid)
+	}
+	return c, nil
+}
+
+// Drop closes the connection of an agent: for one that hangs or is dead, so that its name is
+// free at once. An agent that is alive joins again in a second with the same name.
+func (h *Hub) Drop(sid string, agent wire.Address) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	c, err := h.liveLocked(sid, agent)
+	if err != nil {
+		return err
+	}
+	c.close("revoked")
+	return nil
+}
+
+// family is the name of an agent without the number that a second session of the same
+// directory gets: dev-2 is of the family dev.
+func family(agent string) string {
+	if n := len(agent); n > 2 && agent[n-2] == '-' && agent[n-1] >= '2' && agent[n-1] <= '9' {
+		return agent[:n-2]
+	}
+	return agent
+}
+
+// Only keeps one agent of its family on its machine (dev, dev-2, dev-3 ...) and takes the
+// others out of the session. They stay out until Allow. It gives the agents it took out.
+func (h *Hub) Only(sid string, agent wire.Address) ([]string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	keep, err := h.liveLocked(sid, agent)
+	if err != nil {
+		return nil, err
+	}
+	var gone []string
+	for _, c := range h.inSessionLocked(sid) {
+		if c == keep || c.me.Machine != agent.Machine || family(c.me.Agent) != family(agent.Agent) {
+			continue
+		}
+		if h.out == nil {
+			h.out = map[string]map[string]bool{}
+		}
+		if h.out[sid] == nil {
+			h.out[sid] = map[string]bool{}
+		}
+		h.out[sid][c.instance] = true
+		c.close("revoked")
+		gone = append(gone, c.me.String())
+	}
+	sort.Strings(gone)
+	return gone, nil
+}
+
+// Allow lets the agents that Only took out of a session join again.
+func (h *Hub) Allow(sid string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.out, sid)
 }
 
 // --- The watch feed ----------------------------------------------------------------------------

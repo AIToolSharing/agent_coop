@@ -32,7 +32,9 @@ const (
 	linkJoined  = "joined"
 	linkRefused = "refused"
 	// linkTaken: another session on this machine holds the agent's name.
-	linkTaken       = "taken"
+	linkTaken = "taken"
+	// linkDropped: the operator took this agent out of the session.
+	linkDropped     = "dropped"
 	linkUnreachable = "unreachable"
 )
 
@@ -164,6 +166,12 @@ func (c *hubClient) run(ctx context.Context, h streamHandlers) {
 				// Every numbered name is in use. This one says why it is out and joins when
 				// a name is free.
 				h.state(link{kind: linkTaken, me: c.name})
+				if !c.sleep(ctx, retryTaken) {
+					return
+				}
+			case res.StatusCode == 410:
+				// The operator took this agent out. It joins when the operator allows it.
+				h.state(link{kind: linkDropped, me: c.agent()})
 				if !c.sleep(ctx, retryTaken) {
 					return
 				}

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -107,6 +108,10 @@ var help = [][2]string{
 	{"n N", "the next, the previous match; the search goes around the end"},
 	{"COMMANDS  (: then tab completes)", ""},
 	{":delete", "delete the shown session and its messages; only with no agent in it"},
+	{":prune", "delete every session that has no agent in it"},
+	{":drop [agent]", "close the connection of a dead agent; a live agent joins again at once"},
+	{":only [agent]", "keep this one of dev, dev-2, dev-3 ...; the others stay out"},
+	{":allow", "let the agents that :only took out join again"},
 	{":filter [agent]", "only the messages of one agent; without a name: off"},
 	{":sys", "system lines on or off"},
 	{":help  :quit", "this help; quit"},
@@ -130,7 +135,7 @@ func helpBuffer() view.Buffer {
 	}}}}
 }
 
-var commands = []string{"delete", "filter", "sys", "help", "quit"}
+var commands = []string{"allow", "delete", "drop", "filter", "only", "prune", "sys", "help", "quit"}
 
 // Complete finishes a command line: the command word, or an agent name for the commands that
 // take one.
@@ -151,7 +156,7 @@ func Complete(value string, agents []*model.Agent) string {
 		}
 		return commonPrefix(hits)
 	}
-	if word != "filter" {
+	if word != "filter" && word != "drop" && word != "only" {
 		return value
 	}
 	arg = strings.TrimSpace(arg)
@@ -230,6 +235,57 @@ func (a *App) command(line string, s screen) tea.Cmd {
 				}
 				return statusMsg("deleted " + session)
 			}
+		})
+	case "prune":
+		var empty []string
+		for _, sum := range s.sums {
+			if sum.SID != model.AllSessions && sum.Online == 0 {
+				empty = append(empty, sum.SID)
+			}
+		}
+		if len(empty) == 0 {
+			return a.setStatus("no session without an agent")
+		}
+		return confirm("delete "+strconv.Itoa(len(empty))+" sessions with no agent ("+strings.Join(empty, ", ")+") and their messages? (y/n)", func() tea.Cmd {
+			return func() tea.Msg {
+				ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+				defer cancel()
+				n := 0
+				for _, sid := range empty {
+					// The hub refuses a session that an agent joined in the meantime.
+					if a.op.DeleteSession(ctx, sid) == nil {
+						n++
+					}
+				}
+				return statusMsg("deleted " + strconv.Itoa(n) + " of " + strconv.Itoa(len(empty)) + " sessions")
+			}
+		})
+	case "drop", "only", "allow":
+		if session == "" {
+			return needSession()
+		}
+		act := func(done string, call func(ctx context.Context) error) tea.Cmd {
+			return func() tea.Msg {
+				ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+				defer cancel()
+				if err := call(ctx); err != nil {
+					return statusMsg("error: " + err.Error())
+				}
+				return statusMsg(done)
+			}
+		}
+		if cmd == "allow" {
+			return act("the agents that :only took out of "+session+" can join again", func(ctx context.Context) error { return a.op.Allow(ctx, session) })
+		}
+		ag := agentOf(arg)
+		if ag == nil {
+			return a.setStatus("no agent " + arg + " (h, then j k picks one)")
+		}
+		if cmd == "drop" {
+			return act("dropped "+ag.Address+"; it joins again when it is alive", func(ctx context.Context) error { return a.op.DropAgent(ctx, session, ag.Address) })
+		}
+		return confirm("keep "+ag.Address+" and take the other agents of its name out of "+session+"? (y/n)", func() tea.Cmd {
+			return act("only "+ag.Address+"; :allow lets the others in again", func(ctx context.Context) error { return a.op.OnlyAgent(ctx, session, ag.Address) })
 		})
 	case "filter":
 		if arg == "" {

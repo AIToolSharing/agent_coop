@@ -21,6 +21,9 @@ import (
 // Hub is what the shell asks the hub to do. *admin.Client is one.
 type Hub interface {
 	DeleteSession(ctx context.Context, sid string) error
+	DropAgent(ctx context.Context, sid, agent string) error
+	OnlyAgent(ctx context.Context, sid, agent string) error
+	Allow(ctx context.Context, sid string) error
 }
 
 // Options builds an App.

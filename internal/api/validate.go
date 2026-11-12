@@ -120,6 +120,19 @@ func parseAgentQuery(q url.Values) (string, error) {
 	return m["agent"], nil
 }
 
+// parseAddressQuery reads the agent of an admin action: agent=<name>@<machine>.
+func parseAddressQuery(q url.Values) (wire.Address, error) {
+	m, err := query(q, "agent")
+	if err != nil {
+		return wire.Address{}, err
+	}
+	a, ok := wire.ParseAddress(m["agent"])
+	if !ok {
+		return wire.Address{}, invalid("agent: not an address <name>@<machine>")
+	}
+	return a, nil
+}
+
 func parseHistoryQuery(q url.Values) (hub.HistoryQuery, error) {
 	m, err := query(q, "agent", "with", "limit")
 	if err != nil {
